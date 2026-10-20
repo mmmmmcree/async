@@ -1,0 +1,346 @@
+{
+    "version": 3,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 28,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "developer",
+            "hidden": true,
+            "generator": "Ninja Multi-Config",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "LCF_ASYNC_DEPENDENCY_PROVIDER": "FETCH",
+                "LCF_ASYNC_ENABLE_ASIO": "ON",
+                "LCF_ASYNC_ENABLE_STDEXEC": "ON",
+                "LCF_ASYNC_BUILD_TESTS": "ON",
+                "LCF_ASYNC_BUILD_BACKEND_BENCHMARKS": "ON",
+                "LCF_ASYNC_BACKEND_BENCHMARKS_IN_MAIN_BUILD": "ON",
+                "LCF_ASYNC_ASIO_BUILD_TESTS": "ON",
+                "LCF_ASYNC_ASIO_BUILD_VERIFY": "ON",
+                "LCF_ASYNC_ASIO_BUILD_SANDBOX": "ON",
+                "LCF_ASYNC_ASIO_BUILD_BENCHMARKS": "ON",
+                "LCF_ASYNC_ASIO_TESTS_IN_MAIN_BUILD": "ON",
+                "LCF_ASYNC_STDEXEC_BUILD_TESTS": "ON",
+                "LCF_ASYNC_STDEXEC_BUILD_VERIFY": "ON",
+                "LCF_ASYNC_STDEXEC_BUILD_SANDBOX": "ON",
+                "LCF_ASYNC_STDEXEC_BUILD_BENCHMARKS": "ON",
+                "LCF_ASYNC_STDEXEC_TESTS_IN_MAIN_BUILD": "ON",
+                "LCF_ASYNC_ENABLE_STANDALONE": "ON",
+                "LCF_ASYNC_STANDALONE_BUILD_TESTS": "ON",
+                "LCF_ASYNC_STANDALONE_BUILD_VERIFY": "ON",
+                "LCF_ASYNC_STANDALONE_BUILD_SANDBOX": "ON",
+                "LCF_ASYNC_STANDALONE_BUILD_BENCHMARKS": "ON",
+                "LCF_ASYNC_STANDALONE_TESTS_IN_MAIN_BUILD": "ON"
+            }
+        },
+        {
+            "name": "compiler-msvc",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "cl"
+            },
+            "toolset": {
+                "value": "version=14.51,host=x64",
+                "strategy": "external"
+            },
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            }
+        },
+        {
+            "name": "compiler-clang",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "clang++"
+            },
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            }
+        },
+        {
+            "name": "compiler-gcc",
+            "hidden": true,
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        },
+        {
+            "name": "mode-header",
+            "hidden": true,
+            "cacheVariables": {
+                "LCF_ASYNC_USE_MODULES": "OFF"
+            }
+        },
+        {
+            "name": "mode-module",
+            "hidden": true,
+            "cacheVariables": {
+                "LCF_ASYNC_USE_MODULES": "ON"
+            }
+        },
+        {
+            "name": "header-msvc",
+            "displayName": "async / header / MSVC 14.51",
+            "inherits": [
+                "developer",
+                "mode-header",
+                "compiler-msvc"
+            ]
+        },
+        {
+            "name": "header-clang",
+            "displayName": "async / header / Clang",
+            "inherits": [
+                "developer",
+                "mode-header",
+                "compiler-clang"
+            ]
+        },
+        {
+            "name": "header-gcc",
+            "displayName": "async / header / GCC",
+            "inherits": [
+                "developer",
+                "mode-header",
+                "compiler-gcc"
+            ]
+        },
+        {
+            "name": "module-asio-clang",
+            "displayName": "async / Asio module / Clang",
+            "description": "Develop Asio with explicit import lcf.async, verify, sandbox and benchmarks.",
+            "inherits": ["developer", "mode-module", "compiler-clang"],
+            "toolset": {
+                "value": "version=14.51,host=x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "LCF_ASYNC_ENABLE_ASIO": "ON",
+                "LCF_ASYNC_ENABLE_STDEXEC": "OFF",
+                "LCF_ASYNC_ENABLE_STANDALONE": "OFF",
+                "LCF_ASYNC_BUILD_BACKEND_BENCHMARKS": "OFF",
+                "LCF_ASYNC_STDEXEC_BUILD_TESTS": null,
+                "LCF_ASYNC_STDEXEC_BUILD_VERIFY": null,
+                "LCF_ASYNC_STDEXEC_BUILD_SANDBOX": null,
+                "LCF_ASYNC_STDEXEC_BUILD_BENCHMARKS": null,
+                "LCF_ASYNC_STDEXEC_TESTS_IN_MAIN_BUILD": null,
+                "LCF_ASYNC_STANDALONE_BUILD_TESTS": null,
+                "LCF_ASYNC_STANDALONE_BUILD_VERIFY": null,
+                "LCF_ASYNC_STANDALONE_BUILD_SANDBOX": null,
+                "LCF_ASYNC_STANDALONE_BUILD_BENCHMARKS": null,
+                "LCF_ASYNC_STANDALONE_TESTS_IN_MAIN_BUILD": null
+            }
+        },
+        {
+            "name": "module-stdexec-clang",
+            "displayName": "async / stdexec module / Clang",
+            "description": "Develop stdexec with explicit import lcf.async, verify, sandbox and benchmarks.",
+            "inherits": ["developer", "mode-module", "compiler-clang"],
+            "toolset": {
+                "value": "version=14.51,host=x64",
+                "strategy": "external"
+            },
+            "cacheVariables": {
+                "LCF_ASYNC_ENABLE_ASIO": "OFF",
+                "LCF_ASYNC_ENABLE_STDEXEC": "ON",
+                "LCF_ASYNC_ENABLE_STANDALONE": "OFF",
+                "LCF_ASYNC_BUILD_BACKEND_BENCHMARKS": "OFF",
+                "LCF_ASYNC_ASIO_BUILD_TESTS": null,
+                "LCF_ASYNC_ASIO_BUILD_VERIFY": null,
+                "LCF_ASYNC_ASIO_BUILD_SANDBOX": null,
+                "LCF_ASYNC_ASIO_BUILD_BENCHMARKS": null,
+                "LCF_ASYNC_ASIO_TESTS_IN_MAIN_BUILD": null,
+                "LCF_ASYNC_STANDALONE_BUILD_TESTS": null,
+                "LCF_ASYNC_STANDALONE_BUILD_VERIFY": null,
+                "LCF_ASYNC_STANDALONE_BUILD_SANDBOX": null,
+                "LCF_ASYNC_STANDALONE_BUILD_BENCHMARKS": null,
+                "LCF_ASYNC_STANDALONE_TESTS_IN_MAIN_BUILD": null
+            }
+        },
+        {
+            "name": "module-standalone-msvc",
+            "displayName": "async / standalone module / MSVC 14.51",
+            "description": "Develop the standalone backend with explicit import lcf.async, verify, sandbox and benchmarks.",
+            "inherits": [
+                "developer",
+                "mode-module",
+                "compiler-msvc"
+            ],
+            "cacheVariables": {
+                "LCF_ASYNC_ENABLE_ASIO": "OFF",
+                "LCF_ASYNC_ENABLE_STDEXEC": "OFF",
+                "LCF_ASYNC_ENABLE_STANDALONE": "ON",
+                "LCF_ASYNC_BUILD_BACKEND_BENCHMARKS": "OFF",
+                "LCF_ASYNC_ASIO_BUILD_TESTS": null,
+                "LCF_ASYNC_ASIO_BUILD_VERIFY": null,
+                "LCF_ASYNC_ASIO_BUILD_SANDBOX": null,
+                "LCF_ASYNC_ASIO_BUILD_BENCHMARKS": null,
+                "LCF_ASYNC_ASIO_TESTS_IN_MAIN_BUILD": null,
+                "LCF_ASYNC_STDEXEC_BUILD_TESTS": null,
+                "LCF_ASYNC_STDEXEC_BUILD_VERIFY": null,
+                "LCF_ASYNC_STDEXEC_BUILD_SANDBOX": null,
+                "LCF_ASYNC_STDEXEC_BUILD_BENCHMARKS": null,
+                "LCF_ASYNC_STDEXEC_TESTS_IN_MAIN_BUILD": null
+            }
+        }
+    ],
+    "buildPresets": [
+        {
+            "name": "module-stdexec-clang-debug",
+            "configurePreset": "module-stdexec-clang",
+            "configuration": "Debug"
+        },
+        {
+            "name": "module-stdexec-clang-release",
+            "configurePreset": "module-stdexec-clang",
+            "configuration": "Release"
+        },
+        {
+            "name": "module-asio-clang-debug",
+            "configurePreset": "module-asio-clang",
+            "configuration": "Debug"
+        },
+        {
+            "name": "module-asio-clang-release",
+            "configurePreset": "module-asio-clang",
+            "configuration": "Release"
+        },
+        {
+            "name": "module-standalone-msvc-debug",
+            "configurePreset": "module-standalone-msvc",
+            "configuration": "Debug"
+        },
+        {
+            "name": "module-standalone-msvc-release",
+            "configurePreset": "module-standalone-msvc",
+            "configuration": "Release"
+        },
+        {
+            "name": "header-msvc-debug",
+            "configurePreset": "header-msvc",
+            "configuration": "Debug"
+        },
+        {
+            "name": "header-msvc-release",
+            "configurePreset": "header-msvc",
+            "configuration": "Release"
+        },
+        {
+            "name": "header-clang-debug",
+            "configurePreset": "header-clang",
+            "configuration": "Debug"
+        },
+        {
+            "name": "header-clang-release",
+            "configurePreset": "header-clang",
+            "configuration": "Release"
+        },
+        {
+            "name": "header-gcc-debug",
+            "configurePreset": "header-gcc",
+            "configuration": "Debug"
+        },
+        {
+            "name": "header-gcc-release",
+            "configurePreset": "header-gcc",
+            "configuration": "Release"
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "module-stdexec-clang-debug",
+            "configurePreset": "module-stdexec-clang",
+            "configuration": "Debug",
+            "output": {"outputOnFailure": true}
+        },
+        {
+            "name": "module-stdexec-clang-release",
+            "configurePreset": "module-stdexec-clang",
+            "configuration": "Release",
+            "output": {"outputOnFailure": true}
+        },
+        {
+            "name": "module-asio-clang-debug",
+            "configurePreset": "module-asio-clang",
+            "configuration": "Debug",
+            "output": {"outputOnFailure": true}
+        },
+        {
+            "name": "module-asio-clang-release",
+            "configurePreset": "module-asio-clang",
+            "configuration": "Release",
+            "output": {"outputOnFailure": true}
+        },
+        {
+            "name": "module-standalone-msvc-debug",
+            "configurePreset": "module-standalone-msvc",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "module-standalone-msvc-release",
+            "configurePreset": "module-standalone-msvc",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "header-msvc-debug",
+            "configurePreset": "header-msvc",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "header-msvc-release",
+            "configurePreset": "header-msvc",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "header-clang-debug",
+            "configurePreset": "header-clang",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "header-clang-release",
+            "configurePreset": "header-clang",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "header-gcc-debug",
+            "configurePreset": "header-gcc",
+            "configuration": "Debug",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "header-gcc-release",
+            "configurePreset": "header-gcc",
+            "configuration": "Release",
+            "output": {
+                "outputOnFailure": true
+            }
+        }
+    ]
+}
