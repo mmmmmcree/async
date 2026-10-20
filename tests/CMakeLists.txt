@@ -1,0 +1,18 @@
+include(CMakeDependentOption)
+cmake_dependent_option(LCF_ASYNC_BUILD_BACKEND_BENCHMARKS "Provide comparative backend benchmarks" OFF
+    "LCF_ASYNC_BUILD_TESTS" OFF)
+cmake_dependent_option(LCF_ASYNC_BACKEND_BENCHMARKS_IN_MAIN_BUILD "Configure comparative executables in this build" OFF
+    "LCF_ASYNC_BUILD_BACKEND_BENCHMARKS" OFF)
+if(LCF_ASYNC_BUILD_BACKEND_BENCHMARKS)
+    set(async_comparison_backends)
+    foreach(backend asio stdexec standalone)
+        if(TARGET async_${backend})
+            list(APPEND async_comparison_backends ${backend})
+        endif()
+    endforeach()
+    list(LENGTH async_comparison_backends async_comparison_count)
+    if(async_comparison_count LESS 2)
+        message(FATAL_ERROR "Backend comparisons require at least two enabled implementations")
+    endif()
+    add_subdirectory(benchmark)
+endif()

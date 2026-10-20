@@ -1,0 +1,16 @@
+include(../../../cmake/development.cmake)
+async_add_test_suite(async_standalone_sandbox standalone sandbox PREFIX "standalone."
+    SOURCES ../../../tests/sandbox/sandbox.cpp)
+add_executable(async_standalone_example native_example.cpp)
+async_configure_test_target(async_standalone_example standalone sandbox)
+add_dependencies(async_standalone_sandbox async_standalone_example)
+add_test(NAME standalone.Example COMMAND async_standalone_example)
+set_tests_properties(standalone.Example PROPERTIES LABELS standalone_sandbox TIMEOUT 15)
+
+if(LCF_ASYNC_USE_MODULES)
+    add_executable(async_standalone_module_example ../../../tests/sandbox/module_example.cpp)
+    async_configure_test_target(async_standalone_module_example standalone sandbox)
+    add_dependencies(async_standalone_sandbox async_standalone_module_example)
+    add_test(NAME standalone.ModuleExample COMMAND async_standalone_module_example)
+    set_tests_properties(standalone.ModuleExample PROPERTIES LABELS "standalone_sandbox;modules" TIMEOUT 15)
+endif()
