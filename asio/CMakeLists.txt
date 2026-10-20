@@ -1,0 +1,28 @@
+cmake_minimum_required(VERSION 3.28)
+if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    project(LCFAsyncAsio VERSION 0.1.0 LANGUAGES CXX)
+    include(../cmake/project.cmake)
+    async_initialize_project()
+endif()
+
+include(../cmake/options.cmake)
+include(cmake/options.cmake)
+set(CMAKE_CXX_SCAN_FOR_MODULES ${LCF_ASYNC_USE_MODULES})
+include(cmake/fetch_deps.cmake)
+include(../cmake/dependency_targets.cmake)
+async_dependency_targets(asio "${CMAKE_CURRENT_SOURCE_DIR}/deps.json")
+
+if(LCF_ASYNC_USE_MODULES)
+    add_library(async_asio_runtime STATIC src/asio.cpp)
+    target_link_libraries(async_asio_runtime PUBLIC asio::asio)
+    target_compile_features(async_asio_runtime PUBLIC cxx_std_23)
+    target_compile_definitions(async_asio_runtime PUBLIC ASIO_SEPARATE_COMPILATION)
+    set_target_properties(async_asio_runtime PROPERTIES CXX_EXTENSIONS OFF CXX_SCAN_FOR_MODULES OFF
+        FOLDER "async/asio/dependencies")
+    async_add_backend(asio LIBRARIES async_asio_runtime)
+    list(APPEND async_implementation_sources "${CMAKE_CURRENT_SOURCE_DIR}/src/asio.cpp")
+else()
+    async_add_backend(asio LIBRARIES asio::asio)
+endif()
+
+async_backend_development(asio)
