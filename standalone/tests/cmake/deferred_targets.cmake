@@ -60,11 +60,11 @@ foreach(async_operation verify sandbox lessons benchmark)
             target_sources(async_standalone_${async_operation} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/sandbox/module_example.cpp")
         endif()
     elseif(async_operation STREQUAL "lessons")
-        target_sources(async_standalone_${async_operation} PRIVATE
-            "${CMAKE_CURRENT_SOURCE_DIR}/lessons/lesson01_frame_lifetime.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/lessons/lesson02_await_protocol.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/lessons/lesson03_nested_coroutines.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/lessons/lesson04_ownership.cpp")
+        include("${CMAKE_CURRENT_SOURCE_DIR}/lessons/sources.cmake")
+        foreach(async_lesson_source IN LISTS async_standalone_lesson_sources)
+            target_sources(async_standalone_${async_operation} PRIVATE
+                "${CMAKE_CURRENT_SOURCE_DIR}/lessons/${async_lesson_source}")
+        endforeach()
     else()
         target_sources(async_standalone_${async_operation} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/benchmark/benchmark.cpp"
             )

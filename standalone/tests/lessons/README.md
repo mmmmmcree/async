@@ -2,7 +2,7 @@
 
 These lessons assume ordinary C++ knowledge: functions, classes, references, destructors and exceptions. No coroutine, sender/receiver or scheduler background is required. Each `.cpp` contains one GoogleTest lesson, its teaching types and their definitions. Read the `TEST` first, then follow the functions it calls. `EXPECT_*` checks a prediction; `ASSERT_*` stops the lesson when a prerequisite fails.
 
-The complete course has **31 planned lessons in seven stages**. Lessons 01–04 are implemented and complete Stage I; Lessons 05–31 are the implementation roadmap below. The goal is to explain the actual standalone backend, from a coroutine's first suspension to scheduling, composition, cancellation and frame reclamation.
+The complete course has **31 implemented lessons in seven stages**. Each lesson is an independently runnable GoogleTest. The goal is to explain the actual standalone backend, from a coroutine's first suspension to scheduling, composition, cancellation and frame reclamation.
 
 The learning sequence is:
 
@@ -26,6 +26,50 @@ The first four files introduce small teaching types in observable steps. Lesson 
 | 02 | What exactly does `co_await` call? | [The awaiter protocol](lesson02_await_protocol.cpp) |
 | 03 | How does a child return a value or exception to its parent? | [Nested coroutines and continuations](lesson03_nested_coroutines.cpp) |
 | 04 | Who owns the frame and its data while it is suspended? | [Ownership across suspension](lesson04_ownership.cpp) |
+| 05 | Who calls resume after the caller hands work off? | [A callback queue](lesson05_callback_queue.cpp) |
+| 06 | What do sender, receiver and operation state each do? | [The completion protocol](lesson06_sender_receiver.cpp) |
+| 07 | How do value, error and stopped differ? | [Completion channels](lesson07_completion_channels.cpp) |
+| 08 | Can a whole pipeline finish inside start? | [An inline pipeline](lesson08_inline_pipeline.cpp) |
+| 09 | Which object submits, and which object runs work? | [Context and executor](lesson09_context_executor.cpp) |
+| 10 | What does a scheduler manufacture? | [A schedule sender](lesson10_scheduler_sender.cpp) |
+| 11 | Why does an idle worker wait or exit? | [Worker and work lifetime](lesson11_worker_lifetime.cpp) |
+| 12 | Does a polling budget count callbacks or logical steps? | [Cooperative budgets](lesson12_poll_budgets.cpp) |
+| 13 | Who drives queued work inside sync_wait? | [The waiting run loop](lesson13_sync_wait.cpp) |
+| 14 | How can Awaitable be both a child and a root sender? | [Real coroutine results](lesson14_awaitable_roots.cpp) |
+| 15 | How does co_await use connect and start? | [Awaiting a sender](lesson15_await_sender.cpp) |
+| 16 | What if completion happens before await_suspend returns? | [The completion handshake](lesson16_completion_handshake.cpp) |
+| 17 | How does a coroutine return to its own executor? | [Environment and routing](lesson17_environment_routing.cpp) |
+| 18 | How do yield and reschedule_on change execution? | [Queue and thread handoffs](lesson18_yield_reschedule.cpp) |
+| 19 | How do starts_on, continues_on and on differ? | [Scheduling a graph](lesson19_schedule_graph.cpp) |
+| 20 | Does returning a sender also start it? | [then and let_value](lesson20_map_and_flatten.cpp) |
+| 21 | When may independent branches complete a join? | [when_all](lesson21_join_branches.cpp) |
+| 22 | Who owns a shared result for late subscribers? | [split](lesson22_share_execution.cpp) |
+| 23 | Where does execution resume after local recovery? | [Error recovery](lesson23_local_recovery.cpp) |
+| 24 | Does a retry reuse an already-started operation? | [Fresh attempts](lesson24_retry_attempts.cpp) |
+| 25 | When does stopped skip pending coroutine code? | [Cooperative cancellation](lesson25_stop_requests.cpp) |
+| 26 | Can registering or completing destroy the operation? | [Registration and destruction](lesson26_registration_lifetime.cpp) |
+| 27 | Who makes a timer ready, and who delivers it? | [Timers](lesson27_timers.cpp) |
+| 28 | Is a signal resettable, and what do late waiters see? | [One-shot notifications](lesson28_signals.cpp) |
+| 29 | Which allocator creates a frame, and when? | [Frame and execution allocators](lesson29_frame_allocators.cpp) |
+| 30 | Can a frame outlive its creator thread? | [Reuse and reclamation](lesson30_frame_reclamation.cpp) |
+| 31 | Can you explain each completion and owner through shutdown? | [A complete backend trace](lesson31_backend_trace.cpp) |
+
+## First-reading guide
+
+Use a C++23-capable toolchain and read in numeric order. These are standalone's sender/receiver APIs under `lcf::async::exec`, not an assumption that the standard library supplies the same algorithms. In the files, `namespace ex = lcf::async::exec;` is only a shorter spelling.
+
+Start at the `TEST` near the bottom of each file. Read its setup and the assertion immediately after each action, predict the result, then open the helper named by that action. Do not start by reading every template declaration. A prerequisite is a reading prerequisite; no lesson needs another test to have run first. The first four teaching types explain language mechanics; production types take over from Lesson 09.
+
+Small pieces of C++ notation recur:
+
+- `sender_concept` and `receiver_concept` are marker type aliases. A concept checks requirements at compile time; these markers are not inheritance hierarchies.
+- `set_value_t(int)` is a function type used to describe a channel and its payload. `completion_signatures<...>` lists possible outcomes; it does not execute them. Lesson 07 checks both the types and actual deliveries.
+- `ex::connect`, `start` and completion objects call the corresponding member functions. A terminal receiver member is `noexcept`. Exceptions raised by work travel through `set_error`; they do not escape the terminal call.
+- `auto operation = connect(...)` constructs the operation directly. Some operation types are intentionally immovable because callbacks point into them; guaranteed copy elision allows a factory to return such an object.
+- A result tuple holds zero, one or several values. `ASSERT_TRUE(result)` checks that an optional contains a tuple before `std::get<0>(*result)` reads it. An engaged empty tuple represents successful void completion; it differs from `nullopt` (stopped).
+- `NativeApi.h` is a development-only include wrapper in `tests/common`. It selects the public `async.h` header or the module import; it does not provide a hidden lesson runtime. Teaching helpers remain in their own `.cpp`.
+
+For each experiment, keep four questions separate: **who owns it, who starts it, who resumes it, and where does it run?** A scheduler in an environment does not by itself create a worker or queue initial body entry. Explicit scheduling and the thread that pumps a context determine execution.
 
 ## Build, run and debug
 
@@ -35,7 +79,7 @@ After configuring a development preset, run from the async project root:
 cmake --build --preset header-msvc-debug --target async_standalone_lessons
 ```
 
-This target builds and runs all four lessons. Substitute `header-clang-debug` or another configured build preset as needed. To run already-built lessons through CTest:
+This target builds and runs all 31 lessons. Substitute `header-clang-debug` or another configured build preset as needed. To run already-built lessons through CTest:
 
 ```powershell
 ctest --preset header-msvc-debug -L standalone_lessons --output-on-failure
@@ -46,6 +90,8 @@ In VS Code, build and debug `async_standalone_lessons_tests`. Select a single le
 ```text
 --gtest_filter=CoroutineLessons.Lesson02AwaitReadySuspendResume
 ```
+
+To select a later stage, use a wildcard such as `--gtest_filter=CoroutineLessons.Lesson2*` (Lessons 20–29). To inspect Lesson 30's address-reuse observation, add `--gtest_output=xml:lessons.xml` and read its `repeated_frame_addresses` property. This observation is deliberately not a portable performance assertion.
 
 The `standalone.` prefix belongs to CTest names; it is absent from GoogleTest filters. Breakpoints in `await_suspend`, `await_resume`, `return_value` and `final_suspend` expose the execution order. Prefer a Debug build and use the explicit counters/events as a reference when debugger stepping crosses compiler-generated code.
 
@@ -182,7 +228,7 @@ Lessons 01–02 and the void ownership model in Lesson 04 terminate on an unexpe
 
 ## Complete curriculum
 
-Lessons 01–04 have executable files. All subsequent rows are planned lessons, with deliberately separate learning steps. Source paths in the tables are relative to `standalone/include/async`.
+All rows have executable files linked in the index. The steps deliberately separate mechanisms; the notes after the curriculum explain the main observations. Source paths in the tables are relative to `standalone/include/async`.
 
 ### Stage I — Understand suspended functions, Lessons 01–04
 
@@ -261,8 +307,8 @@ Begin with cancellation of a single operation, then study callback registration,
 | --- | --- | --- | --- |
 | **25. Stop requests and stopped completion** | 07, 11, 15–17, 21–24 | Request stop before start and while work is pending. Observe the terminal channel and skipped coroutine code; then compare cancellation of one shared consumer with cancellation of all consumers. | `core/cancellation/operations.h`, `execution/environment.h`, coroutine stop paths, `split.h` and `when_all.h` |
 | **26. Registration and destruction races** | 04, 11, 16, 25 | Register a callback with an already-stopped token and observe that cancellation can run during registration. Use gates to trace completion versus cancellation and receiver-triggered operation destruction. | `core/cancellation/details/StopRegistrationGate.h`, callback ownership and completion paths |
-| **27. Timers** | 10–13, 15–16, 25–26 | Schedule a deadline, drive its context, and cancel another pending wait. Trace timer insertion, readiness, removal and exactly one terminal delivery. | `core/timer/operations.h`, `senders.h`, `details/timer.h`, `details/timer_wait.h`, queue timer handling |
-| **28. Signals and notifications** | 07, 15–16, 25–27 | Register waiters, emit a signal and observe wakeup. Then control reset/cancellation ordering and track subscriber lifetime through completion. | `core/synchronization/Signal.h`, `details/notification.h`, `notification_state.h`, `CompletionEvent.h` |
+| **27. Timers** | 10–13, 15–16, 25–26 | Schedule a deadline, drive its context, and cancel another pending wait. Separate timer-service readiness from queue delivery and observe exactly one terminal outcome. | `core/timer/operations.h`, `senders.h`, `details/timer.h`, `details/timer_wait.h` |
+| **28. Signals and notifications** | 07, 15–16, 25–27 | Register waiters, cancel one, emit a one-shot signal and observe incremental wakeup and late subscription. Start another round with a fresh Signal; there is no reset API. | `core/synchronization/Signal.h`, `details/notification.h`, `notification_state.h`, `CompletionEvent.h` |
 
 **Exit question:** for a pending timer or signal wait, list who owns the operation, who may complete it, how cancellation is registered, and which synchronization step prevents a second completion or access after destruction.
 
@@ -277,6 +323,68 @@ The mechanisms are already understood. Now examine their storage and optimizatio
 | **31. Capstone: trace the whole backend** | 01–30 | Drive a frame context with a cooperative budget while a worker produces a shared result. Branch, join, wait on a timer/signal, recover or retry locally, then cancel and shut down. Annotate every queue hop, completion and owner release. | Follow `async.h` through `core` and `execution`, ending at queue removal and frame/operation destruction |
 
 **Exit question:** given the capstone trace, explain the source path responsible for each event and predict how changing a scheduler, poll budget, failure point or stop request changes the trace. Account for every live frame and operation through shutdown.
+
+## Walkthrough: Lessons 05–13
+
+**05:** `owner.start()` executes the first body step and queues a callback borrowing the frame. Only `queue.pollOne()` executes the second step. The separate shared-pointer experiment shows that the queue owns its callable and captured data until invocation returns. Keep this owning relationship distinct from the callback's non-owning coroutine handle.
+
+**06:** draw three boxes: `IntegerSender` (description), `Operation` (receiver plus value), and `RecordingReceiver` (destination). Connect builds the middle box; start calls through to the last. A copyable sender can describe another execution, but a particular operation is started once.
+
+**07:** select each `Channel` and predict which counter changes. The error integer is payload on a different channel, not a successful negative answer. The final two cases execute void and multi-value completions. `just()` is a small preview of the factory opened in the next lesson.
+
+**08:** the pipe builds nested descriptions; it does not invoke the lambdas. Both continuations execute during one start because each upstream stage completes inline. There is no context or thread handoff here. Adding another `then` adds a logical step, not automatically a queue boundary.
+
+**09:** both copied executors point to the context's queue. Readiness changes from two to one to zero as the caller pumps it. The IDs show that posting is not the same as launching a worker.
+
+**10:** `schedule(scheduler)` produces a sender; connect produces its operation; start enqueues its callback. The receiver is pending until poll. Its `get_env()` returns a small property object so nested operations can ask for a scheduler. The sender's completion-scheduler query answers a different question: where that sender delivers values.
+
+**11:** outstanding work keeps `runUntilIdle` waiting even when the ready queue is empty. The callback's explicit gate establishes when a second callback is waiting in that queue; a timeout alone is not used to infer scheduling. Releasing the gate permits `workFinished()` and idle exit. In the separate stop/restart experiment, stop preserves queued work and restart admits it. Join establishes when worker-written observations may be read safely.
+
+**12:** a budget admits callbacks. One callback can start the entire familiar inline pipeline, and the budget does not count its individual continuations. A time allowance is checked between callbacks; the slow admitted callback completes even after the allowance has expired. The short busy interval demonstrates that rule, not useful throughput.
+
+**13:** `sync_wait` connects a receiver with its own run-loop scheduler, starts, and pumps that loop on its caller. This lets a coroutine yield without creating a worker. It cannot drive arbitrary unrelated contexts: work explicitly scheduled elsewhere still needs that context driven. Success returns an optional tuple, error rethrows, and stopped returns an empty optional. Do not generalize stopped to an exception.
+
+## Walkthrough: Lessons 14–18
+
+**14:** match value, void and move-only results to Lesson 03's teaching storage. A child is consumed by `TaskAwaiter`, while a root is connected through `AwaitableOperation`. Reading a result and releasing a frame are separate responsibilities. The tests exercise the same result kinds on both paths and transport an exception.
+
+**15:** compare the two routes written in the file's source map. Awaiting an Awaitable uses a child frame and continuation. Awaiting a sender builds an adapter receiver and operation state; its result is stored for `await_resume`. The event sequence exposes connect/start/delivery between the parent's before/after events.
+
+**16:** the three inputs force completion inline, on a joined producer during start, and on a producer after suspension setup. The first two continue through `await_suspend` returning false; the last uses publication to resume. Atomics publish stored data and select one continuation path. The test supplies no scheduler, so only that last case continues on the completing thread. A scheduler environment changes the routing, which is the next lesson.
+
+**17:** the child's environment inherits the home executor. Completing a schedule sender on another context queues a resume callback back home; polling only the foreign context cannot finish the parent. After home runs, unchanged child routing transfers directly to the parent, then root dispatch notifies its receiver. Directly starting a root with an environment enters the body inline; `as_sender` or `starts_on` adds initial scheduling.
+
+**18:** count two callbacks for a real coroutine yield: the scheduled operation completes, then its adapter queues coroutine resumption. Those are two callbacks even if an unrestricted poll executes both. The child then changes its executor with `reschedule_on`. Its saved return executor still identifies home, so final completion queues the parent's return there. The recorded IDs make each transition visible.
+
+## Walkthrough: Lessons 19–24
+
+**19:** read the three-row table in the source before tracing the operations. `starts_on` schedules producer entry and supplies that scheduler upstream. `continues_on` transfers the stored outcome downstream. `on` schedules the producer and restores the downstream receiver's scheduler afterward. Ordinary continuations execute where completion is delivered; coroutine resumption has the additional routing seen in Lesson 17.
+
+**20:** `then` returning `just(42)` returns a sender as an ordinary value. Running that nested sender requires another execution. `let_value` instead creates and starts its nested operation. Its retained input permits a nested scheduled callback to borrow the shared pointer by reference until completion. The observer verifies release when the outer operation's scope ends.
+
+**21:** on success, branch two completes first and values still arrive as 20, 22. In the error variation, branch one errors first and the join remains pending until branch two terminates. That manual sender deliberately ignores stop requests; cancellation cannot force arbitrary work to terminate. Keep the join owner alive until both callbacks have been consumed.
+
+**22:** both subscribers observe the identical move-only payload in shared completion storage, and a late subscriber sees that same identity without another producer call. A marker inside the cached payload stays live through completion and expires when all owners leave scope. Turn borrowed shared results into owned outputs before their storage can disappear.
+
+**23:** the prefix ran before failure, so local recovery does not undo or repeat it. An intervening value continuation is skipped. `upon_error` maps error to value; `let_error` creates recovery work that can remain queued. A single manual poll makes that distinction visible without introducing another worker mechanism.
+
+**24:** the attempt vector is 1, 2, 3, while construction/destruction counters show one live attempt state at a time. A limit of two preserves the error before the third attempt can succeed. The larger failure-only case exercises the iterative drive loop; many immediate failures must not produce one recursive start chain per attempt.
+
+## Walkthrough: Lessons 25–31
+
+**25:** compare pre-stop with a root already waiting on a signal. Stopped skips the code after its await. For split, distinguish active subscriptions from reusable sender handles: the sender handle itself counts as a consumer. The three sharing cases cancel one subscriber, cancel all consumers, or cancel both subscriptions while retaining the reusable handle. Only the case with no remaining consumer handles requests upstream stop.
+
+**26:** the first event trace puts cancellation inside the registration constructor. Registration gates defer completion until setup can safely finish. The production experiment then controls cancellation versus notification ordering, including a notification already queued when cancellation wins. Its receiver deletes its own operation. Registration and queued ownership keep callbacks safe through that deletion, and the terminal guard prevents a second notification.
+
+**27:** the timer service owns deadline ordering and a worker; the selected context delivers a ready callback. Thus a pending wait can exist with an empty context queue. Both expiry and cancellation become exactly one terminal delivery on the polling thread. Duration begins at start. The experiment bounds readiness waits and does not require a fragile exact wall-clock duration.
+
+**28:** this Signal is one-shot. Canceling one waiter removes it without notifying the others. Set queues the first active waiter; its dispatch advances to the next. A late waiter observes the already-set signal. A fresh Signal starts another independent round; no reset call exists.
+
+**29:** the first resource sees allocation while body-entry count is still zero. The second resource is queried only when execution starts and is used by the small PMR vector. Finishing releases the original frame through its recorded resource with the original size and alignment. Discarding another unstarted task releases its frame without entering its body.
+
+**30:** repeated frame addresses may appear, but no test treats address reuse as a semantic promise. The XML property records the observation. Ownership checks instead require every payload to expire, including a frame moved out of its creator thread and a TLS-held task destroyed after cache retirement. Consult cache bins and the retired direct-delete path before drawing conclusions from timing.
+
+**31:** root entry queues a producer; its joined worker completes a shared result and performs a local two-attempt retry. Both branches return to the frame context; one waits for signal and timer. Every frame poll admits at most one callback. The success trace returns 41; the stop trace skips the join's coroutine continuation. The final marker and empty queues account for ownership through shutdown. Reconstruct that trace from the source map before changing one input.
 
 ### How each lesson should teach
 

@@ -1,0 +1,33 @@
+# One source list keeps the executable and deferred-build IDE target in sync.
+set(async_standalone_lesson_sources
+    lesson01_frame_lifetime.cpp
+    lesson02_await_protocol.cpp
+    lesson03_nested_coroutines.cpp
+    lesson04_ownership.cpp
+    lesson05_callback_queue.cpp
+    lesson06_sender_receiver.cpp
+    lesson07_completion_channels.cpp
+    lesson08_inline_pipeline.cpp
+    lesson09_context_executor.cpp
+    lesson10_scheduler_sender.cpp
+    lesson11_worker_lifetime.cpp
+    lesson12_poll_budgets.cpp
+    lesson13_sync_wait.cpp
+    lesson14_awaitable_roots.cpp
+    lesson15_await_sender.cpp
+    lesson16_completion_handshake.cpp
+    lesson17_environment_routing.cpp
+    lesson18_yield_reschedule.cpp
+    lesson19_schedule_graph.cpp
+    lesson20_map_and_flatten.cpp
+    lesson21_join_branches.cpp
+    lesson22_share_execution.cpp
+    lesson23_local_recovery.cpp
+    lesson24_retry_attempts.cpp
+    lesson25_stop_requests.cpp
+    lesson26_registration_lifetime.cpp
+    lesson27_timers.cpp
+    lesson28_signals.cpp
+    lesson29_frame_allocators.cpp
+    lesson30_frame_reclamation.cpp
+    lesson31_backend_trace.cpp)
