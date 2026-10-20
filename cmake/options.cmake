@@ -1,5 +1,4 @@
 include_guard(GLOBAL)
-include(CMakeDependentOption)
 
 option(LCF_ASYNC_ENABLE_ASIO "Enable the Asio implementation" ON)
 option(LCF_ASYNC_ENABLE_STDEXEC "Enable the stdexec implementation" OFF)

@@ -20,7 +20,7 @@ if(LCF_ASYNC_USE_MODULES)
         add_test(NAME "standalone.Modules.${probe_definition}InternalsAreNotExported"
             COMMAND "${CMAKE_COMMAND}" "-DBUILD_DIR=${CMAKE_BINARY_DIR}" "-DCONFIG=$<CONFIG>"
                 "-DPROBE_TARGET=${probe_target}" "-DPRIVATE_NAME=${private_name}"
-                -P "${CMAKE_CURRENT_SOURCE_DIR}/../cmake/check_module_privacy.cmake")
+                -P "${CMAKE_CURRENT_SOURCE_DIR}/../../../cmake/check_module_privacy.cmake")
         set_tests_properties("standalone.Modules.${probe_definition}InternalsAreNotExported"
             PROPERTIES LABELS "standalone_verify;modules" RUN_SERIAL TRUE TIMEOUT 60)
     endforeach()

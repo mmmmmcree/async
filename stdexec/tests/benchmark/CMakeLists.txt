@@ -1,9 +1,9 @@
 include(../../../cmake/development.cmake)
-async_stdexec_test_dependency(BENCHMARK benchmark::benchmark benchmark googlebenchmark
+async_test_dependency(STDEXEC BENCHMARK benchmark::benchmark benchmark googlebenchmark
     https://github.com/google/benchmark.git 192ef10025eb2c4cdd392bc502f0c852196baa48)
 add_executable(async_stdexec_benchmark_tests ../../../tests/benchmark/benchmark.cpp)
 async_configure_test_target(async_stdexec_benchmark_tests stdexec benchmark)
-target_link_libraries(async_stdexec_benchmark_tests PRIVATE lcf::async_stdexec benchmark::benchmark)
+target_link_libraries(async_stdexec_benchmark_tests PRIVATE benchmark::benchmark)
 set(LCF_ASYNC_STDEXEC_BENCHMARK_RESULTS_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/results" CACHE PATH "Benchmark JSON output directory")
 add_custom_target(async_stdexec_benchmark
     COMMAND "${CMAKE_COMMAND}" -E make_directory "${LCF_ASYNC_STDEXEC_BENCHMARK_RESULTS_DIRECTORY}"
