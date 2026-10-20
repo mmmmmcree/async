@@ -1,0 +1,5 @@
+include("${CMAKE_CURRENT_LIST_DIR}/../../cmake/backend.cmake")
+async_backend_options(stdexec OFF
+    LCF_ASYNC_STDEXEC_STDEXEC_PROVIDER
+    LCF_ASYNC_STDEXEC_GTEST_PROVIDER
+    LCF_ASYNC_STDEXEC_BENCHMARK_PROVIDER)
