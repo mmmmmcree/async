@@ -24,7 +24,7 @@ class NotificationRegistration
 public:
     NotificationRegistration(std::shared_ptr<Notification> notification_sp, Receiver receiver, std::optional<Executor> executor_opt) :
         m_notification_sp(std::move(notification_sp)), m_receiver(std::move(receiver)), m_executor_opt(std::move(executor_opt)),
-        m_callback {&Self::invoke, nullptr, this}
+        m_callback(Callback::make<&Self::invoke>(this))
     {
         m_waiter.m_complete = &Self::finish;
         m_waiter.m_dispatch = &Self::dispatch;

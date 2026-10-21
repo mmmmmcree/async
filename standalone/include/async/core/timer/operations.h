@@ -20,8 +20,14 @@ struct DelaySender
     auto connect(Receiver receiver) const
     {
         using Registration = details::TimerRegistration<Receiver>;
+        auto executor = m_executor;
+        if (not executor) {
+            if constexpr (requires { exec::get_scheduler(exec::get_env(receiver)); }) {
+                executor = Executor {exec::get_scheduler(exec::get_env(receiver))};
+            }
+        }
         return Operation<Receiver> {std::allocate_shared<Registration>(std::pmr::polymorphic_allocator<Registration> {m_resource_p},
-            std::move(receiver), m_duration, m_executor)};
+            std::move(receiver), m_duration, std::move(executor))};
     }
     std::chrono::steady_clock::duration m_duration;
     std::pmr::memory_resource * m_resource_p;

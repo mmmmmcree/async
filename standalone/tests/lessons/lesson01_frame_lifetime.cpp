@@ -78,8 +78,14 @@ public:
     Self & operator=(Self &&) = delete;
 public:
     // The TEST resumes only a suspended, unfinished coroutine.
-    void resume() const { m_handle.resume(); }
-    bool done() const noexcept { return m_handle.done(); }
+    void resume() const
+    {
+        m_handle.resume();
+    }
+    bool done() const noexcept
+    {
+        return m_handle.done();
+    }
 private:
     Handle m_handle;
 };

@@ -16,10 +16,13 @@
  * A one-callback budget limits dispatch admission, not inline graph work.
  * Read the TEST, application(), produce(), then compare success and stop.
  * Explicit gates: the worker is joined before inspecting its results, and
- * the signal is emitted only after branch B has subscribed. All waits are
- * bounded. Markers count root/producer frame ownership through shutdown.
+ * the signal is emitted only after branch B has subscribed. A second gate
+ * observes timer registration before expiry or cancellation is delivered.
+ * The frame context owns that timer; the producer context cannot deliver it.
+ * All waits are bounded. Markers count frame ownership through permanent shutdown.
  * Source map: async.h -> execution/{scheduling,split,when_all,error_handling}
- * -> coroutine/{awaitable,sender_awaiter,state} -> notification/timer -> queue.
+ * -> coroutine/{awaitable,sender_awaiter,state} -> notification/timer
+ * -> TimerService/EventSource -> context callback pump.
  */
 namespace {
 namespace ex = lcf::async::exec;
@@ -30,7 +33,7 @@ struct Trace
     std::mutex m_mutex;
     std::vector<std::string_view> m_events;
     int m_producers = 0, m_attempts = 0, m_joined = 0, m_completed = 0;
-    bool m_waiting = false;
+    bool m_waiting = false, m_timing = false;
     std::thread::id m_producer_thread;
 };
 lcf::async::Awaitable<int> produce(Trace & trace, std::shared_ptr<int> marker)
@@ -41,7 +44,7 @@ lcf::async::Awaitable<int> produce(Trace & trace, std::shared_ptr<int> marker)
     co_return *marker;
 }
 lcf::async::Awaitable<int> application(lcf::async::Scheduler worker, lcf::async::Scheduler frame,
-    lcf::async::Signal & signal, Trace & trace, std::shared_ptr<int> marker)
+    lcf::async::Signal & signal, Trace & trace, std::chrono::steady_clock::duration timer_duration, std::shared_ptr<int> marker)
 {
     using namespace std::chrono_literals;
     trace.add("root: entry");
@@ -59,7 +62,8 @@ lcf::async::Awaitable<int> application(lcf::async::Scheduler worker, lcf::async:
         trace.add("branch: wait signal");
         return signal.wait() | ex::let_value([&, value] {
             trace.add("branch: wait timer");
-            return lcf::async::schedule_after(frame, 1ms) | ex::then([value] { return value + 1; });
+            trace.m_timing = true;
+            return lcf::async::schedule_after(frame, timer_duration) | ex::then([value] { return value + 1; });
         });
     });
     const auto [left, right] = co_await ex::when_all(std::move(first), std::move(second));
@@ -92,7 +96,7 @@ TEST(CoroutineLessons, Lesson31TraceTheWholeBackend)
         const auto caller = std::this_thread::get_id();
         {
             auto graph = lcf::async::as_sender(frame.getScheduler(), application(producer.getScheduler(),
-                frame.getScheduler(), signal, trace, std::move(marker)));
+                frame.getScheduler(), signal, trace, cancel ? 1h : 0ns, std::move(marker)));
             auto operation = ex::connect(ex::with_stop_token(std::move(graph), stop.get_token()), Receiver {trace, value, stopped, errors});
             struct Cleanup
             {
@@ -121,8 +125,16 @@ TEST(CoroutineLessons, Lesson31TraceTheWholeBackend)
             ASSERT_TRUE(pump_until([&] { return trace.m_waiting; }));
             EXPECT_EQ(trace.m_completed, 0);
             EXPECT_FALSE(observer.expired());
-            if (cancel) { trace.add("caller: stop"); stop.request_stop(); }
-            else { trace.add("caller: signal"); EXPECT_TRUE(signal.set()); }
+            trace.add("caller: signal");
+            EXPECT_TRUE(signal.set());
+            ASSERT_TRUE(pump_until([&] { return trace.m_timing; }));
+            EXPECT_EQ(trace.m_completed, 0);
+            EXPECT_EQ(producer.pollOne(), 0u);
+            if (cancel) {
+                EXPECT_EQ(frame.pollOne(), 0u); // Future timer is still outstanding.
+                trace.add("caller: stop");
+                stop.request_stop();
+            }
             ASSERT_TRUE(pump_until([&] { return trace.m_completed == 1; }));
             frame.poll(); // Drain retained queued registrations before destroying owners.
             EXPECT_EQ(errors, 0);
@@ -130,15 +142,18 @@ TEST(CoroutineLessons, Lesson31TraceTheWholeBackend)
             EXPECT_EQ(trace.m_joined, cancel ? 0 : 1);
             EXPECT_EQ(value, cancel ? 0 : 41);
             auto expected = std::vector<std::string_view> {"root: entry", "producer: body", "retry: failure",
-                "retry: success", "branch: wait signal"};
+                "retry: success", "branch: wait signal", "caller: signal", "branch: wait timer"};
             if (cancel) { expected.insert(expected.end(), {"caller: stop", "receiver: stopped"}); }
-            else { expected.insert(expected.end(), {"caller: signal", "branch: wait timer", "root: joined", "receiver: value"}); }
+            else { expected.insert(expected.end(), {"root: joined", "receiver: value"}); }
             EXPECT_EQ(trace.events(), expected);
         }
         EXPECT_TRUE(observer.expired());
         EXPECT_EQ(frame.getReadyCount(), 0u);
         EXPECT_EQ(producer.getReadyCount(), 0u);
-        frame.stop(); producer.stop();
+        frame.shutdown(); producer.shutdown();
+        frame.restart(); producer.restart();
+        EXPECT_EQ(frame.pollOne(), 0u);
+        EXPECT_EQ(producer.pollOne(), 0u);
     }
 }
 }

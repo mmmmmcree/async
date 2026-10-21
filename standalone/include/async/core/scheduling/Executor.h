@@ -40,6 +40,7 @@ public:
     void enqueue(details::Callback * callback_p) const noexcept { m_callbacks.enqueue(callback_p); }
     void workStarted() const noexcept { m_callbacks.workStarted(); }
     void workFinished() const noexcept { m_callbacks.workFinished(); }
+    const details::EventSource * getEventSource() const noexcept { return m_callbacks.getEventSource(); }
     template <typename Function>
     void post(Function function) const { details::post_callback(*this, std::move(function)); }
 private:

@@ -4,17 +4,22 @@
 #include <memory_resource>
 
 /*
- * Lesson 29: frame creation and execution query different allocator policies.
+ * Lesson 29: frame, execution, timer heap and registration resources are distinct.
  * Predict: FrameAllocatorScope allocates before lazy body entry. with_allocator
  * later supplies an execution allocator; it cannot relocate that existing
  * frame. Destruction uses the resource recorded when the frame was created.
+ * Context's resource controls its shared timer heap. delay(duration, resource)
+ * controls the individual registration allocated by connect. start inserts it
+ * into the heap; delivery releases the registration, but heap capacity stays
+ * until the queue dies. One resource setting does not override the others.
  * Read the TEST, make_work(), InspectAllocator, CountingResource.
  * The resources outlive every frame/operation using them. Paired size/alignment
  * checks validate provenance, not just equal allocation/deallocation counts.
  * Vary: run a frame after its allocation scope ends, then discard an unstarted
  * frame. Noinline factories keep the allocation experiment visible in Release.
  * Source map: FrameAllocatorScope.h, promise operator new/delete, frame.h,
- * execution/environment.h, ReturnStorage.h.
+ * execution/environment.h, ReturnStorage.h, Context.h, timer/operations.h,
+ * timer/details/timer.h and TimerService.h.
  */
 namespace {
 namespace ex = lcf::async::exec;
@@ -78,6 +83,16 @@ lcf::async::Awaitable<int> make_work(int & entries, std::pmr::memory_resource * 
     (void)marker;
     co_return result;
 }
+struct TimerReceiver
+{
+    using receiver_concept = ex::receiver_t;
+    auto get_env() const noexcept { return ex::prop {ex::get_scheduler, m_scheduler}; }
+    void set_value() noexcept { ++m_completions; }
+    void set_error(std::exception_ptr) noexcept { ADD_FAILURE() << "unexpected timer error"; }
+    void set_stopped() noexcept { ADD_FAILURE() << "unexpected timer stop"; }
+    lcf::async::Scheduler m_scheduler;
+    int & m_completions;
+};
 TEST(CoroutineLessons, Lesson29FrameAndExecutionAllocators)
 {
     CountingResource frames, execution;
@@ -109,5 +124,30 @@ TEST(CoroutineLessons, Lesson29FrameAndExecutionAllocators)
     }
     EXPECT_EQ(entries, 1);
     EXPECT_TRUE(frames.balanced());
+
+    // Revisit Lesson 27 with two independent timer resources.
+    CountingResource timer_heap, registrations;
+    {
+        lcf::async::Context context {&timer_heap};
+        const auto initial_heap_allocations = timer_heap.m_allocations; // Debug container proxies may already exist.
+        int completions = 0;
+        auto operation = ex::connect(lcf::async::delay(std::chrono::nanoseconds {0}, &registrations),
+            TimerReceiver {context.getScheduler(), completions});
+        EXPECT_GT(registrations.m_allocations, 0);
+        EXPECT_EQ(timer_heap.m_allocations, initial_heap_allocations);
+        const auto registration_allocations = registrations.m_allocations;
+
+        ex::start(operation);
+        EXPECT_GT(timer_heap.m_allocations, initial_heap_allocations);
+        EXPECT_EQ(registrations.m_allocations, registration_allocations);
+        EXPECT_EQ(completions, 0);
+        EXPECT_EQ(context.pollOne(), 1u);
+        EXPECT_EQ(completions, 1);
+        EXPECT_TRUE(registrations.balanced());
+        EXPECT_FALSE(timer_heap.balanced()); // An empty heap retains its buffer.
+        context.shutdown();
+    }
+    EXPECT_TRUE(timer_heap.balanced());
+    EXPECT_TRUE(registrations.balanced());
 }
 }

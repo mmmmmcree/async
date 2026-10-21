@@ -17,6 +17,8 @@ set(async_header_sources
     include/async/core/protocol.h
     include/async/core/scheduling/Context.h
     include/async/core/scheduling/details/CallbackExecutor.h
+    include/async/core/scheduling/details/callback.h
+    include/async/core/scheduling/details/EventSource.h
     include/async/core/scheduling/details/queue.h
     include/async/core/scheduling/details/scheduled_operation.h
     include/async/core/scheduling/Executor.h
@@ -28,6 +30,7 @@ set(async_header_sources
     include/async/core/synchronization/details/notification_state.h
     include/async/core/synchronization/Signal.h
     include/async/core/timer/details/timer.h
+    include/async/core/timer/details/TimerService.h
     include/async/core/timer/details/timer_wait.h
     include/async/core/timer/operations.h
     include/async/core/timer/senders.h

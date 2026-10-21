@@ -3,6 +3,7 @@
 #include <async/dependencies.h>
 
 #include <async/core/scheduling/Executor.h>
+#include <async/core/timer/details/TimerService.h>
 
 namespace lcf::async {
 
@@ -27,8 +28,11 @@ class Context
 {
     using Self = Context;
 public:
-    ~Context() noexcept { this->stop(); }
-    Context() : m_queue_sp(std::make_shared<details::Queue>()), m_executor(Scheduler {m_queue_sp}) {}
+    ~Context() noexcept { this->shutdown(); }
+    Context() : Context(std::pmr::get_default_resource()) {}
+    /* The non-owning resource controls timer heap storage, not operation/frame allocations. */
+    explicit Context(std::pmr::memory_resource * timer_resource_p) :
+        m_queue_sp(details::make_timed_queue(timer_resource_p)), m_executor(Scheduler {m_queue_sp}) {}
     Context(const Self &) = delete;
     Self & operator=(const Self &) = delete;
 public:
@@ -39,7 +43,7 @@ public:
     {
         auto * callback_p = m_queue_sp->pop(false);
         if (not callback_p) { return 0; }
-        callback_p->m_invoke(callback_p);
+        callback_p->invoke();
         return 1;
     }
     PollReport poll(PollBudget budget = {})
@@ -59,14 +63,15 @@ public:
     }
     void run()
     {
-        while (auto * callback_p = m_queue_sp->pop(true)) { callback_p->m_invoke(callback_p); }
+        while (auto * callback_p = m_queue_sp->pop(true)) { callback_p->invoke(); }
     }
     void runUntilIdle()
     {
-        while (auto * callback_p = m_queue_sp->pop(true, true)) { callback_p->m_invoke(callback_p); }
+        while (auto * callback_p = m_queue_sp->pop(true, true)) { callback_p->invoke(); }
     }
     void stop() noexcept { m_queue_sp->stop(); }
     void restart() noexcept { m_queue_sp->restart(); }
+    void shutdown() noexcept { m_queue_sp->shutdown(); }
 private:
     std::shared_ptr<details::Queue> m_queue_sp;
     Executor m_executor;

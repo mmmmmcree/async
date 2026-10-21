@@ -3,7 +3,7 @@
 #include <async/core/protocol.h>
 #include <functional>
 #include <memory>
-#include <async/core/scheduling/details/queue.h>
+#include <async/core/scheduling/details/callback.h>
 
 namespace lcf::async::details {
 
@@ -14,7 +14,7 @@ class ScheduledOperation
 public:
     using operation_state_concept = exec::operation_state_t;
     ScheduledOperation(Target target, Receiver receiver) :
-        m_target(std::move(target)), m_receiver(std::move(receiver)), m_callback {&Self::invoke, nullptr, this} {}
+        m_target(std::move(target)), m_receiver(std::move(receiver)), m_callback(Callback::make<&Self::invoke>(this)) {}
     ScheduledOperation(const Self &) = delete;
     Self & operator=(const Self &) = delete;
 public:
@@ -37,12 +37,13 @@ void post_callback(const Target & target, Function function)
 {
     struct Record
     {
-        explicit Record(Function function) : m_callback {&Record::invoke, nullptr, this}, m_function(std::move(function)) {}
+        explicit Record(Function function) : m_callback(Callback::make<&Record::invoke, &Record::abandon>(this)), m_function(std::move(function)) {}
         static void invoke(Callback * callback_p)
         {
             std::unique_ptr<Record> record_up {static_cast<Record *>(callback_p->m_owner_p)};
             std::invoke(record_up->m_function);
         }
+        static void abandon(Callback * callback_p) noexcept { delete static_cast<Record *>(callback_p->m_owner_p); }
         Callback m_callback;
         Function m_function;
     };

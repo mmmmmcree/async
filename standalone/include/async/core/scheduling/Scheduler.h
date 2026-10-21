@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/core/scheduling/details/scheduled_operation.h>
+#include <async/core/scheduling/details/queue.h>
 #include <cassert>
 #include <functional>
 #include <memory>
@@ -38,6 +39,7 @@ public:
         return {m_queue_sp};
     }
     void enqueue(details::Callback * callback_p) const noexcept { m_queue_sp->push(callback_p); }
+    const details::EventSource & getEventSource() const noexcept { return m_queue_sp->getEventSource(); }
     void workStarted() const noexcept { m_queue_sp->workStarted(); }
     void workFinished() const noexcept { m_queue_sp->workFinished(); }
     template <typename Function>

@@ -47,7 +47,7 @@ class SenderAwaiter
     };
     using Operation = exec::connect_result_t<Source, Receiver>;
 public:
-    explicit SenderAwaiter(Source source) : m_source(std::move(source)), m_callback {&Self::resume, nullptr, this} {}
+    explicit SenderAwaiter(Source source) : m_source(std::move(source)), m_callback(Callback::make<&Self::resume>(this)) {}
     SenderAwaiter(const Self &) = delete;
     Self & operator=(const Self &) = delete;
 public:

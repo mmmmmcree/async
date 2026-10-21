@@ -19,7 +19,7 @@ struct CoroutineEnvironment
 
 struct CoroutineState
 {
-    CoroutineState() noexcept : m_final_callback {&CoroutineState::finish_queued, nullptr, this} {}
+    CoroutineState() noexcept : m_final_callback(Callback::make<&CoroutineState::finish_queued>(this)) {}
     CoroutineState(const CoroutineState &) = delete;
     CoroutineState & operator=(const CoroutineState &) = delete;
     std::coroutine_handle<> finish() noexcept
