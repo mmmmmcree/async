@@ -4,6 +4,10 @@ module;
 
 export module lcf.async;
 
-export {
-#include <async/async.h>
-}
+// Only this interface translation unit turns public declarations into exports.
+#undef LCF_ASYNC_EXPORT
+#define LCF_ASYNC_EXPORT export
+
+#include "async/async.h"
+
+#undef LCF_ASYNC_EXPORT

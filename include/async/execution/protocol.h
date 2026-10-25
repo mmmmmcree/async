@@ -1,8 +1,9 @@
 #pragma once
 
-#include <async/execution/config.h>
+#include "config.h"
 
 // Public execution vocabulary; independent of async's runtime mechanisms.
+LCF_ASYNC_EXPORT
 namespace lcf::async::exec {
 
 using stde::sender_t;

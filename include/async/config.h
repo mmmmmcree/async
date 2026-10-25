@@ -1,6 +1,6 @@
 #pragma once
 
-// Declaration annotation for headers shared with a module interface.
+// The module interface overrides this locally after loading external headers.
 #ifndef LCF_ASYNC_EXPORT
 #define LCF_ASYNC_EXPORT
 #endif

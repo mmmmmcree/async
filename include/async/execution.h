@@ -1,8 +1,9 @@
 #pragma once
 
-#include <async/execution/protocol.h>
-#include <async/execution/sync_wait.h>
+#include "execution/protocol.h"
+#include "execution/sync_wait.h"
 
+LCF_ASYNC_EXPORT
 namespace lcf::async::exec {
 
 // Keep provider types and customization points intact; do not wrap algorithms.

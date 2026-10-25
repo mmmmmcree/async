@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/config.h>
+#include "../config.h"
 
 #ifndef LCF_ASYNC_USE_STD_EXECUTION
 #include <version>
