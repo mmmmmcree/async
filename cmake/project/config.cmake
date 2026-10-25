@@ -11,7 +11,9 @@ set(lib_headers
     include/async/config.h
     include/async/core.h
     include/async/execution.h
-    include/async/execution/details/provider.h)
+    include/async/execution/config.h
+    include/async/execution/protocol.h
+    include/async/execution/sync_wait.h)
 set(lib_sources )
 set(lib_module_files modules/async.cppm)
 set(lib_module_name lcf.async)

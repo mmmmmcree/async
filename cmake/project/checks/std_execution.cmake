@@ -1,4 +1,4 @@
-# Probe the actual compiler, standard library and language mode.
+# Probe standard-library execution.
 function(async_check_std_execution output)
     include(CheckCXXSourceCompiles)
     set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)

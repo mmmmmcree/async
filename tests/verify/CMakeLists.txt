@@ -21,7 +21,7 @@ if(NOT TARGET GTest::gtest_main)
 endif()
 
 set(verify_target ${lib_target}_verify)
-add_executable(${verify_target} headers_test.cpp)
+add_executable(${verify_target} execution_test.cpp)
 lcf_test_target(${verify_target} GTest::gtest_main)
 
 include(GoogleTest)

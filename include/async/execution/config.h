@@ -1,5 +1,7 @@
 #pragma once
 
+#include <async/config.h>
+
 #ifndef LCF_ASYNC_USE_STD_EXECUTION
 #include <version>
 #ifdef __cpp_lib_senders
@@ -11,12 +13,16 @@
 
 #if LCF_ASYNC_USE_STD_EXECUTION
 #include <execution>
-namespace lcf::async::details {
-namespace execution = std::execution;
-}
 #else
 #include <stdexec/execution.hpp>
-namespace lcf::async::details {
-namespace execution = stdexec;
-}
 #endif
+
+namespace lcf::async::exec {
+
+#if LCF_ASYNC_USE_STD_EXECUTION
+namespace stde = ::std::execution;
+#else
+namespace stde = ::stdexec;
+#endif
+
+} // namespace lcf::async::exec

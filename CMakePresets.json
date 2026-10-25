@@ -16,6 +16,13 @@
             }
         },
         {
+            "name": "use-modules",
+            "hidden": true,
+            "cacheVariables": {
+                "LCF_ASYNC_USE_MODULES": true
+            }
+        },
+        {
             "name": "msvc",
             "inherits": "base",
             "condition": {
@@ -44,6 +51,27 @@
             "cacheVariables": {
                 "CMAKE_CXX_COMPILER": "g++"
             }
+        },
+        {
+            "name": "msvc-modules",
+            "inherits": [
+                "msvc",
+                "use-modules"
+            ]
+        },
+        {
+            "name": "clang-modules",
+            "inherits": [
+                "clang",
+                "use-modules"
+            ]
+        },
+        {
+            "name": "gcc-modules",
+            "inherits": [
+                "gcc",
+                "use-modules"
+            ]
         }
     ]
 }

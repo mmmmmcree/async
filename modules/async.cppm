@@ -1,6 +1,6 @@
 module;
 
-#include <async/execution/details/provider.h>
+#include <async/execution/config.h>
 
 export module lcf.async;
 
