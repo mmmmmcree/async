@@ -11,7 +11,8 @@ foreach(async_operation verify sandbox lessons benchmark)
         target_sources(async_standalone_${async_operation} PRIVATE
             "${CMAKE_CURRENT_SOURCE_DIR}/verify/constraints_test.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/verify/poll_test.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/verify/awaitable_test.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/verify/coroutine_test.cpp"
-            "${CMAKE_CURRENT_SOURCE_DIR}/verify/timer_test.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/verify/event_source_test.cpp")
+            "${CMAKE_CURRENT_SOURCE_DIR}/verify/timer_test.cpp" "${CMAKE_CURRENT_SOURCE_DIR}/verify/event_source_test.cpp"
+            "${CMAKE_CURRENT_SOURCE_DIR}/verify/expected_test.cpp")
     elseif(async_operation STREQUAL "sandbox")
         target_sources(async_standalone_${async_operation} PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../../tests/sandbox/sandbox.cpp"
             "${CMAKE_CURRENT_SOURCE_DIR}/sandbox/native_example.cpp")

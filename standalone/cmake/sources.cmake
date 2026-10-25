@@ -40,6 +40,8 @@ set(async_header_sources
     include/async/execution/details/adaptor.h
     include/async/execution/environment.h
     include/async/execution/error_handling.h
+    include/async/execution/extensions.h
+    include/async/execution/extensions/expected.h
     include/async/execution/factories.h
     include/async/execution/scheduling.h
     include/async/execution/split.h

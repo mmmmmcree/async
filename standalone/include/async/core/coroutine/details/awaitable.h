@@ -29,7 +29,7 @@ struct AwaitablePromise : ReturnStorage<T>
     template <typename Value>
     auto await_transform(Awaitable<Value> task) noexcept { return std::move(task).operator co_await(); }
     template <exec::sender Sender>
-        requires (not is_awaitable_v<std::remove_cvref_t<Sender>>)
+    requires (not is_awaitable_v<std::remove_cvref_t<Sender>>)
     auto await_transform(Sender && sender) { return SenderAwaiter<std::remove_cvref_t<Sender>, Self> {std::forward<Sender>(sender)}; }
     auto await_transform(YieldRequest)
     {
@@ -44,7 +44,7 @@ struct AwaitablePromise : ReturnStorage<T>
         return SenderAwaiter<decltype(work), Self> {std::move(work)};
     }
     template <typename Value>
-        requires (not exec::sender<Value>)
+    requires (not exec::sender<Value>)
     decltype(auto) await_transform(Value && value) { return std::forward<Value>(value); }
     CoroutineState m_state;
     std::exception_ptr m_exception;

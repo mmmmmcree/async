@@ -73,9 +73,7 @@ public:
 private:
     Clock::time_point publishDeadline() noexcept
     {
-        const auto deadline = m_timers.empty() ? Clock::time_point::max() : m_timers.deadline();
-        m_deadline = deadline;
-        return deadline;
+        return m_deadline = m_timers.empty() ? Clock::time_point::max() : m_timers.deadline();
     }
 private:
     TimerQueue m_timers;

@@ -1,7 +1,7 @@
 include(../../../cmake/development.cmake)
 include(../../../tests/verify/interface_tests.cmake)
 async_add_test_suite(async_standalone_verify standalone verify PREFIX "standalone."
-    SOURCES constraints_test.cpp poll_test.cpp awaitable_test.cpp coroutine_test.cpp timer_test.cpp)
+    SOURCES constraints_test.cpp poll_test.cpp awaitable_test.cpp coroutine_test.cpp timer_test.cpp expected_test.cpp)
 async_add_interface_tests(async_standalone_verify_tests)
 
 # Exercise the pump without linking/importing the backend or including timer headers.

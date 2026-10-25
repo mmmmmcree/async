@@ -1,5 +1,306 @@
 # Coroutine lessons
 
+## Coroutine semantic pseudocode
+
+This reference opens the implicit operations behind Lessons 01-04. It uses C++-style **semantic pseudocode**, not compilable C++, a required frame layout, or the exact source emitted by a compiler. `BODY_*` stands for user code. Every `__...` operation represents compiler machinery; in particular, suspension and transfer cannot be implemented by inserting an ordinary C++ `return` into the original function.
+
+Read the [coroutine definition model](https://eel.is/c++draft/dcl.fct.def.coroutine), [await expressions](https://eel.is/c++draft/expr.await), [yield expressions](https://eel.is/c++draft/expr.yield), [coroutine return statements](https://eel.is/c++draft/stmt.return.coroutine), and [handle resumption/destruction](https://eel.is/c++draft/coroutine.handle.resumption) alongside the sketches. These are working-draft links; the lessons build as C++23.
+
+The sections follow one execution: [create the frame](#call-time-setup-and-frame-allocation), [enter the coroutine](#the-coroutine-execution-body), [open each await](#the-co_await-expansion), [yield](#the-co_yield-expansion), [return](#the-co_return-expansion), then [complete or destroy](#completion-exceptions-and-destruction).
+
+### Call-time setup and frame allocation
+
+For a free or static member coroutine declared `R example(P0 p0, P1 p1)`, the promise type is selected at compile time:
+
+```cpp
+using Promise = typename std::coroutine_traits<R, P0, P1>::promise_type;
+```
+
+For a non-static member coroutine, the traits arguments also include the object parameter type, accounting for its cv/ref qualification. A promise **object** is constructed for each invocation; the compiler does not generate a new promise **type** at run time.
+
+```cpp
+R example(P0 p0, P1 p1)
+{
+    // This is the requested frame-storage size, not sizeof(Promise).
+    std::size_t bytes = __required_frame_storage_size();
+
+    // Allocation can be omitted when the compiler can embed the state elsewhere.
+    // Otherwise use the allocation selection described below.
+    void* storage = __allocate_or_embed_coroutine_frame(bytes, p0, p1);
+
+    if (__allocation_failure_hook_is_present && storage == nullptr) {
+        // No promise or frame parameter copies have been constructed.
+        return Promise::get_return_object_on_allocation_failure();
+    }
+
+    auto& frame = __begin_frame_lifetimes(storage);
+
+    // By-value parameters: construct retained copies from the original
+    // parameter objects as xvalues. Reference parameters still borrow.
+    // The order between different parameter-copy initializations is unspecified.
+    __construct_parameter_copies(frame, p0, p1);
+
+    // Use lvalues denoting the retained parameters for constructor lookup.
+    // If a viable constructor exists, use Promise(q0, q1);
+    // otherwise use Promise(). For an implicit object member, include *this.
+    __construct_promise(frame, __copied_parameter_lvalues(frame));
+
+    // Initialize the call's return object/reference directly from this expression.
+    // Do not assume an extra Task copy, or store the return object in the frame.
+    __initialize_call_result(frame.promise.get_return_object());
+
+    // Executes the body below until it suspends or completes.
+    __enter_first_activation(frame);
+
+    // The caller receives the already-initialized result, even for a lazy task.
+    __return_call_result_to_caller();
+}
+```
+
+The sketch omits construction guards. If parameter copying, promise construction, `get_return_object()`, or the initial await before its `await_resume()` throws, the compiler unwinds the objects already constructed and releases any dynamically allocated frame storage. An allocation failure happens before these objects exist. None of these failures is handled by the body's `promise.unhandled_exception()`.
+
+The allocation operation above follows these branches when storage is needed:
+
+| Lookup/result | Allocation behavior |
+| --- | --- |
+| Promise lookup finds `operator new` declarations | First try `Promise::operator new(bytes, p0, p1)`, passing original parameters as lvalues; for an implicit object member include `*this`. If no overload is viable, retry with `bytes` alone. Failure of both attempts is a compile error, not a fallback to global allocation. |
+| Promise lookup finds no declarations | Use global allocation, normally `::operator new(bytes)`. |
+| Promise declares `get_return_object_on_allocation_failure` | The selected allocator must be `noexcept`; global allocation uses the nothrow form. A null result returns the failure hook's result without constructing the promise or entering the body. |
+| No allocation-failure hook | Allocation failure normally throws `std::bad_alloc` to the caller. |
+| Allocation is elided | No dynamic allocation call is required; the implementation still preserves the observable coroutine object lifetimes. |
+
+Promise `operator new`/`operator delete` can route storage through a custom allocator or `std::pmr::memory_resource`. Because allocation precedes promise construction, `operator new` cannot obtain its resource from an already-constructed promise instance. Deallocation does not receive the original coroutine arguments; retain whatever resource information it needs. Standalone does this with frame metadata and [FrameAllocatorScope](../../include/async/core/coroutine/FrameAllocatorScope.h); [Lesson 29](lesson29_frame_allocators.cpp) separates frame allocation from execution-environment allocation. A resource must outlive every frame allocated through it and support the threads that eventually allocate/deallocate those frames.
+
+### The coroutine execution body
+
+The following is the execution part of that one invocation, not a separately called ordinary function. The compiler records a continuation position and any live objects that must survive a suspension. A later `resume()` jumps to that recorded position; it does not reconstruct the promise, repeat `get_return_object()`, or restart `initial_suspend()`.
+
+`__AWAIT(operand, kind)` stands for the next section's expansion. The `Initial`, `Ordinary`, `Yield`, and `Final` labels select the applicable transformation rules; they are not library types.
+
+```cpp
+auto& promise = frame.promise;
+frame.initial_await_resume_called = false; // Initialized once, before entry.
+
+try {
+    __AWAIT(promise.initial_suspend(), Initial);
+
+    {
+        BODY_A;
+
+        // Original: decltype(auto) value = co_await EXPR;
+        decltype(auto) value = __AWAIT(EXPR, Ordinary);
+
+        BODY_B;
+
+        // Original: co_yield YIELD_EXPR;
+        __AWAIT(promise.yield_value(YIELD_EXPR), Yield);
+
+        BODY_C;
+
+        // Any explicit co_return is expanded using the return rules below,
+        // then leaves this scope and jumps to FINAL_SUSPEND.
+        __EXPAND_EXPLICIT_CO_RETURN_IF_REACHED();
+
+        // Otherwise apply the fallthrough rule below. This is not an ordinary
+        // C++ return statement, and is not always valid for a value coroutine.
+        __APPLY_BODY_FALLTHROUGH_RULE();
+    }
+}
+catch (...) {
+    if (!frame.initial_await_resume_called) {
+        throw; // Failed initial entry: unwind setup and escape to the caller.
+    }
+
+    // Policy supplied by the promise: store an exception, terminate, or throw.
+    promise.unhandled_exception();
+}
+
+FINAL_SUSPEND:
+__AWAIT(promise.final_suspend(), Final);
+
+// Reached only when the final await does not retain the suspended frame.
+__destroy_completed_coroutine_state_and_release_storage();
+```
+
+The initial-await flag is set immediately **before** evaluating the initial awaiter's `await_resume()`. Thus an exception from that `await_resume()` is handled by `unhandled_exception()`, but an earlier initial-await failure is not. The final await is outside the `try`; the whole expression `co_await promise.final_suspend()` must be non-throwing, not just the `final_suspend()` function itself.
+
+### The co_await expansion
+
+First select the awaiter, preserving the source expression's type, value category, and temporary lifetimes:
+
+| Step | Rule |
+| --- | --- |
+| Transform the operand | For an ordinary `co_await EXPR`, if promise lookup finds any `await_transform` declaration, use `promise.await_transform(EXPR)`; otherwise use `EXPR`. An unusable declared overload is an error, not a reason to fall back to `EXPR`. |
+| Initial, final, or yield await | Skip `await_transform`, but still perform the following awaiter-selection steps. |
+| Select `operator co_await` | Perform the language's operator overload resolution. Use the selected member or non-member call; if no viable function exists, use the operand itself. Ambiguity is an error. This conversion is performed once, not repeatedly on its own result. |
+| Materialize the awaiter | If necessary, materialize a prvalue temporary. Name the resulting object `e` as an lvalue, even when the original expression was an rvalue. The calls below use that lvalue. |
+
+Then the three awaiter methods participate as follows. `__LEAVE_ACTIVATION()` and `__TRANSFER_AND_LEAVE_ACTIVATION(next)` are terminal control-flow operations for this activation: **they preserve live coroutine scopes** rather than running their destructors like a normal function return.
+
+```cpp
+auto&& e = __select_awaiter(promise, EXPR, kind);
+
+// P is this awaiting coroutine's promise type, not the awaited child's type.
+auto h = std::coroutine_handle<P>::from_promise(promise);
+
+// Contextual bool conversion: await_ready need not return exactly bool.
+bool ready = __contextually_convert_to_bool(e.await_ready());
+if (!ready) {
+    __save_resume_position(AWAIT_RESUME);
+    __consider_current_coroutine_suspended();
+
+    // This expression must be a prvalue of exactly void, bool,
+    // or std::coroutine_handle<Z>. An arbitrary bool-convertible type is invalid.
+    using S = decltype(e.await_suspend(h));
+
+    if constexpr (std::is_void_v<S>) {
+        try {
+            e.await_suspend(h);
+        }
+        catch (...) {
+            __resume_current_and_rethrow(); // Does not call await_resume().
+        }
+
+        __LEAVE_ACTIVATION(); // Return control to the caller/resumer.
+    }
+    else {
+        S decision; // Compiler control-flow temporary, not a promised frame field.
+        try {
+            decision = e.await_suspend(h);
+        }
+        catch (...) {
+            __resume_current_and_rethrow();
+        }
+
+        if constexpr (std::is_same_v<S, bool>) {
+            if (decision) {
+                __LEAVE_ACTIVATION();
+            }
+
+            // false: immediately resume this coroutine and continue below.
+            __continue_current_coroutine_inline();
+        }
+        else {
+            // S must be std::coroutine_handle<Z>.
+            // Resume that coroutine; this coroutine stays suspended.
+            // This transfer is OUTSIDE the await_suspend exception handler.
+            __TRANSFER_AND_LEAVE_ACTIVATION(decision);
+        }
+    }
+}
+
+AWAIT_RESUME:
+if (kind == Initial) {
+    frame.initial_await_resume_called = true;
+}
+
+// This is the type, value category, and result of the original co_await.
+// It may be void, a value, or a reference; this helper does not add a copy.
+__use_as_await_expression_result(e.await_resume());
+```
+
+`h` is always the current awaiting coroutine's typed handle. An `await_suspend(std::coroutine_handle<>)` parameter accepts it through implicit type erasure; a parameter `std::coroutine_handle<P>` retains `.promise()` access. This explains the parent parameter versus the final awaiter's completed parameter in [Lesson 03](lesson03_nested_coroutines.cpp).
+
+The `await_resume()` return type is not restricted to `bool`, `void`, or a handle; those restrictions apply to `await_suspend()`. It can return a move-only object, a reference, or even another awaitable. That last object is the result of this await expression and is not automatically awaited again.
+
+For one dynamic evaluation of a `co_await`, awaiter selection and `await_ready()` occur once if evaluation reaches them. `await_suspend()` occurs at most once and is skipped when ready is true. On successful immediate continuation or later resumption, `await_resume()` occurs once. If the suspended coroutine is destroyed instead, it is never called. A loop may evaluate the same source-level `co_await` many times; those are separate evaluations. None of the three methods is required to run if an earlier operand/selection step throws.
+
+Returning `void` or `true` does not itself resume the current coroutine. Returning `false` immediately resumes it. Returning a handle resumes the target, which may itself transfer onward. A `std::noop_coroutine()` handle is a valid no-op target; an empty `std::coroutine_handle<>{}` is not a valid resume target. No handle transfer restarts awaiter selection or calls `await_ready()` on the handle.
+
+Once `await_suspend` publishes `h`, another thread, or an inline callback, can resume the coroutine before `await_suspend` returns. It can even destroy the awaiter/frame. The publishing code and terminal leave/transfer paths must not access objects whose lifetimes have ended. The pseudocode's terminal helpers do not write to the frame. Do not also return `false` after already arranging a competing resumption. [Lesson 16](lesson16_completion_handshake.cpp) studies this handshake.
+
+### The co_yield expansion
+
+Both yield forms use the same await protocol:
+
+```cpp
+co_yield EXPR;
+// Equivalent await operation, marked Yield so await_transform is skipped:
+__AWAIT(promise.yield_value(EXPR), Yield);
+
+co_yield {A, B};
+// The braced-init-list is passed directly to yield_value:
+__AWAIT(promise.yield_value({A, B}), Yield);
+```
+
+`yield_value` decides how to expose or store the yielded item and returns the operand for this await. The selected awaiter's `await_ready`/`await_suspend` decide whether to stay suspended; **the keyword alone does not guarantee suspension**. A generator commonly returns `std::suspend_always` to let its consumer read the item before resuming it. A `co_yield` expression's type, value category, and result come from that awaiter's `await_resume()`, so a custom yield can also produce a value back inside the coroutine. Yielding does not call `return_value()` and does not finish the coroutine. There is no built-in scheduler or thread handoff.
+
+### The co_return expansion
+
+These are alternative source forms. `co_return` chooses a promise completion hook; it does not return the computation result directly to the original C++ caller.
+
+| Source | Semantic expansion before leaving the body |
+| --- | --- |
+| `co_return RESULT;`, with non-void expression | `promise.return_value(RESULT); goto FINAL_SUSPEND;` |
+| `co_return {A, B};` | `promise.return_value({A, B}); goto FINAL_SUSPEND;` |
+| `co_return;` | `promise.return_void(); goto FINAL_SUSPEND;` |
+| `co_return VOID_EXPR;`, where the expression has type `void` | `VOID_EXPR; promise.return_void(); goto FINAL_SUSPEND;` |
+| Reach the end of the body without explicit `co_return` | Equivalent to `co_return;` if overload resolution for `promise.return_void()` succeeds; otherwise undefined behavior. |
+
+For example, a void-completion path is:
+
+```cpp
+// Original:
+co_return notify(); // notify() returns void.
+
+// Semantic expansion:
+{
+    notify();
+    promise.return_void();
+    goto FINAL_SUSPEND;
+}
+```
+
+An exception from `notify()` prevents the subsequent `return_void()` call and follows the body's exception path. Likewise, an exception while evaluating `RESULT` or invoking `return_value()` follows the exception path instead of the normal return jump. The completion hook expressions themselves must have type `void`. Preserve C++'s implicit-move rules for eligible return operands; the table is a semantic sketch, not a literal source rewrite that discards those rules.
+
+After a successful completion hook, the jump leaves body scopes, destroying their local objects, **before** calling `final_suspend()`. The examples show alternative promise completion contracts rather than a runtime choice between hooks; the lesson promise types supply the matching hook. A coroutine cannot use an ordinary `return;` or `return value;` statement; `return_void()` is a promise method, not a C++ `return void` statement. The original call can return `Task<void>` while its eventual completion carries no value.
+
+### Completion, exceptions, and destruction
+
+The object returned by `final_suspend()` is an **awaiter/awaitable**, not the next handle. Only its selected awaiter's `await_suspend()` may return a next handle. At this point the body scopes have already ended, while the promise and retained parameters still exist.
+
+| Final await behavior | Result |
+| --- | --- |
+| `await_ready()` is true, for example `std::suspend_never` | Run final `await_resume()`, flow off the replacement body, and destroy the state. A previously exposed handle must not subsequently be used to inspect or destroy the released frame. |
+| Ready is false and `await_suspend()` returns false | Immediately continue through final `await_resume()`, then destroy the state. |
+| Ready is false and `await_suspend()` returns void or true | Keep the completed frame suspended and return control to the caller/resumer. `std::suspend_always` follows the void branch; it does not resume a parent automatically. |
+| Ready is false and `await_suspend()` returns a handle | Keep this completed frame suspended and resume the target, as with Lesson 03's child-to-parent transfer. A root can return `std::noop_coroutine()` when there is no continuation. |
+
+For a live handle to a coroutine suspended at its final suspend point, `done()` is true and `resume()` is forbidden. When the final await retains the frame, do not later resume it to execute the final awaiter's `await_resume()`: the owner destroys the frame instead. The parent reads a completed child's result through the **parent's own child-awaiting awaiter**; that is a different awaiter from the child's final awaiter.
+
+The exception paths are distinct:
+
+| Failure location | Control flow |
+| --- | --- |
+| Allocation, parameter copies, promise construction, or `get_return_object()` | Propagate to the coroutine caller after applicable setup cleanup, or return the allocation-failure hook result for null allocation. The body has not started. |
+| Initial operand/awaiter selection, readiness, or `await_suspend()` | Initial `await_resume()` has not started: propagate to the coroutine caller with cleanup. |
+| Initial `await_resume()` | The flag is already true: call `unhandled_exception()` if the exception escapes the coroutine's handlers. |
+| Body expression, ordinary/yield awaiter selection, readiness, `yield_value()`, `await_resume()`, or completion hook | Ordinary C++ handlers inside the body can catch it. If it escapes the body, unwind its scopes and call `unhandled_exception()`. |
+| Ordinary/yield `await_suspend()` | Resume the awaiting coroutine and rethrow at the await expression without calling `await_resume()`; a surrounding body handler may catch it. |
+| `unhandled_exception()` returns normally | Proceed to the final await. Storing an `exception_ptr` is promise policy, not automatic language behavior. |
+| `unhandled_exception()` itself throws | The coroutine is considered suspended at the final suspend point, and the exception escapes to the caller/resumer. The normal `final_suspend()` expression is skipped. |
+| Final await | The entire expression must be non-throwing. Violating a `noexcept` function's guarantee terminates; there is no second body catch around the final await. |
+
+Ordinary C++ destructor and `noexcept` rules still apply. In particular, an exception that would escape a `noexcept` coroutine call or resumption wrapper terminates instead of propagating beyond that boundary.
+
+Frame destruction has two entry paths, with corresponding cleanup:
+
+```cpp
+// Path A: final await continued, so control flows off the replacement body.
+// Path B: the owner calls handle.destroy() on a suspended coroutine.
+
+__destroy_live_awaiters_and_body_locals_if_any();
+__destroy_promise();
+__destroy_parameter_copies();
+__release_frame_storage_if_dynamically_allocated();
+```
+
+Path B can abandon a coroutine at its initial or an ordinary suspension point. It exits live scopes and destroys their objects without running `await_resume()`, the remaining body, `return_void()`/`return_value()`, or a new call to `final_suspend()`. It is not equivalent to resuming the coroutine until it completes. Destroying a frame that is running is invalid; destroying a suspended parent also requires respecting any outstanding callbacks that borrow its handle.
+
+Deallocation lookup starts in the promise type and otherwise uses global deallocation. A usual sized deallocation function is preferred when both sized and unsized forms are present; no viable usual form is a compile error. A selected sized `operator delete` receives the storage address and size, not the original coroutine arguments. The compiler manages the actual layout and may omit allocation/deallocation together. A `coroutine_handle` does not own or automatically release this state merely by being copied or going out of scope; the lesson's task/awaiter types supply ownership.
+
+## Course overview
+
 These lessons assume ordinary C++ knowledge: functions, classes, references, destructors and exceptions. No coroutine, sender/receiver or scheduler background is required. Each `.cpp` contains one GoogleTest lesson, its teaching types and their definitions. Read the `TEST` first, then follow the functions it calls. `EXPECT_*` checks a prediction; `ASSERT_*` stops the lesson when a prerequisite fails.
 
 The complete course has **31 implemented lessons in seven stages**. Each lesson is an independently runnable GoogleTest. The goal is to explain the actual standalone backend, from a coroutine's first suspension to scheduling, composition, cancellation and frame reclamation.
@@ -19,6 +320,20 @@ coroutine language mechanics
 Each stage has an exit question. Proceed when you can explain its answer from the experiment and then locate that mechanism in the real implementation. The [complete curriculum](#complete-curriculum) describes the prerequisites and experiment for every lesson.
 
 The first four files introduce small teaching types in observable steps. Lesson 03 includes a brief production preview with standalone `Awaitable`. This preview is optional on a first reading; its driver and implementation are opened in Lessons 13–18.
+
+## Standard coroutine references
+
+These are the C++ standard draft clauses behind the language mechanics used in Lessons 01–04. They describe coroutine transformations and the awaiter protocol; the compiler is not required to emit the same C++ source text or literal `try`/`catch` blocks.
+
+| Topic | C++ draft clause |
+| --- | --- |
+| Coroutine function definition, promise, frame, initial/final suspend and `co_return` | [`dcl.fct.def.coroutine`](https://eel.is/c++draft/dcl.fct.def.coroutine) |
+| `co_await` expression and `await_ready` / `await_suspend` / `await_resume` | [`expr.await`](https://eel.is/c++draft/expr.await) |
+| `co_yield` expression | [`expr.yield`](https://eel.is/c++draft/expr.yield) |
+| `co_return` forms, including void expressions and body fallthrough | [`stmt.return.coroutine`](https://eel.is/c++draft/stmt.return.coroutine) |
+| Handle `resume()`, `done()`, and `destroy()` preconditions | [`coroutine.handle.resumption`](https://eel.is/c++draft/coroutine.handle.resumption) |
+
+Read [`dcl.fct.def.coroutine`](https://eel.is/c++draft/dcl.fct.def.coroutine) first for the complete coroutine function model, then [`expr.await`](https://eel.is/c++draft/expr.await) for the local `co_await` transformation used in Lesson 02. The standard specifies observable semantics and preconditions; it does not require a compiler to emit literal `try`/`catch` source code.
 
 | Lesson | Question | File |
 | --- | --- | --- |
