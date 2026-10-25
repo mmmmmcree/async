@@ -1,0 +1,8 @@
+cmake_minimum_required(VERSION 3.28)
+foreach(source IN LISTS FILES)
+    get_filename_component(source_dir "${source}" DIRECTORY)
+    if(NOT source_dir STREQUAL DESTINATION)
+        get_filename_component(name "${source}" NAME)
+        file(COPY_FILE "${source}" "${DESTINATION}/${name}" ONLY_IF_DIFFERENT)
+    endif()
+endforeach()

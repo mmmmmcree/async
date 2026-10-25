@@ -1,0 +1,7 @@
+#pragma once
+
+#if LCF_TEST_USE_MODULES
+import @lib_module_name@;
+#else
+#include <@lib_test_header@>
+#endif

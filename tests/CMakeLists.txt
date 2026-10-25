@@ -1,0 +1,16 @@
+include(options.cmake)
+include("${lib_root}/cmake/utilities/testing.cmake")
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/common")
+configure_file(common/library_under_test.h.in
+    "${CMAKE_CURRENT_BINARY_DIR}/common/library_under_test.h" @ONLY)
+set(lib_test_include_dir "${CMAKE_CURRENT_BINARY_DIR}/common")
+
+if(${lib_option_prefix}_BUILD_VERIFY)
+    add_subdirectory(verify)
+endif()
+if(${lib_option_prefix}_BUILD_SANDBOX)
+    add_subdirectory(sandbox)
+endif()
+if(${lib_option_prefix}_BUILD_BENCHMARKS)
+    add_subdirectory(benchmark)
+endif()

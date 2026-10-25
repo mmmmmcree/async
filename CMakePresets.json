@@ -1,0 +1,49 @@
+{
+    "version": 6,
+    "cmakeMinimumRequired": {
+        "major": 3,
+        "minor": 28,
+        "patch": 0
+    },
+    "configurePresets": [
+        {
+            "name": "base",
+            "hidden": true,
+            "generator": "Ninja Multi-Config",
+            "binaryDir": "${sourceDir}/build/${presetName}",
+            "cacheVariables": {
+                "CMAKE_CONFIGURATION_TYPES": "Debug;Release"
+            }
+        },
+        {
+            "name": "msvc",
+            "inherits": "base",
+            "condition": {
+                "type": "equals",
+                "lhs": "${hostSystemName}",
+                "rhs": "Windows"
+            },
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "cl"
+            },
+            "architecture": {
+                "value": "x64",
+                "strategy": "external"
+            }
+        },
+        {
+            "name": "clang",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "clang++"
+            }
+        },
+        {
+            "name": "gcc",
+            "inherits": "base",
+            "cacheVariables": {
+                "CMAKE_CXX_COMPILER": "g++"
+            }
+        }
+    ]
+}
