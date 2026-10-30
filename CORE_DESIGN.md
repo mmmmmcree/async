@@ -2,7 +2,7 @@
 
 本文规定 async 的目标架构、协议边界和运行时契约。当前 `include/async/core.h` 仍是骨架；execution 已提供 provider 选择、协议及组合算法重导出，`exec::ext` 尚未实现。下文的运行时类型和示例均是目标接口，不表示已经可以编译使用。
 
-设计按使用者看到的组合关系自顶向下展开；实际开发顺序见 [CORE_DEVELOPMENT_PLAN.md](CORE_DEVELOPMENT_PLAN.md)。修改协议或行为时，应同步更新类型关系、资源与完成契约、验收条件及开发计划。
+设计按使用者看到的组合关系自顶向下展开；首个可运行里程碑的实施顺序见 [CORE_MVP_DEVELOPMENT_PLAN.md](CORE_MVP_DEVELOPMENT_PLAN.md)，长期能力顺序见本文第 12 节。修改协议或行为时，应同步更新类型关系、资源与完成契约及验收条件。
 
 ## 1. 目标、范围与命名
 
@@ -92,14 +92,14 @@ flowchart TB
 
 | 层 | 目标类型 | 定位与功能 | 所有权 |
 | --- | --- | --- | --- |
-| L0 | `core::BasicContext`、`async::Context` | 装配逻辑队列、执行资源和关闭协议；Context 是常用配置别名 | 拥有内部 loop、映射和 Workers；借用外部 loop |
-| L0 | `core::ContextInfo`、`QueueRequest`、`QueueMode` | 描述 worker 预算、逻辑需求和 owner/隔离约束 | 初始化配置值 |
+| L0 | `core::BasicContext`、`async::Context` | 装配逻辑队列、执行资源、poll 驱动和关闭协议；Context 是常用配置别名 | MVP 拥有手动 loop 和映射；P1 再加入 Workers 和外部 loop |
+| L0 | `core::ContextInfo`、`QueueRequest`、`QueueMode` | 描述逻辑需求和 owner/隔离约束，后续增加 worker 预算 | 初始化配置值 |
 | L1 | `core::SchedulerHandle` | 引用运行时状态与逻辑队列身份；实现 Core 提交能力 | 可复制、非拥有，不延长 Context 寿命 |
 | L1 | `adapters::Scheduler<Executor>` | 将 Core executor 适配成标准 scheduler | 常用实例包装 SchedulerHandle；普通 producer 持有 |
 | L1 | `core::ProducerEndpoint` | 固定 producer 线程预登记的低延迟提交能力 | 借用目标 lane，保留单 producer 限制 |
 | L2 | `core::LogicalQueue`、`QueueToken`、`WorkerMapping` | 维护逻辑语义、opaque token 及到 owner/worker 的映射 | Context 管理稳定状态 |
-| L3 | `core::Worker`、`Workers` | 管理物理线程并驱动绑定的 loop，处理创建失败与 join | Workers 拥有线程；Worker 借用 loop |
-| L3 | `core::BasicEventLoop`、`EventLoop` | 收取、等待和推进 ready/timer/完成 | 不创建线程；由 Worker 或外部 owner 驱动 |
+| L3 | `core::Worker`、`Workers` | 后续管理物理线程并驱动绑定的 loop，处理创建失败与 join | Workers 拥有线程；Worker 借用 loop |
+| L3 | `core::BasicEventLoop`、`EventLoop` | 收取、poll、等待和推进 ready/timer/完成 | 不创建线程；MVP 由 Context owner poll，后续可由 Worker 驱动 |
 | L4 | `MutexInbox`、`BoundedProducerLane`、`InboxSet` | 通用 MPSC、预分配 SPSC lane 和单 owner 汇合 | 节点借用；策略名称在契约稳定后决定是否公开 |
 | L4 | `IntrusiveReadyQueue`、`HeapTimerIndex`、`TimerNode` | 本地 ready/backlog 与 deadline 索引 | node 嵌入 operation；动态 backing storage 来源明确 |
 | L4 | `Clock`、`WakePolicy`、`std::pmr::memory_resource`、`allocation_resource_c`、`StopState` | 时钟、等待握手、标准/无异常分配能力与取消支持 | 策略或具体状态；资源引用非拥有 |
@@ -287,7 +287,7 @@ EventLoop 是可手动驱动的单 consumer 组件，其他线程只发布/通�
 | 成员入口 | 行为 |
 | --- | --- |
 | `pollOne()` | 不等待，最多执行一个 ready record；遇到暂不可取的入口也及时返回 |
-| `poll(PollBudget)` | 非阻塞推进，在 record 间检查数量和时间预算，返回 PollReport |
+| `poll(PollBudget = {})` | 非阻塞推进，在 record 间检查数量和时间预算，返回 PollReport；默认预算不限制数量和时间 |
 | `runOne()` | 等待至一个可执行 record 或明确退出条件；最多执行一个 record |
 | `run()` | 持续驱动，空闲时等待，收到新工作后继续；瞬时空队列不使其退出 |
 
@@ -348,13 +348,17 @@ timer index 只管理 deadline 和借用 node，不持有 queue、不等待、�
 
 PollBudget 包含 record 数和持续时间限制；PollReport 的 `m_callbacks` 统计已开始并返回的 record，`m_elapsed` 包含维护、执行和必要清理。预算在 record 边界检查，耗时是软限制，无 ready 时不为达到预算而等待。计时使用可替换 Clock/诊断策略，不能强制所有低开销路径承担高精度计时成本。
 
+默认预算支持无参 `poll()`。一次 poll 返回无工作只表示本次未执行 record，不证明挂起操作、外部 producer 或业务 root 已全部完成；drain 仍由 root owner 和关闭协议判定。
+
 ## 6. Workers、逻辑队列与 Context
 
 ### 6.1 组件职责
 
-EventLoop 管事件推进，不创建线程；Worker 管一条线程并驱动绑定 loop；Workers 管线程集合、创建失败回收及 join；Context 组合这些组件和逻辑映射。首版每 worker 一个单 owner loop，内部 loop 地址在句柄有效期间稳定。
+在目标架构中，EventLoop 管事件推进，不创建线程；Worker 管一条线程并驱动绑定 loop；Workers 管线程集合、创建失败回收及 join；Context 组合这些组件和逻辑映射。目标配置保持每个 worker 一个单 owner loop，内部 loop 地址在句柄有效期间稳定；MVP 先省略 Worker，直接由 Context owner 驱动唯一 loop。
 
-Context 可以仅绑定外部手动 loop、拥有 CPU Workers，或混合拥有控制 loop/Workers 并借用 render/gfx loop。外部线程的创建、驱动和 join 仍由宿主管理；Context 不越线程归属代为推进。配置 CPU 资源时至少有一个 worker；没有 CPU 执行资源时拒绝相应队列请求，不把计算默默转到 main/render。
+Context 可以拥有一个由宿主手动驱动的 loop、仅绑定外部 loop、拥有 CPU Workers，或混合拥有控制 loop/Workers 并借用 render/gfx loop。外部线程的创建、驱动和 join 仍由宿主管理；Context 不越线程归属代为推进。选择自有 CPU Workers 模式时至少配置一个 worker；没有所需 CPU 执行资源时拒绝相应队列请求，不把计算默默转到 main/render。
+
+MVP 先采用 Context 拥有一个手动 loop 的组合，由 `Context::pollOne()` / `Context::poll(PollBudget = {})` 转发推进；逻辑 scheduler 提交的 execution work 由调用方 owner 执行。Context 此时不创建后台线程，Worker/Workers 与等待式 run 在后续迭代加入。poll 只驱动 Context 对应的手动 loop，不接管其他 owner 或 Worker 的 loop；`close` 停止准入，调用方继续 poll 至已接纳操作排空，关闭本身不执行 callback。
 
 业务 scheduler 是非拥有能力句柄，不创建线程、不阻塞析构、不隐式延长整个 Context 寿命。scope 的操作存活与执行资源存活通过显式关闭协议协调。
 
@@ -461,16 +465,102 @@ Core 的 Environment 是能力容器，其 Executor 满足 `executor_c`；execut
 ```cpp
 namespace lcf::async::core {
 
-template <executor_c Executor, typename Allocator, typename StopToken>
+template <typename Allocator>
+concept allocator_c = requires(
+    Allocator & allocator,
+    std::size_t count,
+    typename std::allocator_traits<Allocator>::pointer storage_p) {
+    typename std::allocator_traits<Allocator>::value_type;
+    typename std::allocator_traits<Allocator>::pointer;
+    { std::allocator_traits<Allocator>::allocate(allocator, count) }
+        -> std::same_as<typename std::allocator_traits<Allocator>::pointer>;
+    std::allocator_traits<Allocator>::deallocate(allocator, storage_p, count);
+};
+
+template <typename StopToken>
+concept stop_token_c = requires(const StopToken & stop_token) {
+    { stop_token.stop_requested() } noexcept -> std::convertible_to<bool>;
+    { stop_token.stop_possible() } noexcept -> std::convertible_to<bool>;
+};
+
+template <executor_c Executor, allocator_c Allocator, stop_token_c StopToken>
 struct Environment
 {
+    using executor_type = Executor;
+    using allocator_type = Allocator;
+    using stop_token_type = StopToken;
+
     Executor m_executor;
     Allocator m_allocator;
     StopToken m_stop_token;
+
+    const Executor & executor() const noexcept { return m_executor; }
+    const Allocator & allocator() const noexcept { return m_allocator; }
+    const StopToken & stop_token() const noexcept { return m_stop_token; }
 };
+
+template <typename Type>
+concept environment_c = requires(const Type & environment) {
+    typename Type::executor_type;
+    typename Type::allocator_type;
+    typename Type::stop_token_type;
+    { environment.executor() } -> std::same_as<const typename Type::executor_type &>;
+    { environment.allocator() } -> std::same_as<const typename Type::allocator_type &>;
+    { environment.stop_token() } -> std::same_as<const typename Type::stop_token_type &>;
+} && executor_c<typename Type::executor_type>
+   && allocator_c<typename Type::allocator_type>
+   && stop_token_c<typename Type::stop_token_type>;
+
+template <typename FramePolicy>
+concept frame_policy_c = requires(
+    FramePolicy & policy,
+    std::size_t bytes,
+    std::size_t alignment,
+    void * storage_p) {
+    { policy.allocate(bytes, alignment) } noexcept -> std::same_as<AllocationResult>;
+    { policy.deallocate(storage_p, bytes, alignment) } noexcept -> std::same_as<void>;
+};
+
+template <typename Value, environment_c Environment, frame_policy_c FramePolicy>
+class Task;
+
+template <typename Type>
+struct is_duration : std::false_type {};
+
+template <typename Rep, typename Period>
+struct is_duration<std::chrono::duration<Rep, Period>> : std::true_type {};
+
+template <typename Duration>
+concept duration_c = is_duration<std::remove_cvref_t<Duration>>::value;
+
+template <typename Type>
+struct is_time_point : std::false_type {};
+
+template <typename Clock, typename Duration>
+struct is_time_point<std::chrono::time_point<Clock, Duration>> : std::true_type {};
+
+template <typename TimePoint>
+concept time_point_c = is_time_point<std::remove_cvref_t<TimePoint>>::value;
+
+template <duration_c Duration>
+struct SleepForAwaitable;
+
+template <time_point_c TimePoint>
+struct SleepUntilAwaitable;
+
+template <typename Rep, typename Period>
+    requires duration_c<std::chrono::duration<Rep, Period>>
+auto sleep_for(std::chrono::duration<Rep, Period> duration);
+
+template <time_point_c TimePoint>
+auto sleep_until(TimePoint deadline);
 
 } // namespace lcf::async::core
 ```
+
+这里的限定按协议语义划分，而不是为每个模板参数机械添加 concept。`Executor` 使用已有的 `executor_c`；`Allocator` 使用标准 allocator 形状的 `allocator_c`，它与第 4.4 节可报告错误的 `allocation_resource_c` 是两种不同能力；`StopToken` 使用 C++20 兼容的 `stop_token_c`，至少提供 `stop_requested()` 和 `stop_possible()`，registration 另由取消协议定义。`Environment` 通过关联类型和访问器满足 `environment_c`，不要求继承具体 Core 类型，也不把 execution 的 query tag 直接写入 Core。
+
+`FramePolicy` 不是任意 tag，必须提供无异常的 frame 分配和释放契约；其 `AllocationResult` 形状与 frame 分配失败的 promise 机制一起冻结。`Task::Value` 暂不增加宽泛的值类型 concept，因为是否支持 `void`、引用和不可移动结果取决于 Task 的结果存储策略；在该策略确定后再定义精确的 `task_value_c`。chrono awaitable 则分别用 `duration_c` 和 `time_point_c` 识别标准 `duration`/`time_point` 特化，避免错误类型落入通用 awaitable 转发。
 
 Task 的 promise 组合结果存储、Environment、continuation、取消 registration 和 FramePolicy。awaiter 只通过 Core executor/服务能力工作；timer/I/O 单独注入，不经 executor 反查具体 EventSource 或 Context。
 
@@ -614,7 +704,7 @@ thread-bound 完成必须在 owner 有效期间排空。若 scheduler 已关闭�
 | V01 分层 | Core 单独包含/构建不引入 execution；标准 CPO 类型重导出保持 provider 身份；普通类型、concept 和 CPO 命名一致 |
 | V02 操作存活 | 同步完成、发布后立即消费、完成中销毁、拒收、取消和关闭均恰好完成；operation/node 不早释放、不重复回收 |
 | V03 入口与唤醒 | 多 producer 各自提交，单 owner 消费；空闲再投递、入睡竞态、stop/提前 timer 不丢唤醒；lane 满载不阻塞控制/完成 |
-| V04 驱动预算 | pollOne 非阻塞且最多执行一个 record；runOne 等待且不将空唤醒计数；维护和长 callback 遵守软预算声明 |
+| V04 驱动预算 | Context 的 pollOne/poll 实际驱动 execution 并完成 receiver；pollOne 非阻塞且最多执行一个 record，poll 遵守数量/软时间预算；runOne 等待且不将空唤醒计数；维护和长 callback 遵守软预算声明 |
 | V05 Timer/取消 | fake clock 验证注册、取消、到期竞争和 burst 维护；registration 析构与 callback 竞争安全 |
 | V06 映射与并行 | 1/2/N worker、逻辑队列多于 worker 均正确；serial 不重叠、thread-bound 命中 owner；硬隔离不足则失败，资源允许时用 gate 证明并行 |
 | V07 组合与关闭 | 纯外部 loop、自有 Workers、混合配置均能 drain；关闭覆盖在途 CPU/跨域/回收/mailbox，不 join 自身、不接管外部线程 |
@@ -640,9 +730,11 @@ shader_toy 的 sender 迁移需要 V01–V10、V12–V13；使用 co_await 后�
 
 观测最大值不代表已证明的最坏时间上界。性能结果记录平台、负载与配置，作为版本基线；替换算法或默认策略须同时通过正确性和目标负载测量。
 
+每次优化先固定目标 workload 和可观察契约，保存当前基线，再替换一个机制；完成后运行相关 verify 与 Context 集成回归，并在相同 workload/配置下比较性能。结果记录 commit、provider/编译器、构建配置、平台、worker/producer 数、容量和 workload。尾延迟使用逐操作采样或直方图，不能从 Google Benchmark 整轮均值推导 p99。
+
 ## 11. 实施边界与待决选择
 
-目标首版采用单 owner loop、mutex MPSC 基线、固定 producer 的 SPSC lane、intrusive ready、heap timer、静态逻辑映射和显式 root owner。首个交付是 Context 驱动 execution 的 MVP：保留逻辑身份，由一个 Worker 驱动一个 EventLoop，通过标准 scheduler adapter 完成 sender/receiver 路径及关闭。MVP 同时交付 verify 和 benchmark 基线；多执行域、timer、低延迟入口和消费端集成都在这条可运行路径上迭代，每项优化同时验收正确性和目标负载数据。
+目标架构采用单 owner EventLoop、mutex MPSC 基线、intrusive ready、heap timer、静态逻辑映射和显式 root owner。首个交付是 Context 手动驱动 execution 的 MVP：保留逻辑身份，通过标准 scheduler adapter 构造并 start work，由 `Context::pollOne()` / `Context::poll()` 推进 EventLoop，完成 receiver 和关闭/drain；不创建后台 Worker，并建立 verify/benchmark 基线。MVP 的具体实施顺序见 [CORE_MVP_DEVELOPMENT_PLAN.md](CORE_MVP_DEVELOPMENT_PLAN.md)。
 
 | 已确定的边界 | 后续用实现和数据选择 |
 | --- | --- |
@@ -654,13 +746,48 @@ shader_toy 的 sender 迁移需要 V01–V10、V12–V13；使用 co_await 后�
 | 普通配置借用 PMR；可恢复的无异常分配采用独立协议 | hook/统计的装饰位置、ResourcePolicy 绑定、typed helper 和错误交付，不为转发增加 Handle |
 | 运行时存活与业务 scope 分离 | root scope 是否需要通用库封装；共享 DAG 和 restart 按消费需求确认 |
 
-详细分层交付、依赖、阶段出口和迁移门槛见 [CORE_DEVELOPMENT_PLAN.md](CORE_DEVELOPMENT_PLAN.md)。这些选择不能靠新增继承体系或让 Core 依赖 execution 来掩盖。
+具体实现不得靠新增继承体系或让 Core 依赖 execution 来掩盖协议边界。长期能力按第 12 节演进，每阶段仍须满足本章的正确性和性能验收。
 
-## 12. 参考资料
+## 12. 能力演进路线
+
+MVP 完成后沿既有 Context → execution 路径扩展；阶段可以并行安排，但各自的前置契约和验收不得省略。
+
+| 阶段 | 前置 | 能力范围 | 验收矩阵 |
+| --- | --- | --- | --- |
+| P1 线程与多执行域 | MVP | 等待式 `runOne/run`、无丢唤醒、Worker/Workers、静态多对一映射、thread-bound 与外部 loop 借用、线程创建回滚 | V03、V04、V06–V08 |
+| P2 环境与资源扩展 | MVP；多域回收验证依赖 P1 | allocator 覆盖与 forwarding、PMR/allocator hook、`allocation_resource_c` 和 typed helper、无异常失败交付、取消 registration 与跨线程回收 | V02、V09 |
+| P3 timer | MVP、P2；等待驱动依赖 P1 | 独立 timer service、`HeapTimerIndex`、`TimerOperation`、fake Clock、跨线程控制 record、一次性等待和提前 deadline 唤醒 | V03–V05 |
+| P4 专有 producer 入口 | MVP；多目标路由依赖 P1 | 预分配 `BoundedProducerLane`、`ProducerEndpoint`、有界公平汇合与 unregister/drain；满载明确拒收，不隐式退化到阻塞队列或动态分配 | V03、V13 |
+| P5 expected 扩展 | MVP | execution 独立的 `then_expected`，覆盖 value/error/void、上游短路、nothrow 约束和 completion signatures | V10 |
+| P6 协程 | P2、P3；多域恢复另需 P1 | Core `Environment`、`Task`、`FramePolicy`、schedule/sleep awaitable、duration `await_transform`，随后由 adapters 桥接 sender | V02、V09、V11 |
+| P7 shader_toy 接入 | P1–P5；协程可选依赖 P6 | 迁移 LCFEngine 仓库 <https://github.com/mmmmmcree/LCFEngine.git> 的 `examples/shader_toy`；分阶段打通 render/CPU/gfx 调度、expected 任务图、owner mailbox、停止与完整关闭 | V01–V10、V12–V13；使用协程时加 V11 |
+
+依赖关系概览：
+
+```mermaid
+flowchart LR
+    M["MVP"] --> P1
+    M --> P2
+    M --> P4
+    M --> P5
+    P2 --> P3
+    P2 --> P6
+    P3 --> P6
+    P1 --> P7
+    P2 --> P7
+    P3 --> P7
+    P4 --> P7
+    P5 --> P7
+    P6 -. "使用协程时" .-> P7
+```
+
+阶段边界：P2 的错误码分配是独立能力，不通过包装 PMR 或增加转发 Handle 实现；标准 stop vocabulary 优先，确有并发/资源需要才新增状态。P3 先实现单次等待；重复 timer 与 timing wheel 后置。P6 分开完成 Core Task 与 sender 桥接，并按 promise/frame 机制处理分配失败。P7 先覆盖 `render → CPU → render/gfx` 和 `render → main → CPU → render`，再接图片/shader 汇合及真正异步 gfx 操作；thread-bound error/stopped 由 owner mailbox 收尾。
+
+## 13. 参考资料
 
 标准链接跟随工作草案变化，具体实现以构建时选定 provider/版本为准。第三方源码仅作机制参考，不增加依赖或承诺照搬其默认资源/线程模型。
 
-### 12.1 execution 与语言协议
+### 13.1 execution 与语言协议
 
 - queryable、get_env、queries、forwarding：<https://eel.is/c++draft/exec.queryable>、<https://eel.is/c++draft/exec.get.env>、<https://eel.is/c++draft/exec.queries>、<https://eel.is/c++draft/exec.fwd.env>。
 - scheduler、schedule、异步操作和完成资源：<https://eel.is/c++draft/exec.sched>、<https://eel.is/c++draft/exec.schedule>、<https://eel.is/c++draft/exec.async.ops>、<https://eel.is/c++draft/exec.get.compl.sched>。
@@ -668,7 +795,7 @@ shader_toy 的 sender 迁移需要 V01–V10、V12–V13；使用 co_await 后�
 - frame allocation、co_await 与跨线程恢复：<https://eel.is/c++draft/dcl.fct.def.coroutine>、<https://eel.is/c++draft/expr.await>、<https://eel.is/c++draft/coroutine.handle.resumption>。
 - 标准资源、pool、allocator、stop token 与线程数提示：<https://eel.is/c++draft/mem.res>、<https://eel.is/c++draft/mem.res.pool>、<https://eel.is/c++draft/mem.poly.allocator>、<https://eel.is/c++draft/stoptoken>、<https://eel.is/c++draft/thread.thread.static>。
 
-### 12.2 调度、队列与 timer
+### 13.2 调度、队列与 timer
 
 - Asio poll_one/post 及 intrusive op_queue：<https://think-async.com/Asio/asio-1.30.2/doc/asio/reference/io_context/poll_one.html>、<https://think-async.com/Asio/asio-1.30.2/doc/asio/reference/post/overload1.html>、<https://github.com/chriskohlhoff/asio/blob/asio-1-30-2/asio/include/asio/detail/op_queue.hpp>。
 - libuv loop 阶段、驱动与合并通知：<https://docs.libuv.org/en/v1.x/design.html>、<https://docs.libuv.org/en/v1.x/loop.html>、<https://docs.libuv.org/en/v1.x/async.html>。
@@ -676,7 +803,7 @@ shader_toy 的 sender 迁移需要 V01–V10、V12–V13；使用 co_await 后�
 - Asio timer heap 与 libuv heap/timer：<https://github.com/chriskohlhoff/asio/blob/asio-1-30-2/asio/include/asio/detail/timer_queue.hpp>、<https://github.com/libuv/libuv/blob/v1.48.0/src/heap-inl.h>、<https://github.com/libuv/libuv/blob/v1.48.0/src/timer.c>、<https://docs.libuv.org/en/v1.x/timer.html>。
 - Seastar timer_set 与 Asio 串行执行契约：<https://github.com/scylladb/seastar/blob/master/include/seastar/core/timer-set.hh>、<https://www.boost.org/doc/libs/latest/doc/html/boost_asio/overview/core/strands.html>。
 
-### 12.3 资源、协程与取消实现
+### 13.3 资源、协程与取消实现
 
 - Asio associated allocator、frame 回收和取消 slot：<https://think-async.com/Asio/asio-1.30.2/doc/asio/overview/core/allocation.html>、<https://github.com/chriskohlhoff/asio/blob/asio-1-30-2/asio/include/asio/impl/awaitable.hpp>、<https://think-async.com/Asio/asio-1.30.2/doc/asio/overview/core/cancellation.html>。
 - cppcoro 嵌入 operation、Task 与取消 registration：<https://github.com/lewissbaker/cppcoro/blob/master/include/cppcoro/static_thread_pool.hpp>、<https://github.com/lewissbaker/cppcoro/blob/master/include/cppcoro/task.hpp>、<https://github.com/lewissbaker/cppcoro/blob/master/include/cppcoro/cancellation_registration.hpp>。
