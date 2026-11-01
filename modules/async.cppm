@@ -1,6 +1,9 @@
 module;
 
-#include <async/execution/config.h>
+#include <cstdint>
+#include <thread>
+
+#include <async/config.h>
 
 export module lcf.async;
 

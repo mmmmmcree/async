@@ -15,18 +15,25 @@ import lcf.async;
 namespace {
 
 namespace ex = lcf::async::exec;
+namespace proto = lcf::async::protocols;
 using lcf::async::this_thread::sync_wait;
 
 // Public aliases preserve the provider's actual CPO and sender types.
 #if !LCF_TEST_USE_MODULES
 static_assert(std::same_as<decltype(ex::then),
-    decltype(ex::stde::then)>);
+    decltype(lcf::async::stde::then)>);
+static_assert(std::same_as<decltype(ex::connect),
+    decltype(lcf::async::stde::connect)>);
+static_assert(std::same_as<decltype(ex::set_value),
+    decltype(lcf::async::stde::set_value)>);
+static_assert(std::same_as<decltype(ex::get_env),
+    decltype(lcf::async::stde::get_env)>);
 #endif
-static_assert(ex::sender<decltype(ex::just(1))>);
+static_assert(proto::sender<decltype(ex::just(1))>);
 
 struct Receiver
 {
-    using receiver_concept = ex::receiver_t;
+    using receiver_concept = proto::receiver_t;
 
     void set_value(int value) && noexcept { *m_result = value; }
     void set_error(std::exception_ptr) && noexcept { *m_result = -1; }
@@ -35,8 +42,8 @@ struct Receiver
     int * m_result;
 };
 
-static_assert(ex::receiver<Receiver>);
-static_assert(ex::sender_to<decltype(ex::just(1)), Receiver>);
+static_assert(proto::receiver<Receiver>);
+static_assert(proto::sender_to<decltype(ex::just(1)), Receiver>);
 
 TEST(Execution, ConnectDefersWorkUntilStart)
 {
@@ -47,7 +54,7 @@ TEST(Execution, ConnectDefersWorkUntilStart)
         return value * 2;
     });
     auto operation = ex::connect(std::move(work), Receiver {&result});
-    static_assert(ex::operation_state<decltype(operation)>);
+    static_assert(proto::operation_state<decltype(operation)>);
 
     EXPECT_EQ(calls, 0);
     EXPECT_EQ(result, 0);

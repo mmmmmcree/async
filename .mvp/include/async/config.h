@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../config.h"
+#include "config/macros.h"
 
 #ifndef LCF_ASYNC_USE_STD_EXECUTION
 #include <version>
@@ -17,7 +17,8 @@
 #include <stdexec/execution.hpp>
 #endif
 
-namespace lcf::async::exec {
+LCF_ASYNC_EXPORT
+namespace lcf::async {
 
 #if LCF_ASYNC_USE_STD_EXECUTION
 namespace stde = ::std::execution;
@@ -25,4 +26,4 @@ namespace stde = ::std::execution;
 namespace stde = ::stdexec;
 #endif
 
-} // namespace lcf::async::exec
+} // namespace lcf::async

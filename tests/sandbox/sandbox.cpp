@@ -11,7 +11,8 @@ import lcf.async;
 int main()
 {
     namespace ex = lcf::async::exec;
-
+    auto mem_resource_p = std::pmr::get_default_resource();
+    std::pmr::vector<int> v(mem_resource_p);
     // Composition is lazy: the body runs when sync_wait starts the operation.
     auto work = ex::just(21)
         | ex::then([](int value) noexcept { return value * 2; });

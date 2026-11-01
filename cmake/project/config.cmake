@@ -1,4 +1,4 @@
-# Per-library identity and explicit file lists. Consumers select BUILD_SHARED_LIBS.
+# Per-library identity and file selection. Consumers select BUILD_SHARED_LIBS.
 set(lib_name async)
 set(lib_package LCFAsync)
 set(lib_version 0.1.0)
@@ -6,14 +6,9 @@ set(lib_cxx_standard 20)
 set(lib_header_only ON)
 set(lib_namespace "")
 set(lib_option_prefix "")
-set(lib_headers
-    include/async/async.h
-    include/async/config.h
-    include/async/core.h
-    include/async/execution.h
-    include/async/execution/config.h
-    include/async/execution/protocol.h
-    include/async/execution/sync_wait.h)
+file(GLOB_RECURSE lib_headers CONFIGURE_DEPENDS
+    RELATIVE "${CMAKE_CURRENT_SOURCE_DIR}"
+    "${CMAKE_CURRENT_SOURCE_DIR}/include/${lib_name}/*.h")
 set(lib_sources )
 set(lib_module_files modules/async.cppm)
 set(lib_module_name lcf.async)
