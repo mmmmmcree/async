@@ -1,13 +1,13 @@
 #pragma once
 
 #include "ContextInfo.h"
-#include "../operations.h"
-#include "../containers/details/FixedCapacityVector.h"
-#include "../scheduling/Poll.h"
-#include "../scheduling/BasicEventLoop.h"
-#include "../scheduling/BasicWorker.h"
-#include "../scheduling/LogicalQueue.h"
-#include "../scheduling/SchedulerHandle.h"
+#include <async/core/operations.h>
+#include <async/core/details/containers/FixedCapacityVector.h>
+#include <async/core/scheduling/poll_structs.h>
+#include <async/core/scheduling/BasicEventLoop.h>
+#include <async/core/scheduling/BasicWorker.h>
+#include <async/core/scheduling/LogicalQueue.h>
+#include <async/core/scheduling/SchedulerHandle.h>
 
 #include <cassert>
 #include <chrono>

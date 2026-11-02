@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../config.h"
+#include <async/config/execution_provider.h>
 
 // The standard places blocking consumers in this_thread, not execution.
 LCF_ASYNC_EXPORT

@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../config/macros.h"
-#include "../scheduling/BasicEventLoop.h"
+#include <async/config/macros.h>
+#include <async/core/scheduling/BasicEventLoop.h>
 
 #include <thread>
 

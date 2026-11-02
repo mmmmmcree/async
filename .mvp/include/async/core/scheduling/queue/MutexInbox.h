@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../concepts.h"
-#include "../ScheduleNode.h"
+#include <async/core/concepts.h>
+#include <async/core/scheduling/ScheduleNode.h>
 
 #include <cassert>
 #include <condition_variable>

@@ -1,11 +1,28 @@
 #pragma once
 
 #include "enums.h"
+#include <async/protocol.h>
+#include <async/core/thread_types.h>
 
 #include <concepts>
 #include <cstddef>
 
 namespace lcf::async {
+
+template <typename Type>
+concept sender_c = protocols::sender<Type>;
+
+template <typename Type>
+concept receiver_c = protocols::receiver<Type>;
+
+template <typename Type>
+concept scheduler_c = protocols::scheduler<Type>;
+
+template <typename Type>
+concept operation_state_c = protocols::operation_state<Type>;
+
+template <typename Receiver, typename Completions>
+concept receiver_of_c = protocols::receiver_of<Receiver, Completions>;
 
 template <typename Record>
 concept schedule_record_c = requires(Record & record) {
@@ -61,8 +78,6 @@ template <typename Queue, typename Node>
 concept stoppable_schedule_queue_c = blocking_schedule_queue_c<Queue, Node> && requires(Queue & queue) {
     { queue.requestStop() } noexcept -> std::same_as<void>;
 };
-
-using ThreadEntry = void (*)(void *) noexcept;
 
 template <typename Thread>
 concept thread_c = std::destructible<Thread>

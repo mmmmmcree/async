@@ -1,7 +1,7 @@
 #pragma once
 
 #include "LogicalQueue.h"
-#include "details/ScheduleSender.h"
+#include <async/core/scheduling/details/exec_schedule_adapters.h>
 
 namespace lcf::async {
 

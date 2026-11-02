@@ -1,6 +1,8 @@
 #pragma once
 
-#include "../concepts.h"
+#include <async/core/thread_types.h>
+
+#include <async/core/concepts.h>
 
 #include <cassert>
 #include <thread>

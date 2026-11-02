@@ -307,12 +307,15 @@ Context 不创建、识别或接管进程主线程。主线程归属由宿主指
 
 ## 3. 文件、依赖与命名
 
-Core 公共类、concept、CPO、配置值直接在 `lcf::async`，`core/` 只是目录。标准 execution 的标记类型、概念和完成签名在 `lcf::async::protocols`；操作 CPO、查询接口和组合算法在 `lcf::async::exec`。标准概念的 `_c` 转发别名属于 Core，位于 `core/execution_concepts.h`，命名空间仍为 `lcf::async`；execution 不依赖这些别名。普通类型采用 PascalCase，成员函数 camelCase，自由函数/参数 snake_case，concept 为 snake_case_c，CPO 标签/对象沿用 snake_case_t / snake_case。仅实现辅助类型使用局部 details；不依赖继承建立组件关系；friend 仅用于限制 token 签发这一必要权限。
+Core 公共类、concept、CPO、配置值直接在 `lcf::async`，`core/` 只是目录。标准 execution 的标记类型、概念和完成签名在 `lcf::async::protocols`；操作 CPO、查询接口和组合算法在 `lcf::async::exec`。标准概念的 `_c` 转发别名属于 Core，位于 `core/concepts.h`，命名空间仍为 `lcf::async`；execution 不依赖这些别名。普通类型采用 PascalCase，成员函数 camelCase，自由函数/参数 snake_case，concept 为 snake_case_c，CPO 标签/对象沿用 snake_case_t / snake_case。仅实现辅助类型使用局部 details；不依赖继承建立组件关系；friend 仅用于限制 token 签发这一必要权限。
 
 ```text
 include/async/
-├── config.h                 # provider 选择与 async::stde
-├── config/macros.h          # LCF_ASYNC_EXPORT 等公共宏，不加载 provider
+├── config.h                 # 配置聚合入口
+├── config/
+│   ├── macros.h             # LCF_ASYNC_EXPORT 等公共宏，不加载 provider
+│   ├── features.h           # 能力检测和配置默认值，显式定义优先
+│   └── execution_provider.h # 加载选定 provider 并定义 async::stde
 ├── protocol.h               # 协议聚合入口，只包含下列四个头
 ├── protocols/              # async::protocols：各角色需要满足的契约词汇
 │   ├── sender.h
@@ -321,8 +324,8 @@ include/async/
 │   └── scheduler.h
 ├── core.h
 ├── core/
-│   ├── concepts.h           # record/executor/queue/loop/thread 接口约束
-│   ├── execution_concepts.h # Core 使用的标准概念 _c 别名，直接在 async
+│   ├── concepts.h           # Core 接口约束及标准 execution 概念的 _c 转发
+│   ├── thread_types.h       # ThreadEntry 基础类型，供 concepts 与 scheduling 共用
 │   ├── enums.h              # EnqueueResult
 │   ├── operations.h         # get_schedule_node / try_enqueue CPO
 │   ├── scheduling/
@@ -330,18 +333,18 @@ include/async/
 │   │   ├── queue/MutexInbox.h
 │   │   ├── BasicEventLoop.h
 │   │   ├── BasicWorker.h
-│   │   ├── Poll.h
+│   │   ├── poll_structs.h
 │   │   ├── LogicalQueue.h
 │   │   ├── SchedulerHandle.h
-│   │   └── details/ScheduleSender.h
-│   ├── containers/details/FixedCapacityVector.h
+│   │   └── details/exec_schedule_adapters.h
+│   ├── details/containers/FixedCapacityVector.h
 │   └── context/{ContextInfo.h,BasicContext.h}
 ├── execution.h              # 标准协议、操作、查询和组合算法的聚合入口
 ├── execution/              # async::exec
 │   ├── operations.h        # connect/start/schedule、完成通知 CPO
 │   ├── queries.h           # get_env/get_* 查询及其结果类型
 │   ├── factories.h         # just/just_error/just_stopped
-│   ├── completion_adaptors.h # then/upon_*/let_* 完成处理
+│   ├── continuations.h     # then/upon_*/let_* 完成接续
 │   ├── composition.h       # when_all 合流
 │   ├── scheduling.h        # starts_on/continues_on/on 调度切换
 │   └── sync_wait.h         # async::this_thread::sync_wait
@@ -350,21 +353,24 @@ include/async/
 
 | 层 | 允许的依赖 |
 | --- | --- |
-| config.h / config/macros.h | 公共 provider 选择及 async::stde 别名 / 纯宏定义；均不依赖 Core、protocols 或项目 execution 层 |
-| protocol.h / protocols/ | 按 sender/receiver/operation_state/scheduler 拆分的标准标记、概念和完成签名；直接依赖公共 config.h，不依赖项目 execution 层或 Core |
-| execution/operations.h、execution/queries.h | 分别重导出操作 CPO 和环境查询；直接依赖公共 config.h，不包含 Core 或组合算法聚合入口 |
-| execution/factories.h、completion_adaptors.h、composition.h、scheduling.h | 按工厂、完成处理、合流、调度切换分类重导出算法；各自直接依赖公共 config.h，Core 不包含这些算法头 |
-| core/execution_concepts.h | 在 async 定义 Core 使用的标准概念 _c 别名；依赖 protocol.h；execution 不反向包含它 |
-| Core concepts/enums/operations | 分别保存接口约束、枚举、运行时提交 CPO；不再命名为 protocol；Queue 约束使用泛型 Node |
-| core/containers | 管理元素生命周期、容量和访问；FixedCapacityVector 用显式 typed allocator，不依赖 Context 或 execution；资源策略属于 memory |
-| PollBudget、PollReport | scheduling/Poll.h 中的批量驱动包装值类型；由 Context 直接包含，不属于协议入口或 concepts |
-| ScheduleNode、Queue、EventLoop、Worker | 各自需要的基础协议；Worker 不包含具体 EventLoop，queue 不包含 Context 或 execution |
-| LogicalQueue | Core 提交协议和稳定路由身份，不依赖 execution |
+| config.h | 聚合 macros/features/execution_provider 子头；包含它仍加载 provider，不直接实现配置逻辑 |
+| config/macros.h、config/features.h | 公共导出宏 / 能力检测和配置默认值；调用方或 CMake 的显式设置优先，不加载 provider |
+| config/execution_provider.h | 加载 provider 并定义 async::stde；依赖 macros/features，不依赖 Core、protocols 或项目 execution 层 |
+| protocol.h / protocols/ | 按 sender/receiver/operation_state/scheduler 拆分的标准标记、概念和完成签名；直接依赖 config/execution_provider.h，不依赖项目 execution 层或 Core |
+| execution/operations.h、execution/queries.h | 分别重导出操作 CPO 和环境查询；直接依赖 config/execution_provider.h，不包含 Core 或组合算法聚合入口 |
+| execution/factories.h、continuations.h、composition.h、scheduling.h | 按工厂、完成接续、合流、调度切换分类重导出算法；各自直接依赖 config/execution_provider.h，Core 不包含这些算法头 |
+| core/concepts.h | 在 async 定义 Core 接口约束和标准概念的 _c 转发；依赖 enums.h、thread_types.h 与 protocol.h，因此加载 provider；不依赖 scheduling，execution 不反向包含它 |
+| Core enums/operations | 分别保存接纳结果、运行时提交 CPO；operations 依赖 concepts；Queue 约束使用泛型 Node |
+| core/details/containers | 管理元素生命周期、容量和访问；FixedCapacityVector 用显式 typed allocator，不依赖 Context 或 execution；资源策略属于 memory |
+| PollBudget、PollReport | scheduling/poll_structs.h 中的批量驱动包装值类型；由 Context 直接包含，不属于协议入口或 concepts |
+| ThreadEntry | core/thread_types.h 中的线程入口函数类型；Core concepts 与 scheduling 共用，不依赖 scheduling |
+| ScheduleNode、Queue、EventLoop、Worker | 各自需要的基础协议；经 concepts.h 加载 provider；Worker 不包含具体 EventLoop，queue 不包含 Context 或 execution 算法 |
+| LogicalQueue | Core 提交协议和稳定路由身份；经 operations/concepts 使用标准词汇，不依赖 execution 算法 |
 | BasicContext | 组合 loops、workers、固定 routes 和资源；直接返回标准 SchedulerHandle |
 | execution.h | 聚合标准协议、操作、查询和组合算法；不包含 Core，重导出保持 provider 身份 |
-| Core SchedulerHandle、scheduling/details/ScheduleSender.h | Core 基础提交接口、Core 概念别名及标准操作/查询头；句柄直接实现 scheduler，内部完成 sender/operation 适配 |
+| Core SchedulerHandle、scheduling/details/exec_schedule_adapters.h | Core 基础提交接口、Core 概念别名及标准操作/查询头；句柄直接实现 scheduler，内部完成 sender/operation 适配 |
 
-公共 config.h 负责选择 provider，并在 lcf::async 定义 stde 别名；protocols 和 execution 的基础接口分别直接依赖它。`core.h` 包含选定 provider 的标准 execution 协议；Queue/EventLoop/Worker 等基础头只需导出宏时包含 config/macros.h，可独立使用而不加载 provider。定义按 concepts/enums/operations 分类，不增加没有消费需求的策略参数。
+公共 config.h 只作配置聚合。config/features.h 负责能力检测及 `LCF_ASYNC_USE_STD_EXECUTION` 的默认值，config/execution_provider.h 加载选定 provider，并在 lcf::async 定义 stde 别名；protocols 和 execution 的基础接口分别直接依赖 provider 子头。Core 的运行时约束与标准概念转发统一位于 concepts.h，因此依赖它的组件也加载 provider；固定存储容器及仅需 macros/features 的头仍可独立使用。跨目录引用统一写成 `<async/...>`，同目录引用可保留相对文件名。定义按 concepts/enums/operations 分类，不增加没有消费需求的策略参数。
 
 ## 4. Concepts、枚举与提交入口
 
@@ -394,11 +400,28 @@ enum class EnqueueResult
 #pragma once
 
 #include "enums.h"
+#include <async/protocol.h>
+#include <async/core/thread_types.h>
 
 #include <concepts>
 #include <cstddef>
 
 namespace lcf::async {
+
+template <typename Type>
+concept sender_c = protocols::sender<Type>;
+
+template <typename Type>
+concept receiver_c = protocols::receiver<Type>;
+
+template <typename Type>
+concept scheduler_c = protocols::scheduler<Type>;
+
+template <typename Type>
+concept operation_state_c = protocols::operation_state<Type>;
+
+template <typename Receiver, typename Completions>
+concept receiver_of_c = protocols::receiver_of<Receiver, Completions>;
 
 template <typename Record>
 concept schedule_record_c = requires(Record & record) {
@@ -454,8 +477,6 @@ template <typename Queue, typename Node>
 concept stoppable_schedule_queue_c = blocking_schedule_queue_c<Queue, Node> && requires(Queue & queue) {
     { queue.requestStop() } noexcept -> std::same_as<void>;
 };
-
-using ThreadEntry = void (*)(void *) noexcept;
 
 template <typename Thread>
 concept thread_c = std::destructible<Thread>
@@ -535,38 +556,30 @@ core/concepts.h 中公开的 schedule_queue_c<Queue, Node> 描述调度 queue �
 | execution/operations.h | async::exec | connect/start/schedule、set_value/set_error/set_stopped 及其 CPO 类型、操作结果类型；供启动和完成操作使用 |
 | execution/queries.h | async::exec | get_env/get_stop_token/get_allocator/get_scheduler/get_completion_scheduler 及其 CPO 类型、env_of_t；供环境查询和 query 重载使用 |
 
-sender_c 等项目命名概念服务于 Core，放在 core/execution_concepts.h，直接定义于 lcf::async。execution 直接复用 protocols 中的标准概念，不包含这组别名。下面的 concept 只复用原约束，不重新实现 sender/receiver 协议。内部适配实际消费 receiver_of_c；scheduler_c、sender_c、operation_state_c 用于公共调度接口的契约验证。
-
-`include/async/core/execution_concepts.h`：
-
-```cpp
-#pragma once
-
-#include "../protocol.h"
-
-namespace lcf::async {
-
-template <typename Type>
-concept sender_c = protocols::sender<Type>;
-
-template <typename Type>
-concept receiver_c = protocols::receiver<Type>;
-
-template <typename Type>
-concept scheduler_c = protocols::scheduler<Type>;
-
-template <typename Type>
-concept operation_state_c = protocols::operation_state<Type>;
-
-template <typename Receiver, typename Completions>
-concept receiver_of_c = protocols::receiver_of<Receiver, Completions>;
-
-} // namespace lcf::async
-```
+sender_c 等项目命名概念服务于 Core，与运行时约束统一放在第 4.1 节的 core/concepts.h，直接定义于 lcf::async。execution 直接复用 protocols 中的标准概念，不包含这组别名；转发只复用原约束，不重新实现 sender/receiver 协议。内部适配实际消费 receiver_of_c；scheduler_c、sender_c、operation_state_c 用于公共调度接口的契约验证。
 
 实现用 protocols::scheduler_t、protocols::receiver_t 声明角色；调用用 exec::schedule、exec::connect、exec::start。完成签名用 protocols::completion_signatures<exec::set_value_t(...)>；environment 的 query 重载接受 exec::get_completion_scheduler_t<exec::set_value_t>。每个名字只有一个项目重导出位置，不在 protocols 和 exec 重复提供同名入口。概念转发只统一 Core 的 _c 命名，不隔离对标准协议的依赖。
 
 ### 4.5 线程后端
+
+线程入口类型是 Core concepts 与 scheduling 共用的基础词汇，定义在 Core 层；concepts 通过它检查线程工厂，不依赖 scheduling：
+
+`include/async/core/thread_types.h`：
+
+```cpp
+#pragma once
+
+#include <async/config/macros.h>
+
+LCF_ASYNC_EXPORT
+namespace lcf::async {
+
+using ThreadEntry = void (*)(void *) noexcept;
+
+} // namespace lcf::async
+```
+
+`ThreadEntry` 与 `ScheduleNode::ExecuteFunction` 在 C++ 类型系统中是同一函数指针类型；前者表达线程入口，后者表达一次节点执行，分别保留其语义名称。
 
 core/concepts.h 中的 thread_c 服务于 BasicWorker 的 join/析构；thread_factory_c 服务于创建实际线程，允许宿主独立决定线程栈、启动状态及系统句柄的管理。factory 返回前可以启动 entry，返回的线程对象必须持续代表该执行；若创建抛异常，factory 必须自行回收尚未交付的线程和存储。factory 仅在构造期使用，异步启动状态不能借用已经销毁的 factory。join 只允许在其他线程调用；BasicWorker::join 是 noexcept，后端 join 违反契约或报告无法完成时终止，不能继续释放仍被线程使用的存储。标准线程后端的内部申请不受 PMR 控制，不能由另一个“线程 resource 参数”伪装成已受控。
 
@@ -606,7 +619,7 @@ queue_record_c 只是默认 EventLoop 检查 Record 是否提供 ScheduleNode �
 ```cpp
 #pragma once
 
-#include "../operations.h"
+#include <async/core/operations.h>
 
 #include <cassert>
 #include <concepts>
@@ -668,8 +681,8 @@ concept queue_record_c = schedule_record_c<Record>
 ```cpp
 #pragma once
 
-#include "../../concepts.h"
-#include "../ScheduleNode.h"
+#include <async/core/concepts.h>
+#include <async/core/scheduling/ScheduleNode.h>
 
 #include <cassert>
 #include <condition_variable>
@@ -772,9 +785,9 @@ private:
 
 ### 5.2 EventLoop、Worker 与预算包装
 
-PollBudget 和 PollReport 服务于 Context::poll 的批量驱动包装，不是 event_loop_c 的基础协议。它们放在 scheduling/Poll.h，由 BasicContext.h 直接包含；protocol.h、concepts.h 不包含它们。
+PollBudget 和 PollReport 服务于 Context::poll 的批量驱动包装，不是 event_loop_c 的基础协议。它们放在 scheduling/poll_structs.h，由 BasicContext.h 直接包含；protocol.h、concepts.h 不包含它们。
 
-`include/async/core/scheduling/Poll.h`：
+`include/async/core/scheduling/poll_structs.h`：
 
 ```cpp
 #pragma once
@@ -810,9 +823,9 @@ pollOne 最多 dispatch 一条 record；一条 record 中可执行普通函数�
 ```cpp
 #pragma once
 
-#include "../concepts.h"
+#include <async/core/concepts.h>
 #include "ScheduleNode.h"
-#include "queue/MutexInbox.h"
+#include <async/core/scheduling/queue/MutexInbox.h>
 
 #include <cassert>
 #include <concepts>
@@ -899,7 +912,8 @@ struct DefaultEventLoopFactory
 ```cpp
 #pragma once
 
-#include "../concepts.h"
+#include <async/core/thread_types.h>
+#include <async/core/concepts.h>
 
 #include <cassert>
 #include <thread>
@@ -961,7 +975,7 @@ Context 的数量在构造前已经确定，不需要 deque 的分块表或运�
 
 名称中的 FixedCapacity 指容量在构造时确定、之后不再改变；Vector 指连续存储、区分 size/capacity，并通过 emplaceBack/emplaceWith 逐个构造元素。它属于 containers，分配来源仍由 allocator 决定。`FixedDynamicArray` 更容易让人理解为创建时已构造全部元素、长度固定的数组。与 C++26 [std::inplace_vector](https://eel.is/c++draft/inplace.vector.overview) 的区别是：后者容量 N 为编译期常量，元素内嵌于容器对象；本轮容器的容量在运行期指定，元素存储通过显式 allocator 申请。
 
-`include/async/core/containers/details/FixedCapacityVector.h`：
+`include/async/core/details/containers/FixedCapacityVector.h`：
 
 ```cpp
 #pragma once
@@ -1083,7 +1097,7 @@ LogicalQueueToken 与 LogicalQueue 定义在同一个头文件。token 由 Conte
 ```cpp
 #pragma once
 
-#include "../operations.h"
+#include <async/core/operations.h>
 
 #include <cstdint>
 
@@ -1137,8 +1151,8 @@ private:
 ```cpp
 #pragma once
 
-#include "../containers/details/FixedCapacityVector.h"
-#include "../scheduling/LogicalQueue.h"
+#include <async/core/details/containers/FixedCapacityVector.h>
+#include <async/core/scheduling/LogicalQueue.h>
 
 #include <atomic>
 #include <cstddef>
@@ -1279,13 +1293,13 @@ LogicalQueueToken 不能默认构造或通过数字构造，只能复制 Context
 #pragma once
 
 #include "ContextInfo.h"
-#include "../operations.h"
-#include "../containers/details/FixedCapacityVector.h"
-#include "../scheduling/Poll.h"
-#include "../scheduling/BasicEventLoop.h"
-#include "../scheduling/BasicWorker.h"
-#include "../scheduling/LogicalQueue.h"
-#include "../scheduling/SchedulerHandle.h"
+#include <async/core/operations.h>
+#include <async/core/details/containers/FixedCapacityVector.h>
+#include <async/core/scheduling/poll_structs.h>
+#include <async/core/scheduling/BasicEventLoop.h>
+#include <async/core/scheduling/BasicWorker.h>
+#include <async/core/scheduling/LogicalQueue.h>
+#include <async/core/scheduling/SchedulerHandle.h>
 
 #include <cassert>
 #include <chrono>
@@ -1479,14 +1493,14 @@ SchedulerHandle 位于 core/scheduling，Context 常用别名随 BasicContext �
 
 core.h 聚合 Context、SchedulerHandle 和标准协议，因而需要选定的 execution provider。单独的 Queue、ScheduleNode、EventLoop、Worker 与固定存储头不需要 provider；需要独立使用这些机制时直接包含对应头文件。
 
-`include/async/core/scheduling/details/ScheduleSender.h`：
+`include/async/core/scheduling/details/exec_schedule_adapters.h`：
 
 ```cpp
 #pragma once
 
 #include <async/core/operations.h>
 #include <async/core/scheduling/ScheduleNode.h>
-#include <async/core/execution_concepts.h>
+#include <async/core/concepts.h>
 #include <async/execution/operations.h>
 #include <async/execution/queries.h>
 
@@ -1580,7 +1594,7 @@ struct ScheduleSender
 #pragma once
 
 #include "LogicalQueue.h"
-#include "details/ScheduleSender.h"
+#include <async/core/scheduling/details/exec_schedule_adapters.h>
 
 namespace lcf::async {
 
@@ -1629,19 +1643,19 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 ```cpp
 #pragma once
 
-#include "core/concepts.h"
-#include "core/execution_concepts.h"
-#include "core/enums.h"
-#include "core/operations.h"
-#include "core/context/ContextInfo.h"
-#include "core/context/BasicContext.h"
-#include "core/scheduling/Poll.h"
-#include "core/scheduling/ScheduleNode.h"
-#include "core/scheduling/LogicalQueue.h"
-#include "core/scheduling/BasicEventLoop.h"
-#include "core/scheduling/BasicWorker.h"
-#include "core/scheduling/SchedulerHandle.h"
-#include "core/scheduling/queue/MutexInbox.h"
+#include <async/core/concepts.h>
+#include <async/core/enums.h>
+#include <async/core/operations.h>
+#include <async/core/context/ContextInfo.h>
+#include <async/core/context/BasicContext.h>
+#include <async/core/scheduling/poll_structs.h>
+#include <async/core/thread_types.h>
+#include <async/core/scheduling/ScheduleNode.h>
+#include <async/core/scheduling/LogicalQueue.h>
+#include <async/core/scheduling/BasicEventLoop.h>
+#include <async/core/scheduling/BasicWorker.h>
+#include <async/core/scheduling/SchedulerHandle.h>
+#include <async/core/scheduling/queue/MutexInbox.h>
 ```
 
 `include/async/async.h`：
@@ -1653,7 +1667,7 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 #include "execution.h"
 ```
 
-`execution.h` 只聚合标准协议、操作 CPO、查询和按类别拆分的算法头，不直接定义算法重导出，也不包含 core/execution_concepts.h。工厂 just/just_error/just_stopped 位于 factories.h；then/upon_*/let_* 位于 completion_adaptors.h；when_all 位于 composition.h；starts_on/continues_on/on 位于 scheduling.h。各类别直接依赖公共 config.h，不互相依赖算法聚合入口，公开名称仍在 exec。Core 通过 protocols 各角色头或 protocol.h 使用标准词汇，通过 execution/operations.h、execution/queries.h 使用基础接口；不包含这些算法头。provider 的选择及 async::stde 统一位于公共 config.h。modules 在 global module fragment 中先包含 config.h 加载外部 provider，再导出项目声明；namespace alias 不会让 provider 的全部声明随 import 可见，公共使用入口仍是 protocols/exec。接入正式源码时，cmake/project/config.cmake 自动收集 include/async 下的 .h 文件；同步更新 modules/async.cppm 的公共声明导出和对应标准头导入，分别验证 header 与 module 入口。这里的参考代码先用于普通头文件模式的组合验证，不表示完整运行时的 module 导出已经实现。
+`execution.h` 只聚合标准协议、操作 CPO、查询和按类别拆分的算法头，不直接定义算法重导出，也不包含 core/concepts.h。工厂 just/just_error/just_stopped 位于 factories.h；then/upon_*/let_* 位于 continuations.h；when_all 位于 composition.h；starts_on/continues_on/on 位于 scheduling.h。各类别直接依赖 config/execution_provider.h，不互相依赖算法聚合入口，公开名称仍在 exec。Core 通过 protocols 各角色头或 protocol.h 使用标准词汇，通过 execution/operations.h、execution/queries.h 使用基础接口；不包含这些算法头。能力检测与默认配置位于 config/features.h；provider 加载及 async::stde 位于 config/execution_provider.h，config.h 只聚合配置子头。modules 在 global module fragment 中先包含 config/execution_provider.h 加载外部 provider，再导出项目声明；namespace alias 不会让 provider 的全部声明随 import 可见，公共使用入口仍是 protocols/exec。接入正式源码时，cmake/project/config.cmake 自动收集 include/async 下的 .h 文件；同步更新 modules/async.cppm 的公共声明导出和对应标准头导入，分别验证 header 与 module 入口。这里的参考代码先用于普通头文件模式的组合验证，不表示完整运行时的 module 导出已经实现。
 
 ## 6. 内存行为和扩展点
 

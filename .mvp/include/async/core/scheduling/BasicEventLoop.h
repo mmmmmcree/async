@@ -1,8 +1,8 @@
 #pragma once
 
-#include "../concepts.h"
+#include <async/core/concepts.h>
 #include "ScheduleNode.h"
-#include "queue/MutexInbox.h"
+#include <async/core/scheduling/queue/MutexInbox.h>
 
 #include <cassert>
 #include <concepts>

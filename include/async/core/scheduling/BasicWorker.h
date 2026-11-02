@@ -1,6 +1,8 @@
 #pragma once
 
-#include "../../config/macros.h"
+#include <async/core/thread_types.h>
+
+#include <async/config/macros.h>
 
 #include <thread>
 

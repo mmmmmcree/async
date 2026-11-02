@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../../config/macros.h"
-#include "queue/MutexInbox.h"
+#include <async/config/macros.h>
+#include <async/core/scheduling/queue/MutexInbox.h>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {

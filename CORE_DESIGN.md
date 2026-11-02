@@ -28,33 +28,35 @@ Core 应可嵌入、可由调用方驱动，独立支持 record、timer 和 coro
 
 非 execution 层遵循 LCFEngine 的 `agent-workspace/conventions/cpp-style.md`：普通类型和别名使用 PascalCase，非静态成员函数使用 camelCase，静态成员函数、自由函数、参数及局部变量使用 snake_case，concept 使用 `snake_case_c`。数据成员使用 `m_`，普通常量使用 `k_`，枚举值使用 `ePascalCase`；配置对象保留 `_info`，指针和句柄变量使用约定的语义后缀。
 
-CPO 是可调用接口，对象使用操作名的 snake_case，不加 `k_` 或 `_cpo`；协议标签沿用 execution 的 `snake_case_t` 形式，例如 `try_enqueue_t` 与 `try_enqueue`。普通类文件与类名一致，概念、枚举及操作集合文件使用 snake_case。`protocol.h` 聚合 `protocols/` 下按 sender、receiver、operation_state、scheduler 拆分的协议词汇；操作 CPO 和环境查询分别位于 `execution/operations.h`、`execution/queries.h`。Core 自定义定义按职责放入 `core/concepts.h`、`core/enums.h` 和 `core/operations.h`，其标准概念别名放入 `core/execution_concepts.h`。
+CPO 是可调用接口，对象使用操作名的 snake_case，不加 `k_` 或 `_cpo`；协议标签沿用 execution 的 `snake_case_t` 形式，例如 `try_enqueue_t` 与 `try_enqueue`。普通类文件与类名一致，概念、枚举及操作集合文件使用 snake_case。`protocol.h` 聚合 `protocols/` 下按 sender、receiver、operation_state、scheduler 拆分的协议词汇；操作 CPO 和环境查询分别位于 `execution/operations.h`、`execution/queries.h`。Core 自定义约束和标准概念的 `_c` 转发统一放入 `core/concepts.h`，枚举和操作分别放入 `core/enums.h` 与 `core/operations.h`。同目录头文件可用相对文件名；跨目录引用统一使用 `<async/...>`。
 
 `core/` 是头文件目录和依赖边界，不是 C++ 命名空间。Core 的公共类型、concept、CPO 和配置值直接声明在 `lcf::async`；标准 execution 的标记类型、概念和完成签名在 `lcf::async::protocols`，操作 CPO、查询接口和组合算法在 `lcf::async::exec`。只有实现细节才放进局部 `details` 命名空间，不再增加 `lcf::async::core` 这一层。
 
-execution 沿用标准/provider 命名，包括 `protocols::sender`、`exec::schedule`、`exec::get_env` 和 `exec::ext::then_expected`。`core/execution_concepts.h` 直接在 `lcf::async` 中用 `sender_c`、`receiver_c`、`scheduler_c`、`operation_state_c`、`receiver_of_c` 转发原概念；这些别名服务于 Core，execution 直接使用标准概念，不反向包含它们。SchedulerHandle 和内部适配的普通类型仍用项目命名，但 `connect/start/get_env`、`sender_concept`、`completion_signatures` 等协议定制名保留原样；语言要求的 `promise_type/await_suspend`、标准基础词汇和第三方引用亦不改名。适配实现位于 Core 的 details，用户直接取得 SchedulerHandle 并使用标准 CPO。
+execution 沿用标准/provider 命名，包括 `protocols::sender`、`exec::schedule`、`exec::get_env` 和 `exec::ext::then_expected`。`core/concepts.h` 直接在 `lcf::async` 中用 `sender_c`、`receiver_c`、`scheduler_c`、`operation_state_c`、`receiver_of_c` 转发原概念；这些别名服务于 Core，execution 直接使用标准概念，不反向包含它们。SchedulerHandle 和内部适配的普通类型仍用项目命名，但 `connect/start/get_env`、`sender_concept`、`completion_signatures` 等协议定制名保留原样；语言要求的 `promise_type/await_suspend`、标准基础词汇和第三方引用亦不改名。适配实现位于 Core 的 details，用户直接取得 SchedulerHandle 并使用标准 CPO。
 
 ## 2. 分层、类型与所有权
 
 ### 2.1 编译依赖
 
-标准 execution 协议是 Core 调度接口与 execution 算法共同使用的词汇。公共 `config.h` 负责 provider 头文件选择及 `async::stde` 别名；`protocols/` 直接依赖它，按角色重导出词汇，`protocol.h` 只聚合这些头。protocols 不依赖项目的 execution 目录。`execution/operations.h` 和 `execution/queries.h` 同样直接依赖公共 config，重导出基础操作及环境查询；`core/execution_concepts.h` 给 Core 转发概念名称。只需 `LCF_ASYNC_EXPORT` 的基础头包含 `config/macros.h`，因此不必加载 provider。CPO 是实现形式，connect/start/schedule 也参与标准契约；此处按契约词汇、调用入口和组合算法的职责组织，不能把所有 CPO 当成一类算法。异构 record 的基础提交、queue 驱动和存储由 Core 的 concepts/enums/operations 描述，不把这些运行时机制写进标准 sender 协议。
+标准 execution 协议是 Core 调度接口与 execution 算法共同使用的词汇。公共 `config.h` 只聚合配置子头：`config/macros.h` 定义导出宏，`config/features.h` 检测能力并保留调用方/CMake 对 `LCF_ASYNC_USE_STD_EXECUTION` 的显式设置，`config/execution_provider.h` 加载选定 provider 并定义 `async::stde`。`protocols/` 直接依赖 provider 子头，按角色重导出词汇，`protocol.h` 只聚合这些头。protocols 不依赖项目的 execution 目录。`execution/operations.h` 和 `execution/queries.h` 同样直接依赖 provider 子头，重导出基础操作及环境查询；`core/concepts.h` 给 Core 转发概念名称。只需导出宏或配置值的代码分别包含 macros/features 子头，不加载 provider；本次拆分使用 `<async/config/...>` 路径定位配置子头。CPO 是实现形式，connect/start/schedule 也参与标准契约；此处按契约词汇、调用入口和组合算法的职责组织，不能把所有 CPO 当成一类算法。异构 record 的基础提交、queue 驱动和存储由 Core 的 concepts/enums/operations 描述，不把这些运行时机制写进标准 sender 协议。
 
 ```mermaid
 flowchart BT
-    P["core/concepts.h · enums.h · operations.h<br/>record / executor_c / queue / 驱动"]
-    V["core/execution_concepts.h<br/>Core 使用的标准概念 _c 别名"]
+    P["core/concepts.h · enums.h · operations.h<br/>record / executor_c / queue / 驱动 / 标准概念转发"]
+    T["core/thread_types.h<br/>线程入口基础词汇"]
     M["core/memory · cancellation"]
-    K["core/containers<br/>FixedCapacityVector 等容器"]
+    K["core/details/containers<br/>FixedCapacityVector 等容器"]
     R["core/scheduling · timer · coroutine"]
     C["core/context"]
     EP["protocol.h · protocols/<br/>角色标记 / 标准概念 / 完成签名"]
     O["execution/operations.h · queries.h<br/>操作 CPO / 环境查询"]
     E["execution.h · algorithms · ext"]
-    F["config.h<br/>provider 选择 / async::stde"]
+    F["config/execution_provider.h<br/>加载 provider / async::stde"]
+    FM["config/macros.h · features.h<br/>导出宏 / 配置值与能力检测"]
     S["标准 execution / stdexec"]
     A["core/scheduling/SchedulerHandle<br/>details 内部适配"]
     R --> P
+    P --> T
     R --> M
     C --> R
     C --> A
@@ -63,10 +65,11 @@ flowchart BT
     E --> O
     EP --> F
     O --> F
+    F --> FM
     F --> S
-    V --> EP
+    P --> EP
     A --> R
-    A --> V
+    A --> P
     A --> O
 ```
 
@@ -74,21 +77,24 @@ flowchart BT
 
 | 入口/目录 | 职责 | 依赖边界 |
 | --- | --- | --- |
-| `config.h`、`config/macros.h` | 前者选择标准 execution/stdexec 并定义 async::stde；后者只定义公共宏 | provider 配置不依赖 Core、protocols 或 execution；基础组件可只包含宏头 |
-| `core/concepts.h`、`core/enums.h`、`core/operations.h` | record/executor、Queue/驱动 concepts、接纳结果、提交 CPO | 不需要 execution provider；不包含 queue/loop 实现 |
-| `protocol.h`、`protocols/` | 按角色重导出标准标记、概念、完成签名，位于 async::protocols | 直接依赖公共 config.h；不依赖项目 execution 层或 Core |
-| `execution/operations.h`、`execution/queries.h` | 操作 CPO、查询及其类型，位于 async::exec | 直接依赖公共 config.h；不包含 Core 或组合算法聚合头 |
-| `execution/factories.h`、`completion_adaptors.h`、`composition.h`、`scheduling.h` | sender 工厂、完成处理、合流、调度切换算法，位于 async::exec | 各自直接依赖公共 config.h；由 execution.h 聚合；Core 不包含算法头 |
-| `core/execution_concepts.h` | Core 使用的标准概念 _c 别名，直接位于 async | 依赖 protocol.h；execution 不反向包含它 |
+| `config.h` | 聚合 macros、features 和 execution_provider 子头 | 包含它仍会加载 provider；不直接实现配置逻辑 |
+| `config/macros.h`、`config/features.h` | 导出宏、能力检测与配置默认值；显式配置优先 | 不加载 execution provider；基础组件按需包含 |
+| `config/execution_provider.h` | 加载标准 execution/stdexec 并定义 async::stde | 依赖 macros/features 和选定 provider；不依赖 Core、protocols 或项目 execution 层 |
+| `core/concepts.h` | record/executor、Queue/驱动约束和标准 execution 概念的 `_c` 转发，直接位于 async | 依赖 enums.h、thread_types.h 和 protocol.h，因此加载 provider；不依赖 scheduling，execution 不反向包含它 |
+| `core/enums.h`、`core/operations.h` | 接纳结果、运行时提交 CPO | enums 只需公共宏；operations 依赖 concepts；不包含 queue/loop 实现 |
+| `core/thread_types.h` | `ThreadEntry` 线程入口函数类型 | Core concepts 与 scheduling 共同引用；不依赖 scheduling、具体线程、loop 或 execution provider |
+| `protocol.h`、`protocols/` | 按角色重导出标准标记、概念、完成签名，位于 async::protocols | 直接依赖 config/execution_provider.h；不依赖项目 execution 层或 Core |
+| `execution/operations.h`、`execution/queries.h` | 操作 CPO、查询及其类型，位于 async::exec | 直接依赖 config/execution_provider.h；不包含 Core 或组合算法聚合头 |
+| `execution/factories.h`、`continuations.h`、`composition.h`、`scheduling.h` | sender 工厂、完成接续、合流、调度切换算法，位于 async::exec | 各自直接依赖 config/execution_provider.h；由 execution.h 聚合；Core 不包含算法头 |
 | `core/memory`、`core/cancellation` | 资源策略、对象分配、取消状态与 registration | 按需使用标准资源/stop vocabulary |
-| `core/containers` | 容器的元素生命周期、容量、布局与访问；内部 FixedCapacityVector 的容量在运行期确定，之后不扩容 | 使用显式 allocator；不依赖 Context、execution 或具体 queue；memory 负责资源策略，容器负责管理元素 |
+| `core/details/containers` | 容器的元素生命周期、容量、布局与访问；内部 FixedCapacityVector 的容量在运行期确定，之后不扩容 | 使用显式 allocator；不依赖 Context、execution 或具体 queue；memory 负责资源策略，容器负责管理元素 |
 | `core/scheduling`、`core/timer` | queue、EventLoop、Workers、逻辑目标、标准 scheduler 句柄、驱动预算与 deadline 索引 | 基础机制使用实际需要的协议；SchedulerHandle 和内部 sender/operation 直接使用标准 execution 协议；不调用组合算法 |
 | `core/coroutine` | Task、promise、awaiter、frame 与 continuation policy | Core 能力及语言协程协议 |
 | `core/context` | 组合与管理 loop、Workers、映射和生命周期；直接返回 SchedulerHandle | Core 组件和标准调度接口；不拥有业务 root scope，不增加句柄策略参数 |
 | `execution.h`、后续扩展算法 | 聚合标准词汇、操作/查询接口、标准算法和扩展算法 | 复用统一协议；不依赖 Core |
 | `core/scheduling/details/` | 内部 sender/operation 的接纳、执行与完成适配 | 使用 Core 提交接口、概念别名和标准 operations/queries；不建立公开 adapters API，不被基础 queue/loop 反向包含 |
 
-`core.h` 聚合 Core，包括标准调度接口，因此需要选定 execution provider；`execution.h` 聚合协议和算法；`async.h` 是总入口。只使用 Queue、EventLoop、Worker 或固定存储时，可单独包含其基础头文件，不需要 provider。标准协议依赖与编译成本分别评估：当前 stdexec 入口可能包含大量实现，不能仅由命名为 protocol 就推断编译成本很低。
+`core.h` 聚合 Core，`execution.h` 聚合协议和算法，`async.h` 是总入口。组件可单独包含；合并后的 `core/concepts.h` 通过 protocol.h 加载 provider，依赖该头的 Queue/EventLoop/Worker 也具有这一传递依赖。固定存储容器及仅使用 macros/features 的头仍可独立于 provider。标准协议依赖与编译成本分别评估：当前 stdexec 入口可能包含大量实现，不能仅由命名为 protocol 就推断编译成本很低。
 
 ### 2.2 自顶向下的运行时类型图
 
@@ -249,7 +255,7 @@ Core executor 不自动满足标准 scheduler，标准 scheduler 也不自动满
 
 MVP 的 `ContextInfo(worker_count, queue_capacity, polymorphic_allocator<QueueBinding>)` 一次分配配置容量，登记只构造元素。`Context::storageRequirements(info)` 在创建前报告 worker loops、Workers 和 routes 的请求字节数/对齐；ContextAllocators 分别提供其 allocator，内部固定存储一次分配，不扩容、不移动元素。配置按值消费，构造完成后可释放临时配置 arena；运行时 allocator/resource 保持到 Context 最后一次释放。控制 loop 直接内嵌，Queue backing storage 由 LoopFactory 独立注入；线程后端另由 ThreadFactory 决定。
 
-这些固定数组由 `core/containers/details/FixedCapacityVector.h` 的内部容器管理：容量在运行期指定，已构造元素数量可逐步增加，元素连续存储且追加不迁移已有元素。`core/memory` 负责分配与回收策略，容器属于 `core/containers`。C++26 `std::inplace_vector<T, N>` 将容量放在类型中、元素内嵌于容器对象，和本轮通过 allocator 获取运行期容量的容器有不同的存储契约；不能仅因固定容量就直接替换。
+这些固定数组由 `core/details/containers/FixedCapacityVector.h` 的内部容器管理：容量在运行期指定，已构造元素数量可逐步增加，元素连续存储且追加不迁移已有元素。`core/memory` 负责分配与回收策略，容器属于 `core/details/containers`。C++26 `std::inplace_vector<T, N>` 将容量放在类型中、元素内嵌于容器对象，和本轮通过 allocator 获取运行期容量的容器有不同的存储契约；不能仅因固定容量就直接替换。
 
 数量确定后，用正确对齐的有界缓冲区和 null upstream 可以证明元数据无堆 fallback；合并多个数组时必须计入各段对齐，pool 的 chunk/缓存量不能用元素字节数代替。兼容的生命周期与线程需求允许宿主显式共用 resource，但不能默认把所有需求汇入一个 Context resource。逐项申请审查、正确用法和失败验证见 MVP 指南第 6 节；无异常分配能力另按本文第 4.4 节选择。
 
@@ -362,7 +368,7 @@ EventLoop 是可手动驱动的单 consumer 组件，其他线程只发布/通�
 
 `event_loop_c` 只约束 Context 直接调用的基础入口。`PollBudget`、`PollReport`、`poll`、`runOne` 和 `run` 属于 Context/Worker 的组合包装；外部 EventLoop 只需提供基础入口即可接入，是否提供同名便利成员由具体类型决定。
 
-`PollBudget` 和 `PollReport` 定义在 `core/scheduling/Poll.h`，由 `BasicContext.h` 直接包含。`EnqueueResult` 是提交操作必需的返回类型，定义在 `core/enums.h`；批量驱动的预算与报告属于 scheduling。`protocol.h` 只聚合标准 execution 的协议词汇，不包含这些 Core 运行时定义。
+`PollBudget` 和 `PollReport` 定义在 `core/scheduling/poll_structs.h`，由 `BasicContext.h` 直接包含。`EnqueueResult` 是提交操作必需的返回类型，定义在 `core/enums.h`；批量驱动的预算与报告属于 scheduling。`protocol.h` 只聚合标准 execution 的协议词汇，不包含这些 Core 运行时定义。
 
 ### 5.2 队列职责与选择
 

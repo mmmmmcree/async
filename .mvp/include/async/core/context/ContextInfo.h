@@ -1,7 +1,7 @@
 #pragma once
 
-#include "../containers/details/FixedCapacityVector.h"
-#include "../scheduling/LogicalQueue.h"
+#include <async/core/details/containers/FixedCapacityVector.h>
+#include <async/core/scheduling/LogicalQueue.h>
 
 #include <atomic>
 #include <cstddef>

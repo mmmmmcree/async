@@ -3,7 +3,7 @@ module;
 #include <cstdint>
 #include <thread>
 
-#include <async/config.h>
+#include <async/config/execution_provider.h>
 
 export module lcf.async;
 
@@ -11,6 +11,18 @@ export module lcf.async;
 #undef LCF_ASYNC_EXPORT
 #define LCF_ASYNC_EXPORT export
 
-#include "async/async.h"
+// Project headers intentionally attach their public declarations to this module.
+#if defined(__clang__)
+#pragma clang diagnostic push
+#if __has_warning("-Winclude-angled-in-module-purview")
+#pragma clang diagnostic ignored "-Winclude-angled-in-module-purview"
+#endif
+#endif
+
+#include <async/async.h>
+
+#if defined(__clang__)
+#pragma clang diagnostic pop
+#endif
 
 #undef LCF_ASYNC_EXPORT

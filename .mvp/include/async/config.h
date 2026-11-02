@@ -1,29 +1,5 @@
 #pragma once
 
-#include "config/macros.h"
-
-#ifndef LCF_ASYNC_USE_STD_EXECUTION
-#include <version>
-#ifdef __cpp_lib_senders
-#define LCF_ASYNC_USE_STD_EXECUTION 1
-#else
-#define LCF_ASYNC_USE_STD_EXECUTION 0
-#endif
-#endif
-
-#if LCF_ASYNC_USE_STD_EXECUTION
-#include <execution>
-#else
-#include <stdexec/execution.hpp>
-#endif
-
-LCF_ASYNC_EXPORT
-namespace lcf::async {
-
-#if LCF_ASYNC_USE_STD_EXECUTION
-namespace stde = ::std::execution;
-#else
-namespace stde = ::stdexec;
-#endif
-
-} // namespace lcf::async
+#include <async/config/macros.h>
+#include <async/config/features.h>
+#include <async/config/execution_provider.h>

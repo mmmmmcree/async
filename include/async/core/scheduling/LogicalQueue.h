@@ -1,6 +1,6 @@
 #pragma once
 
-#include "../../config/macros.h"
+#include <async/config/macros.h>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
