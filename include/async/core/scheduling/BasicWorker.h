@@ -11,7 +11,7 @@ namespace lcf::async {
 
 struct StdThreadFactory;
 
-template <typename EventLoop, typename Thread = std::thread>
+template <typename Executor, typename Thread = std::thread>
 class BasicWorker;
 
 } // namespace lcf::async

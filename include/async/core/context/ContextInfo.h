@@ -7,7 +7,9 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-using WorkerIndex = std::uint32_t;
+using WorkerCount = std::uint32_t;
+
+enum class QueueTarget;
 
 struct QueueBinding;
 struct StorageRequirement;

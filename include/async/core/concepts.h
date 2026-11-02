@@ -23,9 +23,9 @@ concept operation_state_c = protocols::operation_state<Type>;
 template <typename Receiver, typename Completions>
 concept receiver_of_c = protocols::receiver_of<Receiver, Completions>;
 
-// Concepts require definitions: schedule_record_c, executor_c,
-// schedule_queue_c, blocking_schedule_queue_c, stoppable_schedule_queue_c,
-// event_loop_c, blocking_event_loop_c, stoppable_event_loop_c,
-// event_loop_factory_c, thread_c, thread_factory_c.
+// Concepts require definitions: schedule_node_c, schedule_record_c, executor_c,
+// work_executor_c, blocking_work_executor_c, multi_worker_executor_c,
+// stoppable_work_executor_c, schedule_queue_c, blocking_schedule_queue_c,
+// stoppable_schedule_queue_c, work_executor_factory_c, thread_c, thread_factory_c.
 
 } // namespace lcf::async

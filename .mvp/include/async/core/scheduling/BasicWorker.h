@@ -1,7 +1,6 @@
 #pragma once
 
 #include <async/core/thread_types.h>
-
 #include <async/core/concepts.h>
 
 #include <cassert>
@@ -17,13 +16,13 @@ struct StdThreadFactory
     }
 };
 
-template <blocking_event_loop_c EventLoop, thread_c Thread = std::thread>
+template <blocking_work_executor_c Executor, thread_c Thread = std::thread>
 class BasicWorker
 {
 public:
     template <thread_factory_c<Thread> Factory = StdThreadFactory>
-    explicit BasicWorker(EventLoop & loop, Factory factory = {})
-        : m_event_loop_p(&loop), m_thread(factory(&run_loop, this)) {}
+    explicit BasicWorker(Executor & executor, Factory factory = {})
+        : m_executor_p(&executor), m_thread(factory(&run_executor, this)) {}
 
     BasicWorker(const BasicWorker &) = delete;
     BasicWorker & operator=(const BasicWorker &) = delete;
@@ -41,13 +40,13 @@ public:
     }
 
 private:
-    static void run_loop(void * state_p) noexcept
+    static void run_executor(void * state_p) noexcept
     {
         auto & worker = *static_cast<BasicWorker *>(state_p);
-        while (worker.m_event_loop_p->waitOne()) {}
+        while (worker.m_executor_p->waitOne()) {}
     }
 
-    EventLoop * m_event_loop_p;
+    Executor * m_executor_p;
     Thread m_thread;
 };
 

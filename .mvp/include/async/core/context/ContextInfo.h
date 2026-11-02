@@ -1,26 +1,30 @@
 #pragma once
 
-#include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/scheduling/LogicalQueue.h>
 
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <exception>
 #include <limits>
 #include <memory_resource>
-#include <optional>
 #include <span>
-#include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace lcf::async {
 
-using WorkerIndex = std::uint32_t;
+using WorkerCount = std::uint32_t;
+
+enum class QueueTarget
+{
+    eControl,
+    eCpu,
+};
 
 struct QueueBinding
 {
-    bool m_on_worker;
-    WorkerIndex m_worker_index;
+    QueueTarget m_target;
 };
 
 struct StorageRequirement
@@ -31,7 +35,6 @@ struct StorageRequirement
 
 struct ContextStorageRequirements
 {
-    StorageRequirement m_worker_loops;
     StorageRequirement m_workers;
     StorageRequirement m_routes;
 };
@@ -40,10 +43,9 @@ struct ContextAllocators
 {
     using Allocator = std::pmr::polymorphic_allocator<std::byte>;
 
-    ContextAllocators(Allocator worker_loops, Allocator workers, Allocator routes) noexcept
-        : m_worker_loops(worker_loops), m_workers(workers), m_routes(routes) {}
+    ContextAllocators(Allocator workers, Allocator routes) noexcept
+        : m_workers(workers), m_routes(routes) {}
 
-    Allocator m_worker_loops;
     Allocator m_workers;
     Allocator m_routes;
 };
@@ -51,10 +53,8 @@ struct ContextAllocators
 class ContextInfo
 {
 public:
-    ContextInfo(WorkerIndex worker_count, std::size_t queue_capacity,
-        std::pmr::polymorphic_allocator<QueueBinding> allocator)
-        : m_domain_id(acquire_domain_id()), m_worker_count(worker_count),
-          m_queues(checked_queue_capacity(queue_capacity), allocator) {}
+    explicit ContextInfo(WorkerCount worker_count) noexcept
+        : m_domain_id(acquire_domain_id()), m_worker_count(worker_count) {}
 
     ContextInfo(const ContextInfo &) = delete;
     ContextInfo & operator=(const ContextInfo &) = delete;
@@ -64,55 +64,40 @@ public:
           m_queues(std::move(other.m_queues)) {}
     ContextInfo & operator=(ContextInfo &&) = delete;
 
-    std::optional<LogicalQueueToken> addControlQueue() noexcept
+    LogicalQueueToken addControlQueue() noexcept
     {
-        return this->addQueue({false, 0});
+        return this->addQueue(QueueTarget::eControl);
     }
 
-    std::optional<LogicalQueueToken> addWorkerQueue(WorkerIndex worker_index) noexcept
+    LogicalQueueToken addCpuQueue() noexcept
     {
-        if (worker_index >= m_worker_count) {
-            return std::nullopt;
+        if (m_worker_count == 0) {
+            std::terminate();
         }
-        return this->addQueue({true, worker_index});
+        return this->addQueue(QueueTarget::eCpu);
     }
 
-    WorkerIndex getWorkerCount() const noexcept { return m_worker_count; }
-    std::uint64_t getDomainId() const noexcept { return m_domain_id; }
-    std::span<const QueueBinding> getQueueBindings() const noexcept { return m_queues.values(); }
-
-    static constexpr StorageRequirement storageRequirement(std::size_t queue_capacity)
-    {
-        if (queue_capacity > std::numeric_limits<std::uint32_t>::max()
-            || queue_capacity > std::numeric_limits<std::size_t>::max() / sizeof(QueueBinding)) {
-            throw std::length_error{"ContextInfo capacity overflow"};
-        }
-        return {queue_capacity * sizeof(QueueBinding), alignof(QueueBinding)};
-    }
+    WorkerCount getWorkerCount() const noexcept { return m_worker_count; }
+    std::uint32_t getDomainId() const noexcept { return m_domain_id; }
+    std::span<const QueueBinding> getQueueBindings() const noexcept { return m_queues; }
 
 private:
-    std::optional<LogicalQueueToken> addQueue(QueueBinding binding) noexcept
+    LogicalQueueToken addQueue(QueueTarget target) noexcept
     {
-        if (m_domain_id == 0 || m_queues.size() == m_queues.capacity()) {
-            return std::nullopt;
+        if (m_domain_id == 0) {
+            std::terminate();
         }
-        const auto index = static_cast<std::uint32_t>(m_queues.size());
-        m_queues.emplaceBack(binding);
+        const auto index = m_queues.size();
+        m_queues.push_back(QueueBinding{target});
         return LogicalQueueToken{m_domain_id, index};
     }
 
-    static std::size_t checked_queue_capacity(std::size_t capacity)
-    {
-        storageRequirement(capacity);
-        return capacity;
-    }
-
-    static std::uint64_t acquire_domain_id()
+    static std::uint32_t acquire_domain_id() noexcept
     {
         auto next = s_next_domain_id.load(std::memory_order_relaxed);
         for (;;) {
-            if (next == std::numeric_limits<std::uint64_t>::max()) {
-                throw std::overflow_error{"Context domain IDs exhausted"};
+            if (next == std::numeric_limits<std::uint32_t>::max()) {
+                std::terminate();
             }
             if (s_next_domain_id.compare_exchange_weak(
                     next, next + 1, std::memory_order_relaxed)) {
@@ -121,10 +106,10 @@ private:
         }
     }
 
-    inline static std::atomic<std::uint64_t> s_next_domain_id{1};
-    std::uint64_t m_domain_id;
-    WorkerIndex m_worker_count;
-    details::FixedCapacityVector<QueueBinding> m_queues;
+    inline static std::atomic<std::uint32_t> s_next_domain_id{1};
+    std::uint32_t m_domain_id;
+    WorkerCount m_worker_count;
+    std::vector<QueueBinding> m_queues;
 };
 
 } // namespace lcf::async

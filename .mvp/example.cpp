@@ -92,40 +92,29 @@ private:
 
 int main()
 {
-    constexpr async::WorkerIndex k_worker_count = 2;
+    constexpr async::WorkerCount k_worker_count = 2;
     constexpr std::size_t k_queue_count = 3;
     const auto main_thread = std::this_thread::get_id();
 
-    constexpr auto k_config = async::ContextInfo::storageRequirement(k_queue_count);
-    alignas(k_config.m_alignment) std::array<std::byte, k_config.m_bytes> config_bytes;
-    std::pmr::monotonic_buffer_resource config_arena{
-        config_bytes.data(), config_bytes.size(), std::pmr::null_memory_resource()};
-    async::ContextInfo info{k_worker_count, k_queue_count,
-        std::pmr::polymorphic_allocator<async::QueueBinding>{&config_arena}};
+    async::ContextInfo info{k_worker_count};
 
-    const auto control_token = info.addControlQueue().value();
-    const auto left_token = info.addWorkerQueue(0).value();
-    const auto right_token = info.addWorkerQueue(1).value();
+    const auto control_token = info.addControlQueue();
+    const auto left_token = info.addCpuQueue();
+    const auto right_token = info.addCpuQueue();
 
     constexpr auto k_storage = async::Context::storageRequirements(k_worker_count, k_queue_count);
-    alignas(k_storage.m_worker_loops.m_alignment)
-        std::array<std::byte, k_storage.m_worker_loops.m_bytes> loop_bytes;
     alignas(k_storage.m_workers.m_alignment)
         std::array<std::byte, k_storage.m_workers.m_bytes> worker_bytes;
     alignas(k_storage.m_routes.m_alignment)
         std::array<std::byte, k_storage.m_routes.m_bytes> route_bytes;
-    std::pmr::monotonic_buffer_resource loop_arena{
-        loop_bytes.data(), loop_bytes.size(), std::pmr::null_memory_resource()};
     std::pmr::monotonic_buffer_resource worker_arena{
         worker_bytes.data(), worker_bytes.size(), std::pmr::null_memory_resource()};
     std::pmr::monotonic_buffer_resource route_arena{
         route_bytes.data(), route_bytes.size(), std::pmr::null_memory_resource()};
 
     async::Context context{std::move(info), async::ContextAllocators{
-        std::pmr::polymorphic_allocator<std::byte>{&loop_arena},
         std::pmr::polymorphic_allocator<std::byte>{&worker_arena},
         std::pmr::polymorphic_allocator<std::byte>{&route_arena}}};
-    config_arena.release(); // Context consumed and released the temporary bindings.
 
     auto control_scheduler = context.getSchedulerHandle(control_token);
     auto left_scheduler = context.getSchedulerHandle(left_token);
@@ -139,12 +128,11 @@ int main()
             const auto caller_thread = std::this_thread::get_id();
             outcome.m_caller_thread = caller_thread;
 
-            // The caller owns and drives this return loop independently of Context.
-            async::BasicEventLoop<> caller_loop; // Intrusive queue needs no dynamic backing storage.
-            async::LogicalQueue caller_queue{caller_loop};
+            // The caller owns and drives this return executor independently of Context.
+            async::BasicExecutor<> caller_executor;
+            async::LogicalQueue caller_queue{caller_executor};
 
             auto caller_scheduler = async::SchedulerHandle{caller_queue};
-
             auto left = ex::schedule(left_scheduler)
                 | ex::then([] {
                     std::this_thread::sleep_for(1s);
@@ -186,14 +174,14 @@ int main()
                 std::cout << "caller heartbeat: "
                           << ++heartbeat_count << '\n';
 
-                caller_loop.pollOne();
+                caller_executor.pollOne();
 
                 if (not caller_completed) {
                     std::this_thread::sleep_for(100ms);
                 }
             }
 
-            caller_loop.close();
+            caller_executor.close();
         }};
     } catch (...) {
         // No root was submitted if launching the caller thread failed.

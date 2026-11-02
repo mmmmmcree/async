@@ -7,9 +7,9 @@ LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <typename Queue = MutexInbox>
-class BasicEventLoop;
+class BasicExecutor;
 
-template <typename EventLoop>
-struct DefaultEventLoopFactory;
+template <typename Executor>
+struct DefaultExecutorFactory;
 
 } // namespace lcf::async

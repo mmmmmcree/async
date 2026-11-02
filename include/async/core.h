@@ -5,7 +5,7 @@
 #include <async/core/operations.h>
 #include <async/core/context/ContextInfo.h>
 #include <async/core/context/BasicContext.h>
-#include <async/core/scheduling/BasicEventLoop.h>
+#include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
 #include <async/core/scheduling/LogicalQueue.h>
 #include <async/core/scheduling/poll_structs.h>

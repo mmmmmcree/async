@@ -4,10 +4,12 @@
 #include <async/core/operations.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/scheduling/poll_structs.h>
-#include <async/core/scheduling/BasicEventLoop.h>
+#include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
+#include <async/core/scheduling/details/ContextExecutorRoute.h>
 #include <async/core/scheduling/LogicalQueue.h>
 #include <async/core/scheduling/SchedulerHandle.h>
+#include <async/core/scheduling/queue/FastProducerSpmcInbox.h>
 
 #include <cassert>
 #include <chrono>
@@ -25,8 +27,8 @@ namespace lcf::async {
 
 namespace details {
 
-template <event_loop_c EventLoop>
-PollReport poll_event_loop(EventLoop & event_loop, PollBudget budget = {}) noexcept
+template <work_executor_c Executor>
+PollReport poll_executor(Executor & executor, PollBudget budget = {}) noexcept
 {
     using Clock = std::chrono::steady_clock;
     const auto started = Clock::now();
@@ -34,7 +36,7 @@ PollReport poll_event_loop(EventLoop & event_loop, PollBudget budget = {}) noexc
     PollReport report;
     while (report.m_records < budget.m_max_records) {
         if (finite_time && Clock::now() - started >= budget.m_max_duration) { break; }
-        if (not event_loop.pollOne()) { break; }
+        if (not executor.pollOne()) { break; }
         ++report.m_records;
     }
     report.m_elapsed = Clock::now() - started;
@@ -45,36 +47,36 @@ PollReport poll_event_loop(EventLoop & event_loop, PollBudget budget = {}) noexc
 
 } // namespace details
 
-template <blocking_event_loop_c EventLoop = BasicEventLoop<>, thread_c Thread = std::thread>
+template <work_executor_c ControlExecutor = BasicExecutor<>,
+    multi_worker_executor_c CpuExecutor = BasicExecutor<>,
+    thread_c Thread = std::thread>
 class BasicContext
 {
 public:
-    using Worker = BasicWorker<EventLoop, Thread>;
+    using Worker = BasicWorker<CpuExecutor, Thread>;
+    using Route = details::ContextExecutorRoute<ControlExecutor, CpuExecutor>;
+    using RouteBinding = details::ContextLogicalQueue<ControlExecutor, CpuExecutor>;
 
-    template <event_loop_factory_c<EventLoop> LoopFactory = DefaultEventLoopFactory<EventLoop>,
+    template <typename ExecutorFactory = DefaultExecutorFactory<ControlExecutor, CpuExecutor>,
         thread_factory_c<Thread> ThreadFactory = StdThreadFactory>
+        requires work_executor_factory_c<ExecutorFactory, ControlExecutor, CpuExecutor>
     explicit BasicContext(ContextInfo context_info, ContextAllocators allocators,
-        LoopFactory loop_factory = {}, ThreadFactory thread_factory = {})
+        ExecutorFactory executor_factory = {}, ThreadFactory thread_factory = {})
         : m_domain_id(validate_info(context_info)),
-          m_control_loop(loop_factory.makeControlLoop()),
-          m_worker_loops(context_info.getWorkerCount(),
-              std::pmr::polymorphic_allocator<EventLoop>{allocators.m_worker_loops}),
+          m_control_executor(executor_factory.makeControlExecutor()),
+          m_cpu_executor(executor_factory.makeCpuExecutor()),
           m_workers(context_info.getWorkerCount(),
               std::pmr::polymorphic_allocator<Worker>{allocators.m_workers}),
           m_queues(context_info.getQueueBindings().size(),
-              std::pmr::polymorphic_allocator<LogicalQueue<EventLoop>>{allocators.m_routes})
+              std::pmr::polymorphic_allocator<RouteBinding>{allocators.m_routes})
     {
-        for (WorkerIndex index = 0; index < context_info.getWorkerCount(); ++index) {
-            m_worker_loops.emplaceWith([&] { return loop_factory.makeWorkerLoop(index); });
-        }
         for (const auto & binding : context_info.getQueueBindings()) {
-            auto & loop = binding.m_on_worker
-                ? m_worker_loops[binding.m_worker_index] : m_control_loop;
-            m_queues.emplaceBack(loop);
+            m_queues.emplaceBack(m_control_executor, m_cpu_executor,
+                binding.m_target == QueueTarget::eCpu);
         }
         try {
-            for (auto & loop : m_worker_loops.values()) {
-                m_workers.emplaceBack(loop, thread_factory);
+            for (WorkerCount index = 0; index < context_info.getWorkerCount(); ++index) {
+                m_workers.emplaceBack(m_cpu_executor, thread_factory);
             }
         } catch (...) {
             this->close();
@@ -88,51 +90,45 @@ public:
     ~BasicContext() noexcept { assert(this->empty()); }
 
     static constexpr ContextStorageRequirements storageRequirements(
-        WorkerIndex worker_count, std::size_t queue_count)
+        WorkerCount worker_count, std::size_t queue_count) noexcept
     {
-        return {storage_requirement<EventLoop>(worker_count),
-            storage_requirement<Worker>(worker_count),
-            storage_requirement<LogicalQueue<EventLoop>>(queue_count)};
+        return {storage_requirement<Worker>(worker_count),
+            storage_requirement<RouteBinding>(queue_count)};
     }
 
-    static ContextStorageRequirements storageRequirements(const ContextInfo & info)
+    static ContextStorageRequirements storageRequirements(const ContextInfo & info) noexcept
     {
         return storageRequirements(info.getWorkerCount(), info.getQueueBindings().size());
     }
 
-    SchedulerHandle<EventLoop> getSchedulerHandle(LogicalQueueToken token) const noexcept
+    SchedulerHandle<Route> getSchedulerHandle(LogicalQueueToken token) const noexcept
     {
-        const auto * queue_p = this->findLogicalQueue(token);
-        // A token from another configuration violates this accessor's contract.
-        if (not queue_p) { std::terminate(); }
-        return SchedulerHandle<EventLoop>{*queue_p};
+        return SchedulerHandle<Route>{this->findLogicalQueue(token)};
     }
 
-    const LogicalQueue<EventLoop> * findLogicalQueue(LogicalQueueToken token) const noexcept
+    const LogicalQueue<Route> & findLogicalQueue(LogicalQueueToken token) const noexcept
     {
-        if (token.getDomainId() != m_domain_id || token.getIndex() >= m_queues.size()) {
-            return nullptr;
-        }
-        return &m_queues[token.getIndex()];
+        assert(token.getDomainId() == m_domain_id);
+        return m_queues[token.getIndex()].getLogicalQueue();
     }
 
-    bool pollOne() noexcept { return m_control_loop.pollOne(); }
+    bool pollOne() noexcept { return m_control_executor.pollOne(); }
     PollReport poll(PollBudget budget = {}) noexcept
     {
-        return details::poll_event_loop(m_control_loop, budget);
+        return details::poll_executor(m_control_executor, budget);
     }
-    void run() noexcept requires stoppable_event_loop_c<EventLoop>
+    void run() noexcept requires stoppable_work_executor_c<ControlExecutor>
     {
-        while (m_control_loop.waitOne()) {}
+        while (m_control_executor.waitOne()) {}
     }
-    void requestStop() noexcept requires stoppable_event_loop_c<EventLoop>
+    void requestStop() noexcept requires stoppable_work_executor_c<ControlExecutor>
     {
-        m_control_loop.requestStop();
+        m_control_executor.requestStop();
     }
     void close() noexcept
     {
-        m_control_loop.close();
-        for (auto & loop : m_worker_loops.values()) { loop.close(); }
+        m_control_executor.close();
+        m_cpu_executor.close();
     }
     void joinWorkers() noexcept
     {
@@ -140,15 +136,11 @@ public:
     }
     bool empty() const noexcept
     {
-        if (not m_control_loop.empty()) { return false; }
-        for (const auto & loop : m_worker_loops.values()) {
-            if (not loop.empty()) { return false; }
-        }
-        return true;
+        return m_control_executor.empty() && m_cpu_executor.empty();
     }
 
 private:
-    static std::uint64_t validate_info(const ContextInfo & info)
+    static std::uint32_t validate_info(const ContextInfo & info)
     {
         if (info.getDomainId() == 0 || info.getQueueBindings().empty()) {
             throw std::invalid_argument{"Context requires an unconsumed configuration with routes"};
@@ -157,21 +149,22 @@ private:
     }
 
     template <std::destructible Value>
-    static constexpr StorageRequirement storage_requirement(std::size_t count)
+    static constexpr StorageRequirement storage_requirement(std::size_t count) noexcept
     {
         if (count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
-            throw std::length_error{"Context storage size overflow"};
+            std::terminate();
         }
         return {count * sizeof(Value), alignof(Value)};
     }
 
-    std::uint64_t m_domain_id;
-    EventLoop m_control_loop;
-    details::FixedCapacityVector<EventLoop> m_worker_loops;
+    std::uint32_t m_domain_id;
+    ControlExecutor m_control_executor;
+    CpuExecutor m_cpu_executor;
     details::FixedCapacityVector<Worker> m_workers;
-    details::FixedCapacityVector<LogicalQueue<EventLoop>> m_queues;
+    details::FixedCapacityVector<RouteBinding> m_queues;
 };
 
-using Context = BasicContext<>;
+using Context = BasicContext<BasicExecutor<>,
+    BasicExecutor<FastProducerSpmcInbox>>;
 
 } // namespace lcf::async

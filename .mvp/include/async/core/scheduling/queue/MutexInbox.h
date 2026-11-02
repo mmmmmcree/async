@@ -12,6 +12,9 @@ namespace lcf::async {
 class MutexInbox
 {
 public:
+    using Node = ScheduleNode;
+    static constexpr bool supports_multiple_consumers = true;
+
     EnqueueResult tryEnqueue(ScheduleNode & node) noexcept
     {
         {

@@ -18,10 +18,8 @@ inline constexpr get_schedule_node_t get_schedule_node{};
 struct try_enqueue_t
 {
     template <typename Executor, typename Record>
-        requires executor_c<Executor, Record>
-    EnqueueResult operator()(
-        Executor & executor,
-        Record & record) const noexcept
+    requires executor_c<Executor, Record>
+    EnqueueResult operator()(Executor & executor, Record & record) const noexcept
     {
         return executor.tryEnqueue(record);
     }

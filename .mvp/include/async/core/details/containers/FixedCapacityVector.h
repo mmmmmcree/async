@@ -68,7 +68,7 @@ public:
     {
         this->checkCapacity();
         // Placement new constructs in already allocated storage. Guaranteed
-        // copy elision allows a factory to return a nonmovable EventLoop.
+        // copy elision allows a factory to return a nonmovable Executor.
         auto * value_p = ::new (static_cast<void *>(m_data_p + m_size)) Value(
             std::invoke(std::forward<Factory>(factory), std::forward<Args>(args)...));
         ++m_size;

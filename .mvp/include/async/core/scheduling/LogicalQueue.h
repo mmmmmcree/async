@@ -2,6 +2,7 @@
 
 #include <async/core/operations.h>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace lcf::async {
@@ -14,19 +15,19 @@ public:
     LogicalQueueToken(const LogicalQueueToken &) noexcept = default;
     LogicalQueueToken & operator=(const LogicalQueueToken &) noexcept = default;
 
-    std::uint64_t getDomainId() const noexcept { return m_domain_id; }
-    std::uint32_t getIndex() const noexcept { return m_index; }
+    std::uint32_t getDomainId() const noexcept { return m_domain_id; }
+    std::size_t getIndex() const noexcept { return m_index; }
     bool operator==(const LogicalQueueToken &) const noexcept = default;
 
 private:
     // Issuance is restricted to successful ContextInfo registration.
     friend class ContextInfo;
 
-    LogicalQueueToken(std::uint64_t domain_id, std::uint32_t index) noexcept
+    LogicalQueueToken(std::uint32_t domain_id, std::size_t index) noexcept
         : m_domain_id(domain_id), m_index(index) {}
 
-    std::uint64_t m_domain_id;
-    std::uint32_t m_index;
+    std::uint32_t m_domain_id;
+    std::size_t m_index;
 };
 
 template <typename Executor>

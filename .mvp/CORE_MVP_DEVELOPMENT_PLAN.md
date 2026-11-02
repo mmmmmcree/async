@@ -4,7 +4,7 @@
 
 ## 1. 最终验收示例
 
-主线程专职 `context.run()`；两个 Worker 各执行一个 1 秒任务；调用方子线程持续心跳并 poll 自己的返回 loop；最终 Receiver 在该子线程保存结果，并请求主线程退出。此 MVP 不使用 C++ coroutine。
+主线程驱动 control Executor；两个 CPU 逻辑队列上的独立 sender 分支经共享 CPU Executor 执行并由 `when_all` 汇合；调用方子线程持续心跳并 poll 自己的返回 Executor，最终 Receiver 在该子线程保存结果并请求主线程退出。Worker 数是 Context 的资源预算，业务代码只选择 LogicalQueue，不指定 Worker，也不需要同步原语协调任务。并行度 gate 只用于 verify 测试。此 MVP 不使用 C++ coroutine。
 
 ```cpp
 #include <async/async.h>
@@ -101,40 +101,29 @@ private:
 
 int main()
 {
-    constexpr async::WorkerIndex k_worker_count = 2;
+    constexpr async::WorkerCount k_worker_count = 2;
     constexpr std::size_t k_queue_count = 3;
     const auto main_thread = std::this_thread::get_id();
 
-    constexpr auto k_config = async::ContextInfo::storageRequirement(k_queue_count);
-    alignas(k_config.m_alignment) std::array<std::byte, k_config.m_bytes> config_bytes;
-    std::pmr::monotonic_buffer_resource config_arena{
-        config_bytes.data(), config_bytes.size(), std::pmr::null_memory_resource()};
-    async::ContextInfo info{k_worker_count, k_queue_count,
-        std::pmr::polymorphic_allocator<async::QueueBinding>{&config_arena}};
+    async::ContextInfo info{k_worker_count};
 
-    const auto control_token = info.addControlQueue().value();
-    const auto left_token = info.addWorkerQueue(0).value();
-    const auto right_token = info.addWorkerQueue(1).value();
+    const auto control_token = info.addControlQueue();
+    const auto left_token = info.addCpuQueue();
+    const auto right_token = info.addCpuQueue();
 
     constexpr auto k_storage = async::Context::storageRequirements(k_worker_count, k_queue_count);
-    alignas(k_storage.m_worker_loops.m_alignment)
-        std::array<std::byte, k_storage.m_worker_loops.m_bytes> loop_bytes;
     alignas(k_storage.m_workers.m_alignment)
         std::array<std::byte, k_storage.m_workers.m_bytes> worker_bytes;
     alignas(k_storage.m_routes.m_alignment)
         std::array<std::byte, k_storage.m_routes.m_bytes> route_bytes;
-    std::pmr::monotonic_buffer_resource loop_arena{
-        loop_bytes.data(), loop_bytes.size(), std::pmr::null_memory_resource()};
     std::pmr::monotonic_buffer_resource worker_arena{
         worker_bytes.data(), worker_bytes.size(), std::pmr::null_memory_resource()};
     std::pmr::monotonic_buffer_resource route_arena{
         route_bytes.data(), route_bytes.size(), std::pmr::null_memory_resource()};
 
     async::Context context{std::move(info), async::ContextAllocators{
-        std::pmr::polymorphic_allocator<std::byte>{&loop_arena},
         std::pmr::polymorphic_allocator<std::byte>{&worker_arena},
         std::pmr::polymorphic_allocator<std::byte>{&route_arena}}};
-    config_arena.release(); // Context consumed and released the temporary bindings.
 
     auto control_scheduler = context.getSchedulerHandle(control_token);
     auto left_scheduler = context.getSchedulerHandle(left_token);
@@ -148,12 +137,11 @@ int main()
             const auto caller_thread = std::this_thread::get_id();
             outcome.m_caller_thread = caller_thread;
 
-            // The caller owns and drives this return loop independently of Context.
-            async::BasicEventLoop<> caller_loop; // Intrusive queue needs no dynamic backing storage.
-            async::LogicalQueue caller_queue{caller_loop};
+            // The caller owns and drives this return executor independently of Context.
+            async::BasicExecutor<> caller_executor;
+            async::LogicalQueue caller_queue{caller_executor};
 
             auto caller_scheduler = async::SchedulerHandle{caller_queue};
-
             auto left = ex::schedule(left_scheduler)
                 | ex::then([] {
                     std::this_thread::sleep_for(1s);
@@ -195,14 +183,14 @@ int main()
                 std::cout << "caller heartbeat: "
                           << ++heartbeat_count << '\n';
 
-                caller_loop.pollOne();
+                caller_executor.pollOne();
 
                 if (not caller_completed) {
                     std::this_thread::sleep_for(100ms);
                 }
             }
 
-            caller_loop.close();
+            caller_executor.close();
         }};
     } catch (...) {
         // No root was submitted if launching the caller thread failed.
@@ -264,31 +252,37 @@ int main()
 
 | MVP 包含 | 后续能力 |
 | --- | --- |
-| 手动控制 loop、固定数量 Worker 及每 Worker 独立 loop | Worker 动态增删、work stealing、parallel 队列与通用映射求解 |
-| 调用方直接拥有和驱动返回 EventLoop；复用同一 scheduler adapter | 多种外部 render/gfx loop 的通用注册与 Context 借用 API |
-| MutexInbox intrusive MPSC FIFO、阻塞等待、停止请求和显式关闭 | 专有 producer lane、公平汇合、可配置短暂自旋及其他等待策略 |
-| serial key 到控制 loop/指定 worker 的固定映射、稳定逻辑身份 | 运行期迁移、硬隔离/共享约束及复杂 affinity 配置 |
+| 宿主驱动的 control Executor、N 个 Worker 共享 CPU Executor | Worker 动态增删、work stealing、异构执行器与扩展映射 |
+| 调用方直接拥有和驱动返回 Executor；复用同一 scheduler adapter | 多种外部 render/gfx executor 的通用注册与 Context 借用 API |
+| control 使用 MutexInbox MPMC FIFO；CPU 使用 FastProducerSpmcInbox 单 producer/多 Worker consumer | 多 producer 的独立 SPMC lane、公平汇合、可配置等待策略和其他 Queue 后端 |
+| 稳定逻辑身份，route 只选择 control/CPU Executor，不保存 Worker 下标 | QueuePolicy 的优先级、公平性、串行/并发上限、独立容量和隔离 |
 | Core record/executor concepts、CPO；execution scheduler/sender/operation adapter | Task、timer、取消 registration、expected 扩展与 coroutine frame 策略 |
 | 显式 PMR、内嵌 operation/node、构造回滚、关闭/drain/join | receiver allocator 覆盖、无异常 typed storage 和资源失败交付 |
 
-### 2.2 每个 loop 只有一个驱动者
+### 2.2 Executors 与 Workers 的关系
 
 | 执行域 | 所有者及驱动者 | 工作 |
 | --- | --- | --- |
-| 控制 loop | Context 拥有；宿主主线程调用 run/poll | 消费合流值，执行主线程控制阶段 |
-| worker loops | Context 拥有；每个 BasicWorker 驱动一个 loop | 执行两条独立计算分支 |
-| 调用方返回 loop | 调用方子线程创建、驱动、销毁 | 在心跳循环中调用 pollOne，执行最终 Receiver |
+| control Executor | Context 拥有；宿主 owner 调用 run/poll | 消费合流值并执行 control queue 上的工作 |
+| CPU Executor | Context 拥有；N 个 BasicWorker 共享并发消费 | 从共享队列取 CPU 工作；任意可用 Worker 可执行任一 CPU LogicalQueue 的工作 |
+| 调用方返回 Executor | 调用方子线程创建、驱动、销毁 | 通过独立 MutexInbox 执行最终 Receiver |
 
-Context 不创建、识别或接管进程主线程。主线程归属由宿主指定且保持；同一 loop 的 run/poll 不能并发。`context.poll/close/empty/requestStop` 都只作用于自己管理的目标，不统计或关闭调用方的独立返回 loop。获取 scheduler 不创建线程，scheduler 不拥有其引用的 loop/route。
+Worker 数量与逻辑队列数量彼此独立。一个 CPU Executor 可以由多个 Worker 同时调用 waitOne；Queue 必须支持多个并发消费者，Executor 通过 `supports_multiple_workers` 声明该能力。control 与调用方返回 Executor 各由唯一 owner 驱动。Worker 不选择逻辑队列、不承载优先级，也不将任务绑定到自己的线程 ID；任务选择和可执行性由 Executor/QueuePolicy 决定。
+
+MVP 的 Context 使用 MutexInbox 作为 control Queue，FastProducerSpmcInbox 作为 CPU Queue。CPU Queue 是侵入式 mailbox，record 节点由稳定 operation 提供；enqueue 不分配，也不获取 consumer mutex。一个 Context 的全部 CPU 提交必须由同一个 producer 串行发起；producer 以固定次数原子操作交换 head 并链接前驱。多个 Worker 在 consumer mutex 下领取，彼此可能等待，但不会阻塞 producer。若 producer 暂停在 exchange/link 之间，consumer 返回空，之后由发布完成时的 atomic wait 序号唤醒。close 阻止新提交并等待在途提交完成，再由 Workers 排空已接纳工作。调用方返回 Executor 使用默认 MutexInbox；本例最终仅由 control owner 投递。
+
+这是 producer 路径固定次数原子操作、不等待 Worker 队列锁的契约，不是通用硬实时墙钟上界：atomic notification、平台调度、中断、cache/TLB 与被执行 record 都影响实际延迟。consumer 之间领取时会使用 mutex。验收分开测量 enqueue、consumer 争用、no-op dispatch 和 receiver 执行，不把用户代码耗时算作 queue 成本。
+
+Context 不创建、识别或接管进程主线程。主线程归属由宿主指定且保持；poll/run/requestStop 只驱动或停止 control Executor；close/empty 覆盖自有 control/CPU Executor，不统计或关闭调用方的独立返回 Executor。SchedulerHandle 不拥有其引用的 LogicalQueue 或 Executor。
 
 ### 2.3 run、requestStop、close、join 的区别
 
 | 操作 | 契约 |
 | --- | --- |
-| `Context::run()` | 当前线程驱动控制 loop；暂时空队列时阻塞等待；收到停止请求后在 record 边界返回；没有停止请求时，关闭且排空后返回 |
-| `Context::requestStop()` | 可由任意线程调用，记录持久停止请求并唤醒控制 loop；不关闭准入、不取消 root、不丢弃排队节点，不停止 Worker |
-| `Context::pollOne()` / `poll(PollBudget)` | 控制 loop 的非等待驱动；停止 run 后仍可用来显式排空 |
-| `Context::close()` | 关闭自有 loops 的新准入并唤醒等待者；不执行 callback，不关闭外部返回 loop |
+| `Context::run()` | 当前线程驱动控制 executor；暂时空队列时阻塞等待；收到停止请求后在 record 边界返回；没有停止请求时，关闭且排空后返回 |
+| `Context::requestStop()` | 可由任意线程调用，记录持久停止请求并唤醒控制 executor；不关闭准入、不取消 root、不丢弃排队节点，不停止 Worker |
+| `Context::pollOne()` / `poll(PollBudget)` | 控制 executor 的非等待驱动；停止 run 后仍可用来显式排空 |
+| `Context::close()` | 关闭自有 executors 的新准入并唤醒等待者；不执行 callback，不关闭外部返回 executor |
 | `Context::joinWorkers()` | 等待自有 Worker 退出；调用前应 close，且调用线程不能是其中的 Worker |
 
 停止请求在 run 开始前发出也有效；与入睡/入队竞争不能丢失。请求在 callback 执行中到达时，run 等该 record 返回后退出，不抢占函数。默认 queue 以锁内取出节点作为 record 开始的线性化点：停止请求先于取出则不取下一条；已经取出的 record 仍执行至返回。剩余工作仍在 queue 中，必须显式 poll/drain 或由仍在工作的 owner 推进。MVP 的停止状态不重置，再次 run 立即返回；restart 后置。没有停止请求时，close 后的 wait 驱动继续取出已接纳节点，关闭且为空才返回。
@@ -299,9 +293,9 @@ Context 不创建、识别或接管进程主线程。主线程归属由宿主指
 
 `connect` 构造稳定 operation，`start` 启动它；只有本例的 schedule operation 在 start 时投递，`just` 等 sender 可以同步完成。Receiver 自身不选择线程。`continues_on` 存储上游 completion 并调度目标操作，目标 owner 执行该操作时再调用下游；`get_completion_scheduler` 描述保证，查询本身不迁移。
 
-正常验收保持目标 loops 准入，使用不抛异常的 value/error 存储和移动，因此最后的 `continues_on(caller_scheduler)` 把上游 value/error/stopped 都交给调用方线程。返回 scheduler 拒收或 completion 存储/转移抛异常是独立失败边界，不能假定失败仍在目标线程交付；另测恰好一次完成，不在来源线程访问 owner 专有状态。
+正常验收保持目标 executors 准入，使用不抛异常的 value/error 存储和移动，因此最后的 `continues_on(caller_scheduler)` 把上游 value/error/stopped 都交给调用方线程。返回 scheduler 拒收或 completion 存储/转移抛异常是独立失败边界，不能假定失败仍在目标线程交付；另测恰好一次完成，不在来源线程访问 owner 专有状态。
 
-本例只有一个 root。所有 loops 保持有效并被驱动 → 最终 Receiver 写入 Outcome/调用方 bool 并请求停止 → 主线程 run 返回后 join 调用方 → 调用方 pollOne 返回，operation/route/loop/resource 可销毁 → Context close/join workers → 释放 Context 和资源。run 返回不等于 Receiver 已经返回，不能省掉 join。多个 root 时由 root owner 计数，最后一个 root 才请求停止；空队列、一个 Receiver 完成或 requestStop 本身都不能代替 root drain。
+本例只有一个 root。所有 executors 保持有效并被驱动 → 最终 Receiver 写入 Outcome/调用方 bool 并请求停止 → 主线程 run 返回后 join 调用方 → 调用方 pollOne 返回，operation/route/executor/resource 可销毁 → Context close/join workers → 释放 Context 和资源。run 返回不等于 Receiver 已经返回，不能省掉 join。多个 root 时由 root owner 计数，最后一个 root 才请求停止；空队列、一个 Receiver 完成或 requestStop 本身都不能代替 root drain。
 
 析构不运行用户 callback，也不偷偷阻塞 drain/join。Context/Worker 要求宿主事先完成显式关闭、join 和最后访问；线程创建中途失败则由构造函数回滚已创建线程。进程超时用于检测死锁，不是销毁仍被异步访问的 operation 的许可。
 
@@ -331,7 +325,9 @@ include/async/
 │   ├── scheduling/
 │   │   ├── ScheduleNode.h
 │   │   ├── queue/MutexInbox.h
-│   │   ├── BasicEventLoop.h
+│   │   ├── queue/FastProducerSpmcInbox.h
+│   │   ├── details/ContextExecutorRoute.h
+│   │   ├── BasicExecutor.h
 │   │   ├── BasicWorker.h
 │   │   ├── poll_structs.h
 │   │   ├── LogicalQueue.h
@@ -364,9 +360,9 @@ include/async/
 | core/details/containers | 管理元素生命周期、容量和访问；FixedCapacityVector 用显式 typed allocator，不依赖 Context 或 execution；资源策略属于 memory |
 | PollBudget、PollReport | scheduling/poll_structs.h 中的批量驱动包装值类型；由 Context 直接包含，不属于协议入口或 concepts |
 | ThreadEntry | core/thread_types.h 中的线程入口函数类型；Core concepts 与 scheduling 共用，不依赖 scheduling |
-| ScheduleNode、Queue、EventLoop、Worker | 各自需要的基础协议；经 concepts.h 加载 provider；Worker 不包含具体 EventLoop，queue 不包含 Context 或 execution 算法 |
+| ScheduleNode、Queue、Executor、Worker | 各自需要的基础协议；经 concepts.h 加载 provider；Worker 不包含具体 Executor，queue 不包含 Context 或 execution 算法 |
 | LogicalQueue | Core 提交协议和稳定路由身份；经 operations/concepts 使用标准词汇，不依赖 execution 算法 |
-| BasicContext | 组合 loops、workers、固定 routes 和资源；直接返回标准 SchedulerHandle |
+| BasicContext | 组合 executors、workers、固定 routes 和资源；直接返回标准 SchedulerHandle |
 | execution.h | 聚合标准协议、操作、查询和组合算法；不包含 Core，重导出保持 provider 身份 |
 | Core SchedulerHandle、scheduling/details/exec_schedule_adapters.h | Core 基础提交接口、Core 概念别名及标准操作/查询头；句柄直接实现 scheduler，内部完成 sender/operation 适配 |
 
@@ -376,7 +372,7 @@ include/async/
 
 ### 4.1 Record 和 executor
 
-Record 是 adapter/宿主自己拥有的 operation，不能要求继承固定 ScheduleRecord。MVP 只支持成员定制：concept 直接检查成员接口，CPO 复用 concept 的约束并转发调用。
+Record 是 adapter/宿主自己拥有的 operation，不能要求继承固定 ScheduleRecord。MVP 只支持成员定制：concept 直接检查成员接口，CPO 复用 concept 的约束并转发调用。提交能力由二元 `executor_c<Executor, Record>` 描述；单步驱动能力由 `work_executor_c` 描述；Worker pool 还要求 `multi_worker_executor_c`，即 Executor 明确声明可由多个 Worker 并发等待和取出工作。
 
 `include/async/core/enums.h`：
 
@@ -405,6 +401,7 @@ enum class EnqueueResult
 
 #include <concepts>
 #include <cstddef>
+#include <type_traits>
 
 namespace lcf::async {
 
@@ -423,71 +420,89 @@ concept operation_state_c = protocols::operation_state<Type>;
 template <typename Receiver, typename Completions>
 concept receiver_of_c = protocols::receiver_of<Receiver, Completions>;
 
+template <typename Node>
+concept schedule_node_c = requires(Node & node) {
+    { node.execute() } noexcept -> std::same_as<void>;
+};
+
 template <typename Record>
 concept schedule_record_c = requires(Record & record) {
     { record.getScheduleNode() } noexcept;
+    requires std::is_lvalue_reference_v<decltype(record.getScheduleNode())>;
+    requires schedule_node_c<std::remove_reference_t<decltype(record.getScheduleNode())>>;
 };
 
 template <typename Executor, typename Record>
-concept executor_c = schedule_record_c<Record>
-    && requires(Executor & executor, Record & record) {
-        { executor.tryEnqueue(record) } noexcept
-            -> std::same_as<EnqueueResult>;
+concept executor_c = schedule_record_c<Record> and
+    requires(Executor & executor, Record & record) {
+        { executor.tryEnqueue(record) } noexcept -> std::same_as<EnqueueResult>;
     };
 
-template <typename EventLoop>
-concept event_loop_c = requires(EventLoop & loop, const EventLoop & const_loop) {
-    { loop.pollOne() } noexcept -> std::same_as<bool>;
-    { loop.close() } noexcept -> std::same_as<void>;
-    { const_loop.empty() } noexcept -> std::same_as<bool>;
+template <typename Executor>
+concept work_executor_c = requires(Executor & executor, const Executor & const_executor) {
+    { executor.pollOne() } noexcept -> std::same_as<bool>;
+    { executor.close() } noexcept -> std::same_as<void>;
+    { const_executor.empty() } noexcept -> std::same_as<bool>;
 };
 
-template <typename EventLoop>
-concept blocking_event_loop_c = event_loop_c<EventLoop> && requires(EventLoop & loop) {
-    { loop.waitOne() } noexcept -> std::same_as<bool>;
-};
-
-template <typename EventLoop>
-concept stoppable_event_loop_c = blocking_event_loop_c<EventLoop>
-    && requires(EventLoop & loop) {
-        { loop.requestStop() } noexcept -> std::same_as<void>;
+template <typename Executor>
+concept blocking_work_executor_c = work_executor_c<Executor> and
+    requires(Executor & executor) {
+        { executor.waitOne() } noexcept -> std::same_as<bool>;
     };
 
-template <typename Factory, typename EventLoop>
-concept event_loop_factory_c = event_loop_c<EventLoop>
-    && requires(Factory & factory, std::size_t index) {
-        { factory.makeControlLoop() } -> std::same_as<EventLoop>;
-        { factory.makeWorkerLoop(index) } -> std::same_as<EventLoop>;
+template <typename Executor>
+concept multi_worker_executor_c = blocking_work_executor_c<Executor>
+    && requires {
+        requires Executor::supports_multiple_workers;
     };
 
-template <typename Queue, typename Node>
-concept schedule_queue_c = requires(Queue & queue, const Queue & const_queue, Node & node) {
-    { queue.tryEnqueue(node) } noexcept -> std::same_as<EnqueueResult>;
-    { queue.tryPop() } noexcept -> std::same_as<Node *>;
-    { queue.close() } noexcept -> std::same_as<void>;
-    { const_queue.empty() } noexcept -> std::same_as<bool>;
-};
+template <typename Executor>
+concept stoppable_work_executor_c = blocking_work_executor_c<Executor> and
+    requires(Executor & executor) {
+        { executor.requestStop() } noexcept -> std::same_as<void>;
+    };
 
-template <typename Queue, typename Node>
-concept blocking_schedule_queue_c = schedule_queue_c<Queue, Node> && requires(Queue & queue) {
-    { queue.waitPop() } noexcept -> std::same_as<Node *>;
-};
+template <typename Factory, typename ControlExecutor, typename CpuExecutor>
+concept work_executor_factory_c = work_executor_c<ControlExecutor>
+    and work_executor_c<CpuExecutor> and
+    requires(Factory & factory) {
+        { factory.makeControlExecutor() } -> std::same_as<ControlExecutor>;
+        { factory.makeCpuExecutor() } -> std::same_as<CpuExecutor>;
+    };
 
-template <typename Queue, typename Node>
-concept stoppable_schedule_queue_c = blocking_schedule_queue_c<Queue, Node> && requires(Queue & queue) {
-    { queue.requestStop() } noexcept -> std::same_as<void>;
-};
+template <typename Queue>
+concept schedule_queue_c = requires { typename Queue::Node; } and
+    schedule_node_c<typename Queue::Node> and
+    requires(Queue & queue, const Queue & const_queue, typename Queue::Node & node) {
+        { queue.tryEnqueue(node) } noexcept -> std::same_as<EnqueueResult>;
+        { queue.tryPop() } noexcept -> std::same_as<typename Queue::Node *>;
+        { queue.close() } noexcept -> std::same_as<void>;
+        { const_queue.empty() } noexcept -> std::same_as<bool>;
+    };
+
+template <typename Queue>
+concept blocking_schedule_queue_c = schedule_queue_c<Queue> and
+    requires(Queue & queue) {
+        { queue.waitPop() } noexcept -> std::same_as<typename Queue::Node *>;
+    };
+
+template <typename Queue>
+concept stoppable_schedule_queue_c = blocking_schedule_queue_c<Queue> and
+    requires(Queue & queue) {
+        { queue.requestStop() } noexcept -> std::same_as<void>;
+    };
 
 template <typename Thread>
-concept thread_c = std::destructible<Thread>
-    && requires(Thread & thread, const Thread & const_thread) {
+concept thread_c = std::destructible<Thread> and
+    requires(Thread & thread, const Thread & const_thread) {
         { const_thread.joinable() } noexcept -> std::same_as<bool>;
         { thread.join() } -> std::same_as<void>;
     };
 
 template <typename Factory, typename Thread>
-concept thread_factory_c = thread_c<Thread>
-    && requires(Factory & factory, ThreadEntry entry_f, void * state_p) {
+concept thread_factory_c = thread_c<Thread> and
+    requires(Factory & factory, ThreadEntry entry_f, void * state_p) {
         { factory(entry_f, state_p) } -> std::same_as<Thread>;
     };
 
@@ -517,10 +532,8 @@ inline constexpr get_schedule_node_t get_schedule_node{};
 struct try_enqueue_t
 {
     template <typename Executor, typename Record>
-        requires executor_c<Executor, Record>
-    EnqueueResult operator()(
-        Executor & executor,
-        Record & record) const noexcept
+    requires executor_c<Executor, Record>
+    EnqueueResult operator()(Executor & executor, Record & record) const noexcept
     {
         return executor.tryEnqueue(record);
     }
@@ -531,17 +544,19 @@ inline constexpr try_enqueue_t try_enqueue{};
 } // namespace lcf::async
 ```
 
-`schedule_record_c` 服务于提交入口；它不规定 node 类型。默认 intrusive loop 再用内部 queue_record_c 检查真实 ScheduleNode。`executor_c<Executor, Record>` 保留实际 cv 限定；const handle 可经借用指针提交到非 const loop。eClosed 不保留 record，eAccepted 后 record 可能立即执行并销毁，提交方不得再读它。MVP 没有容量拒收，eFull 及其完成映射随有界入口一起加入。
+`schedule_node_c` 只要求 `execute() noexcept -> void`；`schedule_record_c` 要求 noexcept 返回这种节点的左值引用，不指定具体类。`BasicExecutor::tryEnqueue` 在实际消费点检查所选 Queue 能否接纳该 record 的节点。`executor_c<Executor, Record>` 保留实际 cv 限定；const handle 可经借用指针提交到非 const executor。eClosed 不保留 record，eAccepted 后 record 可能立即执行并销毁，提交方不得再读它。MVP 没有容量拒收，eFull 及其完成映射随有界入口一起加入。
 
 ### 4.2 驱动、阻塞等待与停止
 
-上述 core/concepts.h 中的 event_loop_c 服务于 Context 的基本 poll/关闭/空状态查询；blocking_event_loop_c 服务于 Worker 和 Context 的等待驱动；stoppable_event_loop_c 额外服务于 Context 的 run/requestStop。concept 不要求默认构造，也不把某个 probe record 的提交能力混进驱动协议。构造能力与实际 record 的提交能力在消费点单独检查。
+上述 concepts 分别检查单步驱动、阻塞等待和多 Worker 声明。concept 只验证静态成员/表达式，不能证明线程安全；Queue 的实际多 consumer 安全由其契约及并发测试验证。
 
-MVP Context 使用同一种 loop 装配控制与 workers，因此类级别要求 blocking_event_loop_c；run/requestStop 成员另要求 stoppable_event_loop_c。独立的 BasicEventLoop<Queue> 可只支持基础 queue，仍可用于调用方 poll；不会为其强加 run、预算包装或线程创建能力。
+BasicContext 类级别要求 `multi_worker_executor_c`，因为它创建的 N 个 Worker 共享 CPU Executor；Context::run/requestStop 成员另要求 `stoppable_work_executor_c`。独立 BasicExecutor<Queue> 可只支持 poll/wait 单步执行，不必声明支持多个 Worker。
 
 ### 4.3 Queue
 
-core/concepts.h 中公开的 schedule_queue_c<Queue, Node> 描述调度 queue 实际消费接口，不要求具体布局或默认构造，也不强加给任意通用容器。“inbox”是 MPSC 入口角色，因此用 schedule_queue_c 而非 inbox_c。blocking_schedule_queue_c 供等待驱动消费，stoppable_schedule_queue_c 供控制 loop 的停止握手消费。
+core/concepts.h 中公开的 `schedule_queue_c<Queue>` 通过 `Queue::Node` 检查节点和队列操作，不规定 ScheduleNode、继承关系、链表布局或默认构造。等待/停止能力分别由 blocking_schedule_queue_c、stoppable_schedule_queue_c 表达。
+
+当一个 Queue 被多个 Worker 消费时，还需声明 `supports_multiple_consumers = true`；BasicExecutor 据此暴露 `supports_multiple_workers`，由 `multi_worker_executor_c` 检查。该声明是实现者对并发安全的承诺，不是表达式概念可以证明的性质。MutexInbox 以 mutex 保护多 producer、多 consumer 的入队/出队。
 
 ### 4.4 标准 execution 协议与 Core 命名
 
@@ -591,10 +606,10 @@ core/concepts.h 中的 thread_c 服务于 BasicWorker 的 join/析构；thread_f
 | --- | --- |
 | concept 定义 | 接受任意候选类型，用 requires 直接检查成员表达式 |
 | get_schedule_node_t / try_enqueue_t | 分别复用 schedule_record_c / executor_c；约束已保证成员调用有效且 noexcept |
-| BasicEventLoop<Queue> | 公开的 schedule_queue_c<Queue, ScheduleNode>；waitOne/requestStop 按成员需要增加能力 |
-| BasicWorker<EventLoop, Thread> | blocking_event_loop_c、thread_c；构造时以 thread_factory_c 检查后端工厂 |
-| BasicContext<EventLoop, Thread> | 按实际 loop/thread 能力和工厂限定；getSchedulerHandle 直接构造 SchedulerHandle<EventLoop>，不增加句柄策略参数 |
-| DefaultEventLoopFactory<EventLoop> | event_loop_c；仅默认工厂要求默认构造，其他工厂显式提供 queue 参数 |
+| BasicExecutor<Queue> | 公开的 schedule_queue_c<Queue>；tryEnqueue 按实际 Record 检查 Queue 接纳关系；多 Worker 使用时 Queue 还声明 supports_multiple_consumers |
+| BasicWorker<Executor, Thread> | blocking_work_executor_c、thread_c；多个 Worker 共用时由 Context 的 multi_worker_executor_c 检查 |
+| BasicContext<ControlExecutor, CpuExecutor, Thread> | control work_executor_c、CPU multi_worker_executor_c、thread_c 及双 Executor/Thread factory；所有 Worker 借用同一个 CPU Executor |
+| DefaultExecutorFactory<ControlExecutor, CpuExecutor> | 两种 work_executor_c；分别创建 control 和 CPU Executor，仅默认工厂要求对应类型默认构造 |
 | FixedCapacityVector<Value> | std::destructible；emplaceBack 检查构造关系，emplaceWith 检查 factory 的精确返回类型以支持不可移动元素 |
 | LogicalQueue<Executor>、SchedulerHandle<Executor> | 类只保存引用，尚不知道实际 Record，保留 typename；tryEnqueue<Record> 检查二元 executor_c；SchedulerHandle 直接在 Core 实现标准 scheduler 协议 |
 | QueueArgs... | std::constructible_from<Queue, Args...>，不能用一个空泛 concept 限定所有配置值 |
@@ -606,23 +621,70 @@ core/concepts.h 中的 thread_c 服务于 BasicWorker 的 join/析构；thread_f
 
 ## 5. 可组合的参考实现
 
-### 5.1 ScheduleNode 与 MutexInbox
+### 5.1 ScheduleNode 与 Queue 后端
 
-ScheduleNode 是默认 EventLoop 与自定义 Queue 共用的公开调度 hook，位于 scheduling/ScheduleNode.h，直接声明在 lcf::async。它存 next、state 和函数指针，不是公共 operation 或基类。异构 dispatch 在 queue 边界确需运行时擦除，CPO 的静态分发不能单独替代这段存储；CPO 仍负责获取 hook 和提交。
+ScheduleNode 是 MutexInbox、FastProducerSpmcInbox 与标准 schedule operation 共用的具体调度 hook，位于 scheduling/ScheduleNode.h，直接声明在 lcf::async。它存 atomic next、入队状态、state 和函数指针，不是公共 operation 或基类。atomic next 以 release/acquire 发布关系支持侵入式链表；MutexInbox 也通过同一访问器操作它。异构 dispatch 在这里使用回调擦除；通用 `schedule_node_c` 只约束 execute，自定义 Queue 可以声明自己的 Node，无需继承 ScheduleNode。
 
-与默认 EventLoop 配合的 Queue 在接纳时调用 node.markQueued()，出队时调用 node.clearQueueState()；拒收不修改 node，出队后不再访问它。getNext/setNext 供链式存储实现使用，其他存储实现无需使用 next。node 由 record 内嵌，不逐次分配，无 friend；EventLoop 直接调用 node.execute()，节点内部在 dispatch 前保存回调和状态指针。完成回调可能销毁 record，dispatch 后不再访问节点成员；状态和函数指针不通过 getter 暴露。
+MutexInbox 在接纳时调用 node.markQueued()，出队时调用 node.clearQueueState()；拒收不修改 node，出队后不再访问它。getNext/setNext 供链式存储实现使用，这些接口不属于通用 Queue/Node 协议。node 由 record 内嵌，不逐次分配，无 friend；Executor 直接调用 node.execute()，节点内部在 dispatch 前保存回调和状态指针。完成回调可能销毁 record，dispatch 后不再访问节点；状态和函数指针不通过 getter 暴露。
 
-queue_record_c 只是默认 EventLoop 检查 Record 是否提供 ScheduleNode 的内部适配约束，留在 details，不属于 Queue 扩展协议。
+`queue/FastProducerSpmcInbox.h`：
+
+```cpp
+#pragma once
+
+#include <async/core/enums.h>
+#include <async/core/scheduling/ScheduleNode.h>
+
+#include <atomic>
+#include <cstddef>
+#include <mutex>
+
+namespace lcf::async {
+
+class FastProducerSpmcInbox
+{
+public:
+    using Node = ScheduleNode;
+    static constexpr bool supports_multiple_producers = false;
+    static constexpr bool supports_multiple_consumers = true;
+
+    FastProducerSpmcInbox() noexcept
+        : m_stub{nullptr, &execute_stub}, m_head_p{&m_stub}, m_tail_p{&m_stub} {}
+
+    EnqueueResult tryEnqueue(ScheduleNode & node) noexcept;
+    ScheduleNode * tryPop() noexcept;
+    ScheduleNode * waitPop() noexcept;
+    void requestStop() noexcept;
+    void close() noexcept;
+    bool empty() const noexcept;
+
+private:
+    std::mutex m_consumer_mutex;
+    ScheduleNode m_stub;
+    std::atomic<ScheduleNode *> m_head_p;
+    ScheduleNode * m_tail_p;
+    std::atomic<std::size_t> m_queued_count{0};
+    std::atomic<std::uint64_t> m_wake_sequence{0};
+    std::atomic<unsigned> m_lifecycle{0};
+    std::atomic<bool> m_stop_requested{false};
+
+    static void execute_stub(void *) noexcept {}
+};
+
+} // namespace lcf::async
+```
+
+`tryEnqueue` is restricted to one producer. It enters a short lifecycle state with one compare-exchange, marks the node, does `previous = head.exchange(&node)`, then release-stores the node into `previous.next`; it never acquires `m_consumer_mutex` and never allocates. A concurrent second producer is a contract violation and terminates. Multiple workers serialize `tryPop`/`waitPop` under `m_consumer_mutex`; a publication gap returns empty rather than spinning. `waitPop` uses a wake sequence to recheck the queue before waiting, preventing a lost wake when publication races with sleep. `close` marks the inbox closed and waits for the active producer state to clear, so accepted work is fully linked before close returns. Destruction still requires stopping the producer, draining accepted nodes, and finishing all consumer calls before destroying their operations. The producer has a fixed number of queue operations, but atomic notification and platform scheduling do not provide a portable wall-clock WCET guarantee.
+
+Record 的节点类型与实际 Queue 是否兼容由 tryEnqueue 的 requires 表达式检查。自定义节点只需 execute 能力，但接入当前标准 schedule adapter 时，Queue 仍须能接纳该 adapter 内嵌的 ScheduleNode，或另行提供匹配的 operation。
 
 `include/async/core/scheduling/ScheduleNode.h`：
 
 ```cpp
 #pragma once
 
-#include <async/core/operations.h>
-
+#include <atomic>
 #include <cassert>
-#include <concepts>
 
 namespace lcf::async {
 
@@ -640,8 +702,14 @@ public:
     ScheduleNode & operator=(ScheduleNode &&) = delete;
 
     ~ScheduleNode() noexcept { assert(not m_queued); }
-    ScheduleNode * getNext() const noexcept { return m_next_p; }
-    void setNext(ScheduleNode * next_p) noexcept { m_next_p = next_p; }
+    ScheduleNode * getNext() const noexcept
+    {
+        return m_next_p.load(std::memory_order_acquire);
+    }
+    void setNext(ScheduleNode * next_p) noexcept
+    {
+        m_next_p.store(next_p, std::memory_order_release);
+    }
     bool isQueued() const noexcept { return m_queued; }
     void markQueued() noexcept
     {
@@ -650,7 +718,7 @@ public:
     }
     void clearQueueState() noexcept
     {
-        m_next_p = nullptr;
+        m_next_p.store(nullptr, std::memory_order_relaxed);
         m_queued = false;
     }
     void execute() noexcept
@@ -661,22 +729,11 @@ public:
         execute_f(state_p);
     }
 private:
-    ScheduleNode * m_next_p = nullptr;
+    std::atomic<ScheduleNode *> m_next_p{nullptr};
     void * m_state_p;
     ExecuteFunction m_execute_f;
     bool m_queued = false;
 };
-
-namespace details {
-
-template <typename Record>
-concept queue_record_c = schedule_record_c<Record>
-    && requires(Record & record) {
-        { get_schedule_node(record) } noexcept
-            -> std::same_as<ScheduleNode &>;
-};
-
-} // namespace details
 
 } // namespace lcf::async
 ```
@@ -698,6 +755,9 @@ namespace lcf::async {
 class MutexInbox
 {
 public:
+    using Node = ScheduleNode;
+    static constexpr bool supports_multiple_consumers = true;
+
     EnqueueResult tryEnqueue(ScheduleNode & node) noexcept
     {
         {
@@ -786,11 +846,11 @@ private:
 } // namespace lcf::async
 ```
 
-所有接纳、取出、关闭、停止和等待 predicate 都用同一 mutex 排序，因而没有“检查空 → notify → 入睡”的丢唤醒窗口。默认 MPSC 为多 producer、单 consumer；tryPop 不等待新工作，但获取 mutex 可能短暂阻塞，它是正确性基线，不是 wait-free。close 后仍可取出已接纳节点；stop 请求优先终止 waitPop，但 tryPop 仍可排空。拒收不修改 node，接纳后恰好出队一次；同一 operation/node 只能 start/提交一次，并保持地址稳定至最后访问。
+所有接纳、取出、关闭、停止和等待 predicate 都用同一 mutex 排序，因而没有“检查空 → notify → 入睡”的丢唤醒窗口。MutexInbox 支持多 producer、多 consumer；回调在出队解锁后执行，FIFO 只约束取出顺序，不承诺多 Worker 的开始或完成顺序；tryPop 不等待新工作，但获取 mutex 可能短暂阻塞，它是正确性基线，不是 wait-free。close 后仍可取出已接纳节点；stop 请求优先终止 waitPop，但 tryPop 仍可排空。拒收不修改 node，接纳后恰好出队一次；同一 operation/node 只能 start/提交一次，并保持地址稳定至最后访问。
 
-### 5.2 EventLoop、Worker 与预算包装
+### 5.2 Executor、Worker 与预算包装
 
-PollBudget 和 PollReport 服务于 Context::poll 的批量驱动包装，不是 event_loop_c 的基础协议。它们放在 scheduling/poll_structs.h，由 BasicContext.h 直接包含；protocol.h、concepts.h 不包含它们。
+PollBudget 和 PollReport 服务于 Context::poll 的批量驱动包装，不是 work_executor_c 的基础协议。它们放在 scheduling/poll_structs.h，由 BasicContext.h 直接包含；protocol.h、concepts.h 不包含它们。
 
 `include/async/core/scheduling/poll_structs.h`：
 
@@ -821,39 +881,49 @@ struct PollReport
 } // namespace lcf::async
 ```
 
-pollOne 最多 dispatch 一条 record；一条 record 中可执行普通函数链或未来的协程段，预算不能抢占它。poll 在 record 边界检查数量与软时间限制，计入执行和必要维护开销；pollOne 本身不强制读取时钟。空队列立即返回，不证明全部 root 已结束。
+pollOne 最多执行一条 record；一条 record 中可执行普通函数链或未来的协程段，预算不能抢占它。poll 在 record 边界检查数量与软时间限制，计入执行和必要维护开销；pollOne 本身不强制读取时钟。空队列立即返回，不证明全部 root 已结束。
 
-`include/async/core/scheduling/BasicEventLoop.h`：
+`include/async/core/scheduling/BasicExecutor.h`：
 
 ```cpp
 #pragma once
 
-#include <async/core/concepts.h>
-#include "ScheduleNode.h"
+#include <async/core/operations.h>
 #include <async/core/scheduling/queue/MutexInbox.h>
 
 #include <cassert>
 #include <concepts>
-#include <cstddef>
 #include <utility>
 
 namespace lcf::async {
 
-template <schedule_queue_c<ScheduleNode> Queue = MutexInbox>
-class BasicEventLoop
+template <schedule_queue_c Queue = MutexInbox>
+class BasicExecutor
 {
 public:
+    static constexpr bool supports_multiple_workers = [] {
+        if constexpr (requires { Queue::supports_multiple_consumers; }) {
+            return Queue::supports_multiple_consumers;
+        } else {
+            return false;
+        }
+    }();
+
     template <typename... QueueArgs>
         requires std::constructible_from<Queue, QueueArgs...>
-    explicit BasicEventLoop(QueueArgs &&... queue_args)
+    explicit BasicExecutor(QueueArgs &&... queue_args)
         : m_queue(std::forward<QueueArgs>(queue_args)...) {}
 
-    BasicEventLoop(const BasicEventLoop &) = delete;
-    BasicEventLoop & operator=(const BasicEventLoop &) = delete;
+    BasicExecutor(const BasicExecutor &) = delete;
+    BasicExecutor & operator=(const BasicExecutor &) = delete;
 
-    ~BasicEventLoop() noexcept { assert(m_queue.empty()); }
+    ~BasicExecutor() noexcept { assert(m_queue.empty()); }
 
-    template <details::queue_record_c Record>
+    template <schedule_record_c Record>
+        requires requires(Queue & queue, Record & record) {
+            { queue.tryEnqueue(get_schedule_node(record)) } noexcept
+                -> std::same_as<EnqueueResult>;
+        }
     EnqueueResult tryEnqueue(Record & record) noexcept
     {
         return m_queue.tryEnqueue(get_schedule_node(record));
@@ -861,17 +931,25 @@ public:
 
     bool pollOne() noexcept
     {
-        return executeNode(m_queue.tryPop());
+        if (auto * node_p = m_queue.tryPop()) {
+            node_p->execute();
+            return true;
+        }
+        return false;
     }
 
     bool waitOne() noexcept
-        requires blocking_schedule_queue_c<Queue, ScheduleNode>
+        requires blocking_schedule_queue_c<Queue>
     {
-        return executeNode(m_queue.waitPop());
+        if (auto * node_p = m_queue.waitPop()) {
+            node_p->execute();
+            return true;
+        }
+        return false;
     }
 
     void requestStop() noexcept
-        requires stoppable_schedule_queue_c<Queue, ScheduleNode>
+        requires stoppable_schedule_queue_c<Queue>
     {
         m_queue.requestStop();
     }
@@ -880,34 +958,28 @@ public:
     bool empty() const noexcept { return m_queue.empty(); }
 
 private:
-    static bool executeNode(ScheduleNode * node_p) noexcept
-    {
-        if (not node_p) {
-            return false;
-        }
-
-        node_p->execute();
-        return true;
-    }
     Queue m_queue;
 };
 
-template <event_loop_c EventLoop>
-struct DefaultEventLoopFactory
+template <work_executor_c ControlExecutor, work_executor_c CpuExecutor = ControlExecutor>
+struct DefaultExecutorFactory
 {
-    EventLoop makeControlLoop() const requires std::default_initializable<EventLoop>
+    ControlExecutor makeControlExecutor() const
+        requires std::default_initializable<ControlExecutor>
     {
-        return EventLoop{};
+        return ControlExecutor{};
     }
 
-    EventLoop makeWorkerLoop(std::size_t) const requires std::default_initializable<EventLoop>
+    CpuExecutor makeCpuExecutor() const requires std::default_initializable<CpuExecutor>
     {
-        return EventLoop{};
+        return CpuExecutor{};
     }
 };
 
 } // namespace lcf::async
 ```
+
+BasicExecutor 拥有 Queue，负责 tryEnqueue、pollOne/waitOne、close 和空状态查询；它不创建线程，也不等同于持续运行的 event loop。DefaultExecutorFactory 分别创建 control 与 CPU Executor；二者可以使用不同 Queue。CPU Executor 的 Queue 若声明 supports_multiple_consumers，BasicExecutor 才声明 supports_multiple_workers，Context 才能让多个 Worker 共享它。
 
 `include/async/core/scheduling/BasicWorker.h`：
 
@@ -930,13 +1002,13 @@ struct StdThreadFactory
     }
 };
 
-template <blocking_event_loop_c EventLoop, thread_c Thread = std::thread>
+template <blocking_work_executor_c Executor, thread_c Thread = std::thread>
 class BasicWorker
 {
 public:
     template <thread_factory_c<Thread> Factory = StdThreadFactory>
-    explicit BasicWorker(EventLoop & loop, Factory factory = {})
-        : m_event_loop_p(&loop), m_thread(factory(&run_loop, this)) {}
+    explicit BasicWorker(Executor & executor, Factory factory = {})
+        : m_executor_p(&executor), m_thread(factory(&run_executor, this)) {}
 
     BasicWorker(const BasicWorker &) = delete;
     BasicWorker & operator=(const BasicWorker &) = delete;
@@ -954,22 +1026,22 @@ public:
     }
 
 private:
-    static void run_loop(void * state_p) noexcept
+    static void run_executor(void * state_p) noexcept
     {
         auto & worker = *static_cast<BasicWorker *>(state_p);
-        while (worker.m_event_loop_p->waitOne()) {}
+        while (worker.m_executor_p->waitOne()) {}
     }
 
-    EventLoop * m_event_loop_p;
+    Executor * m_executor_p;
     Thread m_thread;
 };
 
 } // namespace lcf::async
 ```
 
-EventLoop 组合 queue，不创建线程；Worker 拥有一个线程、只借用并驱动它的 loop。Worker 不是标准 scheduler，不负责路由；schedule sender 由 adapter 提交到 loop。waitOne 为一条 record 返回 true；停止请求或关闭且为空返回 false，空唤醒内部重新等待。pollOne 忽略 run 的停止状态，支持显式 drain。
+每个 BasicWorker 拥有一个线程并借用一个 blocking Executor。Context 创建的 N 个 Worker 都持有同一个 CPU Executor；多 consumer Queue 在锁内领取一个节点，BasicExecutor 解锁后执行回调。run loop 与控制 Executor 分离，控制 requestStop 不停止 CPU Workers；close CPU Executor 后，Worker 排空已接纳工作并退出。调用方返回 Executor 由调用方线程自行 poll。
 
-Worker 的 loop 必须保持到 join 结束。Context::requestStop 只送控制 loop，不能把 Worker 也停掉，否则它们已接纳的工作会失去驱动。Worker 析构要求线程已 join；宿主负责显式 close/join。
+Worker 借用的 Executor 必须保持到 join 结束。Worker 析构要求线程已 join；宿主负责显式 close/join。
 
 ### 5.3 逻辑身份、配置与 Context
 
@@ -1050,7 +1122,7 @@ public:
     {
         this->checkCapacity();
         // Placement new constructs in already allocated storage. Guaranteed
-        // copy elision allows a factory to return a nonmovable EventLoop.
+        // copy elision allows a factory to return a nonmovable Executor.
         auto * value_p = ::new (static_cast<void *>(m_data_p + m_size)) Value(
             std::invoke(std::forward<Factory>(factory), std::forward<Args>(args)...));
         ++m_size;
@@ -1092,7 +1164,7 @@ private:
 ```
 
 
-LogicalQueueToken 与 LogicalQueue 定义在同一个头文件。token 由 ContextInfo 成功登记后签发，保存配置域 ID 和路由下标；LogicalQueue 只保存实际执行目标，身份来自其稳定地址。WorkerIndex、QueueBinding 和显式容量/allocator 配置定义在 ContextInfo.h。
+LogicalQueueToken 与 LogicalQueue 定义在同一个头文件。token 由 ContextInfo 成功登记后签发，保存配置域 ID 和 `std::size_t` route 下标；LogicalQueue 保存 control 或 CPU Executor 的借用引用，身份来自稳定 route 地址。WorkerCount、QueueTarget 和 QueueBinding 定义在 ContextInfo.h。CPU logical queue 不保存 worker index，也没有预设登记容量。
 
 `include/async/core/scheduling/LogicalQueue.h`：
 
@@ -1101,6 +1173,7 @@ LogicalQueueToken 与 LogicalQueue 定义在同一个头文件。token 由 Conte
 
 #include <async/core/operations.h>
 
+#include <cstddef>
 #include <cstdint>
 
 namespace lcf::async {
@@ -1113,19 +1186,19 @@ public:
     LogicalQueueToken(const LogicalQueueToken &) noexcept = default;
     LogicalQueueToken & operator=(const LogicalQueueToken &) noexcept = default;
 
-    std::uint64_t getDomainId() const noexcept { return m_domain_id; }
-    std::uint32_t getIndex() const noexcept { return m_index; }
+    std::uint32_t getDomainId() const noexcept { return m_domain_id; }
+    std::size_t getIndex() const noexcept { return m_index; }
     bool operator==(const LogicalQueueToken &) const noexcept = default;
 
 private:
     // Issuance is restricted to successful ContextInfo registration.
     friend class ContextInfo;
 
-    LogicalQueueToken(std::uint64_t domain_id, std::uint32_t index) noexcept
+    LogicalQueueToken(std::uint32_t domain_id, std::size_t index) noexcept
         : m_domain_id(domain_id), m_index(index) {}
 
-    std::uint64_t m_domain_id;
-    std::uint32_t m_index;
+    std::uint32_t m_domain_id;
+    std::size_t m_index;
 };
 
 template <typename Executor>
@@ -1153,7 +1226,6 @@ private:
 ```cpp
 #pragma once
 
-#include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/scheduling/LogicalQueue.h>
 
 #include <atomic>
@@ -1161,19 +1233,24 @@ private:
 #include <cstdint>
 #include <limits>
 #include <memory_resource>
-#include <optional>
 #include <span>
 #include <stdexcept>
 #include <utility>
+#include <vector>
 
 namespace lcf::async {
 
-using WorkerIndex = std::uint32_t;
+using WorkerCount = std::uint32_t;
+
+enum class QueueTarget
+{
+    eControl,
+    eCpu,
+};
 
 struct QueueBinding
 {
-    bool m_on_worker;
-    WorkerIndex m_worker_index;
+    QueueTarget m_target;
 };
 
 struct StorageRequirement
@@ -1184,7 +1261,6 @@ struct StorageRequirement
 
 struct ContextStorageRequirements
 {
-    StorageRequirement m_worker_loops;
     StorageRequirement m_workers;
     StorageRequirement m_routes;
 };
@@ -1193,10 +1269,9 @@ struct ContextAllocators
 {
     using Allocator = std::pmr::polymorphic_allocator<std::byte>;
 
-    ContextAllocators(Allocator worker_loops, Allocator workers, Allocator routes) noexcept
-        : m_worker_loops(worker_loops), m_workers(workers), m_routes(routes) {}
+    ContextAllocators(Allocator workers, Allocator routes) noexcept
+        : m_workers(workers), m_routes(routes) {}
 
-    Allocator m_worker_loops;
     Allocator m_workers;
     Allocator m_routes;
 };
@@ -1204,10 +1279,8 @@ struct ContextAllocators
 class ContextInfo
 {
 public:
-    ContextInfo(WorkerIndex worker_count, std::size_t queue_capacity,
-        std::pmr::polymorphic_allocator<QueueBinding> allocator)
-        : m_domain_id(acquire_domain_id()), m_worker_count(worker_count),
-          m_queues(checked_queue_capacity(queue_capacity), allocator) {}
+    explicit ContextInfo(WorkerCount worker_count) noexcept
+        : m_domain_id(acquire_domain_id()), m_worker_count(worker_count) {}
 
     ContextInfo(const ContextInfo &) = delete;
     ContextInfo & operator=(const ContextInfo &) = delete;
@@ -1217,55 +1290,40 @@ public:
           m_queues(std::move(other.m_queues)) {}
     ContextInfo & operator=(ContextInfo &&) = delete;
 
-    std::optional<LogicalQueueToken> addControlQueue() noexcept
+    LogicalQueueToken addControlQueue() noexcept
     {
-        return this->addQueue({false, 0});
+        return this->addQueue(QueueTarget::eControl);
     }
 
-    std::optional<LogicalQueueToken> addWorkerQueue(WorkerIndex worker_index) noexcept
+    LogicalQueueToken addCpuQueue() noexcept
     {
-        if (worker_index >= m_worker_count) {
-            return std::nullopt;
+        if (m_worker_count == 0) {
+            std::terminate();
         }
-        return this->addQueue({true, worker_index});
+        return this->addQueue(QueueTarget::eCpu);
     }
 
-    WorkerIndex getWorkerCount() const noexcept { return m_worker_count; }
-    std::uint64_t getDomainId() const noexcept { return m_domain_id; }
-    std::span<const QueueBinding> getQueueBindings() const noexcept { return m_queues.values(); }
-
-    static constexpr StorageRequirement storageRequirement(std::size_t queue_capacity)
-    {
-        if (queue_capacity > std::numeric_limits<std::uint32_t>::max()
-            || queue_capacity > std::numeric_limits<std::size_t>::max() / sizeof(QueueBinding)) {
-            throw std::length_error{"ContextInfo capacity overflow"};
-        }
-        return {queue_capacity * sizeof(QueueBinding), alignof(QueueBinding)};
-    }
+    WorkerCount getWorkerCount() const noexcept { return m_worker_count; }
+    std::uint32_t getDomainId() const noexcept { return m_domain_id; }
+    std::span<const QueueBinding> getQueueBindings() const noexcept { return m_queues; }
 
 private:
-    std::optional<LogicalQueueToken> addQueue(QueueBinding binding) noexcept
+    LogicalQueueToken addQueue(QueueTarget target) noexcept
     {
-        if (m_domain_id == 0 || m_queues.size() == m_queues.capacity()) {
-            return std::nullopt;
+        if (m_domain_id == 0) {
+            std::terminate();
         }
-        const auto index = static_cast<std::uint32_t>(m_queues.size());
-        m_queues.emplaceBack(binding);
+        const auto index = m_queues.size();
+        m_queues.push_back(QueueBinding{target});
         return LogicalQueueToken{m_domain_id, index};
     }
 
-    static std::size_t checked_queue_capacity(std::size_t capacity)
-    {
-        storageRequirement(capacity);
-        return capacity;
-    }
-
-    static std::uint64_t acquire_domain_id()
+    static std::uint32_t acquire_domain_id() noexcept
     {
         auto next = s_next_domain_id.load(std::memory_order_relaxed);
         for (;;) {
-            if (next == std::numeric_limits<std::uint64_t>::max()) {
-                throw std::overflow_error{"Context domain IDs exhausted"};
+            if (next == std::numeric_limits<std::uint32_t>::max()) {
+                std::terminate();
             }
             if (s_next_domain_id.compare_exchange_weak(
                     next, next + 1, std::memory_order_relaxed)) {
@@ -1274,20 +1332,20 @@ private:
         }
     }
 
-    inline static std::atomic<std::uint64_t> s_next_domain_id{1};
-    std::uint64_t m_domain_id;
-    WorkerIndex m_worker_count;
-    details::FixedCapacityVector<QueueBinding> m_queues;
+    inline static std::atomic<std::uint32_t> s_next_domain_id{1};
+    std::uint32_t m_domain_id;
+    WorkerCount m_worker_count;
+    std::vector<QueueBinding> m_queues;
 };
 
 } // namespace lcf::async
 ```
 
-LogicalQueueToken 不能默认构造或通过数字构造，只能复制 ContextInfo::addControlQueue()/addWorkerQueue() 返回的成功结果。窄范围 friend 只授权 ContextInfo 签发，不让 Context/queue/worker 相互访问私有布局。登记容量不足、worker 下标越界或配置已移走时返回 nullopt，不产生 token。ContextInfo 的配置操作单线程执行；worker 数量构造时固定，不在登记后修改。
+LogicalQueueToken 不能默认构造或通过数字构造；`addControlQueue()` / `addCpuQueue()` 均为 `noexcept`，成功时直接返回 token。窄范围 friend 只授权 ContextInfo 签发，不让 Context/queue/worker 相互访问私有布局。ContextInfo 使用 `std::vector<QueueBinding>`，没有应用层固定容量；扩容分配失败会终止。CPU target 没有 Worker、或配置已移走时属于契约违例并终止。域 ID 耗尽发生在 ContextInfo 构造期并终止，不回绕复用。ContextInfo 的配置操作单线程执行；WorkerCount 构造时固定，不在登记后修改。
 
-每个 ContextInfo 取得不复用的域 ID，移动会转移域和存储并使源对象失效；Context 按值消费配置且不可复制。token 因此不能被拿去查询另一个 Context 或后来重建的 Context；Context 同时校验域 ID 与下标。它只保证签发来源和路由有效性，不延长运行时/句柄寿命；不是持有资源的智能指针。域 ID 使用固定静态 atomic，不申请堆内存；耗尽则构造失败，不回绕复用。跨独立运行时实例/动态模块传递 token 不属于该编号域契约。
+每个 ContextInfo 取得不复用的域 ID，移动会转移域和 vector 存储并使源对象失效；Context 按值消费配置且不可复制。token 不能被拿去查询另一个 Context 或后来重建的 Context；`findLogicalQueue` 用 `assert` 检查域 ID，域一致性保证下标来自同一配置的登记结果。错误域 token 是调用方代码错误，不提供可恢复查询。它只保证签发来源和 route 有效性，不延长运行时/句柄寿命；不是持有资源的智能指针。域 ID 为 32 位；route 下标用 `std::size_t`，不额外限制逻辑队列数量，实际受 vector 最大容量、地址空间和可用内存约束。在常见 64 位 ABI 上 token 为 16 字节。域号从 1 开始，以固定静态 atomic 签发；0 留给已移走配置，最大值保留作耗尽哨兵。耗尽时终止，不回绕复用，不申请堆内存。跨独立运行时实例/动态模块传递 token 不属于该编号域契约。
 
-独立调用方 loop 用 LogicalQueue{loop} 建立路由，不伪造 Context token，也不写入 ContextInfo。标准 SchedulerHandle 直接引用路由；相同路由对象得到相等 handle；不同路由即使映射到同一物理 loop 也不相等。LogicalQueue 不存 record、不提供 pop/poll，运行期不移动或重绑已发布路由。
+独立调用方 executor 用 LogicalQueue{executor} 建立路由，不伪造 Context token，也不写入 ContextInfo。标准 SchedulerHandle 直接引用路由；相同路由对象得到相等 handle；不同路由即使映射到同一物理 executor 也不相等。LogicalQueue 不存 record、不提供 pop/poll，运行期不移动或重绑已发布路由。
 
 `include/async/core/context/BasicContext.h`：
 
@@ -1298,7 +1356,7 @@ LogicalQueueToken 不能默认构造或通过数字构造，只能复制 Context
 #include <async/core/operations.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/scheduling/poll_structs.h>
-#include <async/core/scheduling/BasicEventLoop.h>
+#include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
 #include <async/core/scheduling/LogicalQueue.h>
 #include <async/core/scheduling/SchedulerHandle.h>
@@ -1319,8 +1377,8 @@ namespace lcf::async {
 
 namespace details {
 
-template <event_loop_c EventLoop>
-PollReport poll_event_loop(EventLoop & event_loop, PollBudget budget = {}) noexcept
+template <work_executor_c Executor>
+PollReport poll_executor(Executor & executor, PollBudget budget = {}) noexcept
 {
     using Clock = std::chrono::steady_clock;
     const auto started = Clock::now();
@@ -1328,7 +1386,7 @@ PollReport poll_event_loop(EventLoop & event_loop, PollBudget budget = {}) noexc
     PollReport report;
     while (report.m_records < budget.m_max_records) {
         if (finite_time && Clock::now() - started >= budget.m_max_duration) { break; }
-        if (not event_loop.pollOne()) { break; }
+        if (not executor.pollOne()) { break; }
         ++report.m_records;
     }
     report.m_elapsed = Clock::now() - started;
@@ -1339,36 +1397,36 @@ PollReport poll_event_loop(EventLoop & event_loop, PollBudget budget = {}) noexc
 
 } // namespace details
 
-template <blocking_event_loop_c EventLoop = BasicEventLoop<>, thread_c Thread = std::thread>
+template <work_executor_c ControlExecutor = BasicExecutor<>,
+    multi_worker_executor_c CpuExecutor = BasicExecutor<>,
+    thread_c Thread = std::thread>
 class BasicContext
 {
 public:
-    using Worker = BasicWorker<EventLoop, Thread>;
+    using Worker = BasicWorker<CpuExecutor, Thread>;
+    using Route = details::ContextExecutorRoute<ControlExecutor, CpuExecutor>;
+    using RouteBinding = details::ContextLogicalQueue<ControlExecutor, CpuExecutor>;
 
-    template <event_loop_factory_c<EventLoop> LoopFactory = DefaultEventLoopFactory<EventLoop>,
+    template <typename ExecutorFactory = DefaultExecutorFactory<ControlExecutor, CpuExecutor>,
         thread_factory_c<Thread> ThreadFactory = StdThreadFactory>
+        requires work_executor_factory_c<ExecutorFactory, ControlExecutor, CpuExecutor>
     explicit BasicContext(ContextInfo context_info, ContextAllocators allocators,
-        LoopFactory loop_factory = {}, ThreadFactory thread_factory = {})
+        ExecutorFactory executor_factory = {}, ThreadFactory thread_factory = {})
         : m_domain_id(validate_info(context_info)),
-          m_control_loop(loop_factory.makeControlLoop()),
-          m_worker_loops(context_info.getWorkerCount(),
-              std::pmr::polymorphic_allocator<EventLoop>{allocators.m_worker_loops}),
+          m_control_executor(executor_factory.makeControlExecutor()),
+          m_cpu_executor(executor_factory.makeCpuExecutor()),
           m_workers(context_info.getWorkerCount(),
               std::pmr::polymorphic_allocator<Worker>{allocators.m_workers}),
-          m_queues(context_info.getQueueBindings().size(),
-              std::pmr::polymorphic_allocator<LogicalQueue<EventLoop>>{allocators.m_routes})
+            m_queues(context_info.getQueueBindings().size(),
+              std::pmr::polymorphic_allocator<RouteBinding>{allocators.m_routes})
     {
-        for (WorkerIndex index = 0; index < context_info.getWorkerCount(); ++index) {
-            m_worker_loops.emplaceWith([&] { return loop_factory.makeWorkerLoop(index); });
-        }
         for (const auto & binding : context_info.getQueueBindings()) {
-            auto & loop = binding.m_on_worker
-                ? m_worker_loops[binding.m_worker_index] : m_control_loop;
-            m_queues.emplaceBack(loop);
+            m_queues.emplaceBack(m_control_executor, m_cpu_executor,
+                binding.m_target == QueueTarget::eCpu);
         }
         try {
-            for (auto & loop : m_worker_loops.values()) {
-                m_workers.emplaceBack(loop, thread_factory);
+            for (WorkerCount index = 0; index < context_info.getWorkerCount(); ++index) {
+                m_workers.emplaceBack(m_cpu_executor, thread_factory);
             }
         } catch (...) {
             this->close();
@@ -1382,51 +1440,45 @@ public:
     ~BasicContext() noexcept { assert(this->empty()); }
 
     static constexpr ContextStorageRequirements storageRequirements(
-        WorkerIndex worker_count, std::size_t queue_count)
+        WorkerCount worker_count, std::size_t queue_count) noexcept
     {
-        return {storage_requirement<EventLoop>(worker_count),
-            storage_requirement<Worker>(worker_count),
-            storage_requirement<LogicalQueue<EventLoop>>(queue_count)};
+        return {storage_requirement<Worker>(worker_count),
+            storage_requirement<RouteBinding>(queue_count)};
     }
 
-    static ContextStorageRequirements storageRequirements(const ContextInfo & info)
+    static ContextStorageRequirements storageRequirements(const ContextInfo & info) noexcept
     {
         return storageRequirements(info.getWorkerCount(), info.getQueueBindings().size());
     }
 
-    SchedulerHandle<EventLoop> getSchedulerHandle(LogicalQueueToken token) const noexcept
+    SchedulerHandle<Route> getSchedulerHandle(LogicalQueueToken token) const noexcept
     {
-        const auto * queue_p = this->findLogicalQueue(token);
-        // A token from another configuration violates this accessor's contract.
-        if (not queue_p) { std::terminate(); }
-        return SchedulerHandle<EventLoop>{*queue_p};
+        return SchedulerHandle<Route>{this->findLogicalQueue(token)};
     }
 
-    const LogicalQueue<EventLoop> * findLogicalQueue(LogicalQueueToken token) const noexcept
+    const LogicalQueue<Route> & findLogicalQueue(LogicalQueueToken token) const noexcept
     {
-        if (token.getDomainId() != m_domain_id || token.getIndex() >= m_queues.size()) {
-            return nullptr;
-        }
-        return &m_queues[token.getIndex()];
+        assert(token.getDomainId() == m_domain_id);
+        return m_queues[token.getIndex()].getLogicalQueue();
     }
 
-    bool pollOne() noexcept { return m_control_loop.pollOne(); }
+    bool pollOne() noexcept { return m_control_executor.pollOne(); }
     PollReport poll(PollBudget budget = {}) noexcept
     {
-        return details::poll_event_loop(m_control_loop, budget);
+        return details::poll_executor(m_control_executor, budget);
     }
-    void run() noexcept requires stoppable_event_loop_c<EventLoop>
+    void run() noexcept requires stoppable_work_executor_c<ControlExecutor>
     {
-        while (m_control_loop.waitOne()) {}
+        while (m_control_executor.waitOne()) {}
     }
-    void requestStop() noexcept requires stoppable_event_loop_c<EventLoop>
+    void requestStop() noexcept requires stoppable_work_executor_c<ControlExecutor>
     {
-        m_control_loop.requestStop();
+        m_control_executor.requestStop();
     }
     void close() noexcept
     {
-        m_control_loop.close();
-        for (auto & loop : m_worker_loops.values()) { loop.close(); }
+        m_control_executor.close();
+        m_cpu_executor.close();
     }
     void joinWorkers() noexcept
     {
@@ -1434,15 +1486,11 @@ public:
     }
     bool empty() const noexcept
     {
-        if (not m_control_loop.empty()) { return false; }
-        for (const auto & loop : m_worker_loops.values()) {
-            if (not loop.empty()) { return false; }
-        }
-        return true;
+        return m_control_executor.empty() && m_cpu_executor.empty();
     }
 
 private:
-    static std::uint64_t validate_info(const ContextInfo & info)
+    static std::uint32_t validate_info(const ContextInfo & info)
     {
         if (info.getDomainId() == 0 || info.getQueueBindings().empty()) {
             throw std::invalid_argument{"Context requires an unconsumed configuration with routes"};
@@ -1451,49 +1499,49 @@ private:
     }
 
     template <std::destructible Value>
-    static constexpr StorageRequirement storage_requirement(std::size_t count)
+    static constexpr StorageRequirement storage_requirement(std::size_t count) noexcept
     {
         if (count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
-            throw std::length_error{"Context storage size overflow"};
+            std::terminate();
         }
         return {count * sizeof(Value), alignof(Value)};
     }
 
-    std::uint64_t m_domain_id;
-    EventLoop m_control_loop;
-    details::FixedCapacityVector<EventLoop> m_worker_loops;
+    std::uint32_t m_domain_id;
+    ControlExecutor m_control_executor;
+    CpuExecutor m_cpu_executor;
     details::FixedCapacityVector<Worker> m_workers;
-    details::FixedCapacityVector<LogicalQueue<EventLoop>> m_queues;
+    details::FixedCapacityVector<RouteBinding> m_queues;
 };
 
-using Context = BasicContext<>;
+using Context = BasicContext<BasicExecutor<>, BasicExecutor<FastProducerSpmcInbox>>;
 
 } // namespace lcf::async
 ```
 
-Context 直接内嵌 m_control_loop；三个固定数组分别保存 worker loops、Worker 和 routes，各消费自己明确指定的 PMR allocator。ContextInfo 给出实际 worker/route 数；Context::storageRequirements(info) 在构造前返回每类数组的准确请求字节数和对齐，数量为零的数组不申请。配置数组容量与实际 route 数可不同，运行时只按实际登记数分配。
+Context 内嵌不同类型的 control Executor 和 CPU Executor；control 使用 MutexInbox，CPU 默认使用 FastProducerSpmcInbox。固定数组保存 Worker 与 ContextLogicalQueue route binding，各使用 ContextAllocators 提供的 PMR allocator。每条 binding 持有一个轻量 ContextExecutorRoute，按 QueueTarget 转发到相应 Executor；ContextInfo 给出 WorkerCount 和实际 route 数，storageRequirements 报告 Worker 与 route binding 数组的请求字节数/对齐。Executor 对象内嵌，不进入这些数组分配。
 
-构造顺序为控制 loop、三个数组存储块、全部 worker loops、全部 routes、启动 Workers；不再使用 deque/vector 的增长策略。FixedCapacityVector 不移动元素，Context 不可移动。LoopFactory 为控制/各 worker loop 显式提供 Queue 自身需要的 allocator、容量及配置，不把容器 allocator 自动传入 Queue。默认 factory 只构造无动态 backing storage 的 MutexInbox；不会接受后忽略 resource。ThreadFactory 独立选择线程后端。
+构造顺序为 control/CPU Executor、Worker 与 route 数组存储块、全部 route bindings，最后启动 N 个 Worker；不使用 deque/vector 增长。所有 Worker 借用同一个 CPU Executor。FixedCapacityVector 不移动元素，Context 不可移动。ExecutorFactory 为两种 Executor 的 Queue 显式提供 allocator、容量及配置，不把数组 allocator 自动传入 Queue。ThreadFactory 独立选择线程后端。
 
-数组分配或 loop 构造失败时，成员按已构造范围回滚；线程启动失败时先 close 已构造的所有 loops，再 join 已交付 Workers，最后由成员析构释放数组。固定存储与线程 factory 必须保留各自的失败契约，不能依赖失败对象的析构偷偷执行用户回调。
+数组分配或 Executor 构造失败时，成员按已构造范围回滚；线程启动失败时先关闭 control/CPU Executor，再 join 已启动 Workers，最后由成员析构释放数组。已启动 Worker 共享 CPU Executor，因此关闭一次即可唤醒所有等待者并让它们排空。
 
-pollOne/poll/run/requestStop 直接访问 m_control_loop；路由根据配置选择 m_control_loop 或 m_worker_loops[worker_index]，不依赖容器中的保留下标。close 和 empty 同时覆盖控制 loop 与所有 worker loops。
+pollOne/poll/run/requestStop 直接访问 control Executor；每条 CPU LogicalQueue 的 route 转发至共享 CPU Executor。close 和 empty 分别覆盖 control/CPU 两个执行域；token 查询只访问固定 route 表，不使用 Worker 下标。
 
-run 只是复用控制 loop 的 waitOne，不在 Context 另造一套 atomic+CV 状态。停止 predicate 放在实际存储 owner 的 queue 内，与入睡握手一致；未来 queue/wake 策略替换必须保留相同可观察契约。close 不清除 stop，因此已停止控制 loop 的残留节点由 poll 显式排空；empty 只观察队列，不证明没有正在执行或未来投递的 root。
+run 复用控制 Executor 的 waitOne，不在 Context 另造 atomic+CV 状态。requestStop 只停止控制 wait loop；CPU Executor 的 Worker 继续运行。close 才关闭两个 Queue，唤醒 CPU Workers 并让它们处理所有已接纳 record。empty 只观察排队节点，不证明没有正在执行或未来投递的 root。
 
 ### 5.4 用户直接使用的 SchedulerHandle
 
 用户句柄为 SchedulerHandle<Executor>；它直接借用 LogicalQueue，提供 scheduler_concept/schedule/相等比较，满足标准 execution scheduler 协议，同时保留 Core record 提交能力。一次调度只需要这一层句柄。
 
-用户直接调用 context.getSchedulerHandle(token)，返回 SchedulerHandle，不使用 optional，也不经过 as_scheduler。独立返回 loop 用 SchedulerHandle{caller_queue}，两条路径得到同一种标准 scheduler 类型。句柄只有一个 route 指针，无额外分配或间接 adapter 对象；value completion scheduler 的查询返回该句柄本身。
+用户直接调用 context.getSchedulerHandle(token)，返回 SchedulerHandle，不使用 optional，也不经过 as_scheduler。独立返回 executor 用 SchedulerHandle{caller_queue}，两条路径得到同一种标准 scheduler 类型。句柄只有一个 route 指针，无额外分配或间接 adapter 对象；value completion scheduler 的查询返回该句柄本身。
 
-BasicContext<EventLoop, Thread> 直接构造并返回 SchedulerHandle<EventLoop>，Context = BasicContext<>。SchedulerHandle 本身承担标准 scheduler adapter 的职责；不再注入 Handle 类型，也不保留另一层 scheduler 包装。标准协议允许被 Core 使用，queue/loop/worker 的驱动和存储机制仍只消费它们实际需要的基础接口。
+BasicContext<ControlExecutor, CpuExecutor, Thread> 直接构造并返回统一的 SchedulerHandle<ContextExecutorRoute<...>>；route 内部按 ContextInfo 的 QueueTarget 转发，不让 SchedulerHandle 依赖具体 Queue 类型。Context 默认将 control 配置为 MutexInbox、CPU 配置为 FastProducerSpmcInbox。SchedulerHandle 本身承担标准 scheduler adapter 的职责；不再注入 Handle 类型，也不保留另一层 scheduler 包装。标准协议允许被 Core 使用，queue/executor/worker 的驱动和存储机制仍只消费它们实际需要的基础接口。
 
-getSchedulerHandle 的前置条件是 token 已由构造此 Context 的配置成功签发；错误归属属于契约违例，域/下标校验失败直接终止，不制造正常路径的“可能没有句柄”。需要检查动态来源时使用 findLogicalQueue(token) 的借用指针查询，不引入第二个包装类型。token 不延长 Context/route 寿命，句柄仍须遵守存活约束。
+getSchedulerHandle 与 findLogicalQueue 的前置条件是 token 已由构造此 Context 的配置成功签发；错误归属属于调用方契约违例，findLogicalQueue 在 debug 构建中 assert 域 ID，随后按 token 下标直接返回引用。域相同即保证下标来自该配置的已登记队列，不制造正常路径的“可能没有句柄”。token 不延长 Context/route 寿命，句柄仍须遵守存活约束。
 
 SchedulerHandle 位于 core/scheduling，Context 常用别名随 BasicContext 定义；标准 sender/operation 适配位于 core/scheduling/details，用户只使用公开句柄和标准 CPO。Core 按需包含协议、operations 和 queries 头，不包含 execution.h，不调用 then/when_all 等组合算法，也不使用 stdexec 私有类型。protocols 和 execution 的基础接口不反向依赖 Core，因此没有循环。
 
-core.h 聚合 Context、SchedulerHandle 和标准协议，因而需要选定的 execution provider。单独的 Queue、ScheduleNode、EventLoop、Worker 与固定存储头不需要 provider；需要独立使用这些机制时直接包含对应头文件。
+core.h 聚合 Context、SchedulerHandle 和标准协议，因而需要选定的 execution provider。当前 Queue、Executor、Worker 经 core/concepts.h 传递加载 provider；ScheduleNode、固定存储与仅含配置宏的头可独立包含。组件不调用 execution 组合算法，与是否传递加载 provider 是两个不同维度。
 
 `include/async/core/scheduling/details/exec_schedule_adapters.h`：
 
@@ -1636,7 +1684,7 @@ auto SchedulerHandle<Executor>::schedule() const noexcept
 
 connect 构造不可移动的稳定 operation，receiver_of_c 检查确切的 value()/stopped() 签名；实际 Record 完整后再检查 executor_c。start 成功发布后不能再访问可能已销毁的 operation，拒收则在 start 线程同步 stopped。执行时读取 receiver stop token，已接纳操作在 owner 驱动时交付 value 或 stopped。MVP 不注册主动取消 callback，请求 stop 后仍需 owner 推进。
 
-sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 stopped 可以在 start 线程发生，不能伪称无条件属于目标 loop。上层 continues_on 在目标接纳且 completion 存储不抛异常时，把上游三种完成一起送回目标；这与 schedule sender 自身的声明不是同一层保证。
+sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 stopped 可以在 start 线程发生，不能伪称无条件属于目标 executor。上层 continues_on 在目标接纳且 completion 存储不抛异常时，把上游三种完成一起送回目标；这与 schedule sender 自身的声明不是同一层保证。
 
 ### 5.5 聚合入口和 modules
 
@@ -1654,7 +1702,7 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 #include <async/core/thread_types.h>
 #include <async/core/scheduling/ScheduleNode.h>
 #include <async/core/scheduling/LogicalQueue.h>
-#include <async/core/scheduling/BasicEventLoop.h>
+#include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/scheduling/queue/MutexInbox.h>
@@ -1677,7 +1725,7 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 
 `std::pmr::polymorphic_allocator<T>` 是容器/typed storage 使用的类型化分配器；它把 `n` 个 T 转为字节数和对齐，交给 `memory_resource`。resource 决定字节从哪里来、是否缓存、何时归还上游；它不负责决定需要多少个元素，也不负责构造对象。标准 PMR 容器接收 resource 指针是合法的便捷构造，内部仍使用 polymorphic_allocator；问题在于是否声明了实际容量和生命周期，而不是有没有出现 resource 参数。
 
-本轮用 FixedCapacityVector 保存固定运行时数组：配置给定 worker 数和实际 route 数，每个非空数组恰好一次 `allocator.allocate(count)`，无几何扩容或分块表。不能简单把不可移动的 EventLoop/Worker 改装进需要元素移动的 vector。factory 的 placement new 在已经分配好的地址构造对象，不再次申请堆内存。配置数组也一次预留 queue_capacity，登记失败返回空值而不隐式增长。
+本轮用 FixedCapacityVector 保存固定运行时数组：配置给定 worker 数和实际 route 数，每个非空数组恰好一次 `allocator.allocate(count)`，无几何扩容或分块表。不能简单把不可移动的 Executor/Worker 改装进需要元素移动的 vector。factory 的 placement new 在已经分配好的地址构造对象，不再次申请堆内存。临时 ContextInfo 配置使用普通 `std::vector`，随登记自然增长，独立于运行时 typed-storage 资源。
 
 `storageRequirement(s)` 报告 typed storage 的请求字节数/对齐，不是任意 resource 的上游保留量。第 1 节给每次固定申请提供正确对齐的缓冲区和 null upstream，容量不足立即抛 bad_alloc，不偷偷转到系统堆；真实数量来自 info 时用 `Context::storageRequirements(info)` 规划宿主 arena。若合并多个数组到一个 arena，还必须计算各段的对齐填充。pool 的 chunk、簿记和缓存空间另外计量，不能拿 count * sizeof(T) 宣称覆盖其全部成本。
 
@@ -1685,17 +1733,17 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 
 | 位置/所有者 | 申请与容量 | allocator/后端、释放与线程 |
 | --- | --- | --- |
-| ContextInfo bindings | 一个 queue_capacity 大小的固定块；add 仅构造元素，不申请 | 显式 `polymorphic_allocator<QueueBinding>`；配置构造/销毁线程使用；Context 按值消费并在构造结束释放配置块，不把配置 arena 留给运行时 |
+| ContextInfo bindings | 普通 `std::vector<QueueBinding>`；按实际登记数增长，无应用层预设容量 | `std::allocator`；构造期使用，配置 move 进 Context 后在构造结束释放；不属于 Context PMR 覆盖范围 |
 | token 域 ID | 一个静态 atomic；签发只使用已分配的配置位置 | 无动态申请；不以堆对象地址作为可复用的身份 |
-| Context 控制 loop | Context 内嵌成员 | 不为该对象单独申请；其 Queue 的内部行为单列 |
-| worker loops | worker_count 个 EventLoop，一个固定块；零个不申请 | ContextAllocators::m_worker_loops 重绑定到 EventLoop；构造/销毁发生在宿主线程；所有借用结束且 Workers join 后释放 |
+| Context 控制 executor | Context 内嵌成员 | 不为该对象单独申请；其 Queue 的内部行为单列 |
+| CPU Executor Queue | Context 内嵌；与 N 个 Worker 共享，不随 worker_count 分配副本 | ExecutorFactory 配置该 Queue 的 allocator/容量；close 后 Worker 排空，join 后释放其内部资源 |
 | Workers 对象数组 | worker_count 个 Worker，一个固定块；只存驱动者对象 | ContextAllocators::m_workers 重绑定到 Worker；不代表线程栈/启动状态也由它分配；销毁前须 join |
 | LogicalQueue routes | 实际登记数个路由，一个固定块，O(1) token 查询 | ContextAllocators::m_routes 重绑定到路由类型；构造后无增长；最后一个 handle/operation 访问结束后才能释放 |
 | 默认 MutexInbox | head/tail、锁、CV 和状态内嵌，不为每次投递分配 node | 不接收无用 allocator；节点由 operation 提供；mutex/CV 的系统实现边界单列 |
-| 自定义 Queue backing storage | 由具体 queue 的容量/结构决定，不能计入 EventLoop 对象大小 | LoopFactory 分别向控制/worker queue 传入其实际消费的 allocator、容量和回收策略；构造失败回滚；noexcept 提交不允许不可交付的分配失败 |
+| 自定义 Queue backing storage | 由具体 Queue 的容量/结构决定，不能计入 Executor 对象大小 | ExecutorFactory 分别配置 control/CPU Queue 实际消费的 allocator、容量和回收策略；多个 Worker 共用 CPU Queue；构造失败回滚 |
 | SchedulerHandle、内部 ScheduleSender/ScheduleOperation、Receiver、ScheduleNode | 本例栈/operation 内嵌存储；sender 与 operation 的组合类型决定大小 | adapter 不额外 new hook、record 或 owning callback；connect 的稳定 operation 活到最终完成返回，完成允许立即销毁自身 |
 | when_all/continues_on 的完成存储 | 当前锁定 stdexec 的本例路径为 operation 内嵌 tuple/variant、子 operation 与 inplace stop 状态 | 这条路径的组合状态不另申请堆；值类型与异常运行库的申请另计，provider/算法或定制 domain 变更需重新审查，不承诺任意第三方算法均如此 |
-| Worker 线程启动状态、栈和系统句柄 | 标准库/OS 管理；std::thread 没有标准 allocator 注入接口 | StdThreadFactory 明确是普通后端，PMR 不覆盖；严格控制时注入自定义 Thread/ThreadFactory，声明栈来源、启动存储、失败回收和 join；也可由宿主拥有线程、直接驱动 loop |
+| Worker 线程启动状态、栈和系统句柄 | 标准库/OS 管理；std::thread 没有标准 allocator 注入接口 | StdThreadFactory 明确是普通后端，PMR 不覆盖；严格控制时注入自定义 Thread/ThreadFactory，声明栈来源、启动存储、失败回收和 join；也可由宿主拥有线程、直接驱动 executor |
 | mutex/condition_variable 的系统状态 | 平台实现可能使用额外系统资源 | 不属于 async 元数据 allocator；若要求连该部分也可控，则替换 Queue/等待后端并审查平台实现，不添加被忽略的 PMR 参数 |
 | 示例调用方 std::thread、iostream、异常及用户值 | 应用/运行库自己负责 | 调用方线程创建失败先关闭/join Context；示例不以这些成本验证 async 元数据零堆申请；严格验收以无日志、受控线程和不分配的值类型隔离测量 |
 | factory/allocator 的自定义状态 | 可以借用资源，也可以自己拥有动态存储 | 工厂复制、调用和销毁的行为须声明；传入 PMR allocator 不会自动改变自定义 policy 的内部分配 |
@@ -1706,11 +1754,11 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 
 ### 6.3 正确使用与后续扩展
 
-第 1 节把临时配置、worker loop 数组、Worker 数组和 route 数组分别绑定到有界 arena，展示每种请求的容量与所有者；不是要求每个数组必须使用不同 resource。生命周期、分配/释放线程和失败策略一致时，宿主可以显式让多个 allocator 使用同一 resource。异构需求仍保留独立入口，尤其不把 Queue backing storage 和线程栈混入元数据 arena。
+第 1 节将临时 ContextInfo 配置交给普通 `std::vector` 管理；Context 构造后该配置存储释放。Worker 与 route 数组分别绑定到有界 arena；control/CPU Executor 内嵌，Queue backing storage 由 ExecutorFactory 管理。生命周期、分配/释放线程和失败策略一致时，宿主可以显式让多个运行时 allocator 使用同一 resource。异构需求仍保留独立入口，尤其不把 Queue backing storage 和线程栈混入运行时元数据 arena。
 
-这些数组的分配/释放只发生在宿主构造/销毁路径，所以不因 Worker 存在就必须用 synchronized_pool_resource。queue 可能在 producer/consumer 两端分配释放时，应使用线程安全后端，或把回收显式归并到 resource owner。resource 与初始缓冲区必须存活到最后一次 deallocate；arena.release 不是对象析构，也不能在消费者仍引用存储时调用。配置块在 Context 构造成功返回后已经消费完毕，可单独 release；运行时三个 arena 需保持到 Context 销毁之后。
+这些数组的分配/释放只发生在宿主构造/销毁路径，所以不因 Worker 存在就必须用 synchronized_pool_resource。queue 可能在 producer/consumer 两端分配释放时，应使用线程安全后端，或把回收显式归并到 resource owner。resource 与初始缓冲区必须存活到最后一次 deallocate；arena.release 不是对象析构，也不能在消费者仍引用存储时调用。配置块在 Context 构造成功返回后已经消费完毕，可单独 release；运行时 Worker/route 两个 arena 需保持到 Context 销毁之后。
 
-资源不足、乘法溢出、对齐、零容量、部分元素构造失败、线程创建失败分别验证。统计区分请求量与上游量；用会失败的上游证明无 fallback，而不只是数一次成功分配。普通 PMR 采用失败抛异常的契约，不能仅给接口加 noexcept 便声称可返回错误码。
+配置 vector 内部的分配失败和最大容量异常仍按标准容器契约抛出，但登记接口是 `noexcept`，所以异常越过接口时会终止；这不构成可恢复的错误码接口。运行时数组另验证资源不足、乘法溢出、对齐、零数量、部分元素构造失败及线程创建失败。统计区分配置期标准分配、PMR 请求量与上游量；用会失败的上游证明运行时数组无 fallback，而不只是数一次成功分配。若要从分配失败中恢复，需由不抛异常的实际后端提供显式错误结果，不能仅给标准 allocator 外层加 `noexcept`。
 
 receiver allocator 覆盖适用于实际拥有额外动态状态的 operation，而不是反向改写已建好的 Context 存储；需保存原释放能力，不假定所有 allocator 都有 resource()。错误码分配能力 `allocation_resource_c`、typed storage 与 FramePolicy 按 [CORE_DESIGN.md](../CORE_DESIGN.md) 第 4/8 节扩展。队列结构、timer index、分配缓存、等待策略和默认算法选择由 benchmark 驱动。
 
@@ -1720,11 +1768,11 @@ receiver allocator 覆盖适用于实际拥有额外动态状态的 operation，
 
 | 增量 | 实现与验证 | 完成条件 |
 | --- | --- | --- |
-| M1 协议与单步执行 | 第 4 节 concepts、enums、CPO 与标准概念转发；ScheduleNode、MutexInbox、BasicEventLoop | 基础运行时头独立包含；合法/非法 Record/Executor 可区分；手动 poll 执行一条 record，拒收和完成中销毁正确 |
+| M1 协议与单步执行 | 第 4 节 concepts、enums、CPO 与标准概念转发；ScheduleNode、MutexInbox、FastProducerSpmcInbox、BasicExecutor、ContextExecutorRoute | 基础运行时头独立包含；control 与 CPU 可使用不同 Executor；合法/非法 Record/Executor 可区分；手动 poll 执行一条 record，拒收和完成中销毁正确；CPU producer 不等待 consumer mutex |
 | M2 等待与停止 | blocking/stoppable queue；waitOne、持久停止 predicate、close/wake；基础 Worker | 等待不空转、不丢唤醒；停止先于 run、等待中停止、record 边界停止均正确；停止后排队工作仍可 poll |
-| M3 运行时组合 | ContextInfo 签发 token、FixedCapacityVector、分项 allocator/容量报告、loop/thread factories、固定 routes 与查找、run/requestStop 与失败回滚 | 两 Worker 各自驱动 loop；元数据构造期一次分配、运行时不增长；队列与线程独立配置；主线程 run 只驱动控制 loop；显式 close/join |
-| M4 execution 与返回域 | provider 别名、Core SchedulerHandle、内部 sender/operation；独立调用方 route/loop | 直接取得标准 scheduler 句柄；完整程序得到 42：两 Worker → 主线程 continuation → 调用方 Receiver；子线程持续心跳，最终 requestStop 唤醒主线程 |
-| M5 生命周期和基线 | value/error/stopped、取消/拒收、关闭竞争、PMR/线程创建失败、完成中销毁；接入 verify/benchmark/modules | 第 8 节必测项通过；建立空 poll、run/wake、两 Worker 合流、调用方返回和内存基线 |
+| M3 运行时组合 | ContextInfo 用 std::vector 动态登记 QueueTarget、WorkerCount 和直接返回 token；FixedCapacityVector 保存运行时 Workers/routes；control/CPU ExecutorFactory 与共享 CPU Executor | 多于既有预估数的队列可登记；登记函数编译期验证为 noexcept，扩容分配失败终止；token 下标为 std::size_t 且不绑定 Worker；运行时 metadata 构造期分配、运行时不增长；run 只驱动 control；显式 close/join |
+| M4 execution 与返回域 | provider 别名、Core SchedulerHandle、内部 sender/operation；独立调用方 route/executor | 先验证零 Worker 的 control-only Context 通过 pollOne/poll 推进 schedule→then→receiver，禁止依赖 run 或后台线程；再验证标准 scheduler 句柄和完整程序得到 42：两 Worker → 主线程 continuation → 调用方 Receiver；子线程持续心跳，最终 requestStop 唤醒主线程 |
+| M5 生命周期和基线 | value/error/stopped、取消/拒收、关闭竞争、PMR/线程创建失败、完成中销毁；接入 verify/benchmark/modules | 第 8 节必测项通过；建立空 pollOne、no-op dispatch、run/wake、两 Worker 合流、调用方返回和内存基线；receiver 执行时间单列 |
 
 上述步骤无需 C++ coroutine。Task、co_await、timer、expected 扩展在运行时骨架稳定后按设计文档继续，不作为本轮验收的隐藏前置依赖。
 
@@ -1734,23 +1782,25 @@ receiver allocator 覆盖适用于实际拥有额外动态状态的 operation，
 
 | 必测项 | 观察结果 |
 | --- | --- |
-| 完整成功链 | 两支各 sleep 1s；不同 worker ID；主线程 then 消费 20/22 得到 42；最终 Receiver 的 ID 等于调用方子线程；随后 run 返回、join 完成 |
+| poll 驱动 execution | 零 Worker、仅 control queue；connect/start 后无完成；pollOne 完成一项工作，poll 按预算推进，value 恰好一次；关闭后排空 |
+| SPMC CPU 提交 | Context CPU Executor 使用 FastProducerSpmcInbox；一个 producer 与多个 worker consumers 并发运行；consumer 持锁暂停时 producer 仍能完成 enqueue；多个 consumer exactly-once 领取，wait/close 无丢唤醒；并发第二 producer 属于契约违例 |
+| 完整成功链 | 两个 CPU LogicalQueue 的分支在同一 gate 同时就绪；共享 Executor 由两个 Worker 消费；主线程 then 得到 42；最终 Receiver 在调用方线程；随后 run 返回、join 完成 |
 | error 返回 | 在最后 continues_on 前注入 just_error(std::error_code) 或抛异常的 then；跳过后续 value 函数；set_error 恰好一次、在调用方线程、唤醒主线程退出 |
 | stopped 返回 | 在最后 continues_on 前注入 just_stopped；set_stopped 恰好一次且在调用方线程；不依赖成功分支才能退出 |
-| owner 隔离 | Context run/poll 不消费返回或 worker loop；仅调用方 pollOne 才能执行最终 Receiver；Receiver 线程违约立即失败，不静默丢掉完成 |
-| 真正并行 | 两个受控 gate 证明不同 Worker 可同时进入分支；不使用“约 1 秒完成”的耗时阈值证明并行 |
+| owner 隔离 | Context run/poll 只消费 control Executor，不消费 CPU/调用方返回 Executor；CPU Workers 只消费 CPU Executor；仅调用方 pollOne 执行最终 Receiver |
+| 真正并行 | 两个受控 gate 证明共享 CPU Executor 的两个 Worker 可同时领取并执行分支；不使用耗时阈值或 Worker 身份 作为业务 API 证明并行 |
 | 等待与竞态 | 空队列等待、新投递唤醒、虚假唤醒重查 predicate、检查空与入睡竞争、requestStop 前于 run/等待中/有工作时均无丢唤醒 |
-| 停止和关闭独立 | requestStop 后仍能接纳，剩余 record 可 poll；run 再次调用立即返回；close 拒收但不丢已接纳节点；Worker 不受控制 loop stop 影响 |
-| 配置与逻辑身份 | token 不可默认/数值构造；add 成功才签发；容量不足/越界不签发；跨 Context/旧 token 由 findLogicalQueue 拒绝；getSchedulerHandle 只接收本配置签发的 token；移走的配置不能再登记；相同 route handle 相等，不同 route 即使共用 loop 也不相等 |
-| 固定存储与资源 | 每个非空数组恰好一次、准确 count/sizeof/alignment；零数量不申请；add/start/poll 不增长元数据；null upstream 证实无 fallback；配置 arena 可提前释放，runtime arenas 按各自 allocator 回收 |
-| 构造失败与扩展 | 逐点注入数组分配、loop 构造、thread factory 失败；部分元素逆序销毁、已启动线程全部 close/join；自定义 queue 消费自己的 allocator；线程后端扩展实际被使用 |
-| 存活与竞争 | eAccepted 后立即消费、完成中销毁、producer/close 竞争恰好一次；最后访问结束前不释放 route/loop/operation；跨线程回收遵守后端契约 |
+| 停止和关闭独立 | requestStop 后仍能接纳，剩余 record 可 poll；run 再次调用立即返回；close 拒收但不丢已接纳节点；Worker 不受控制 executor stop 影响 |
+| 配置与逻辑身份 | control 目标可动态登记数千项且直接返回 token；登记函数为 noexcept；token 为 32 位 domain + std::size_t index；CPU queue 不指定 Worker；无 Worker、配置已移走或 vector 扩容分配失败时终止；跨 Context token 违反 lookup 前置条件，debug assert 检出；共用 CPU Executor 的不同 route handle 仍不相等 |
+| 固定存储与资源 | 每个非空运行时数组恰好一次、准确 count/sizeof/alignment；零数量不申请；ContextInfo vector 按需增长并在构造后释放；add/start/poll 不增长运行时 metadata；null upstream 证实 PMR 无 fallback；runtime arenas 按各自 allocator 回收 |
+| 构造失败与扩展 | 逐点注入数组分配、executor 构造、thread factory 失败；部分元素逆序销毁、已启动线程全部 close/join；自定义 queue 消费自己的 allocator；线程后端扩展实际被使用 |
+| 存活与竞争 | eAccepted 后立即消费、完成中销毁、producer/close 竞争恰好一次；最后访问结束前不释放 route/executor/operation；跨线程回收遵守后端契约 |
 | 失败边界 | 提前关闭返回 scheduler 可在来源线程 stopped；单独断言完成/存活，不在来源线程修改 owner 专有状态；completion 存储抛异常按 provider 契约测试 |
-| 分层和配置 | 基础 queue/loop/worker 不引入 provider；Core 调度层只依赖标准协议；SchedulerHandle 满足 scheduler_c、schedule(sender)/connect/start 和 completion scheduler 身份正确；用户无需 adapters；header/module 入口一致 |
+| 分层和配置 | 基础 queue/Executor/Worker 不调用 execution 算法；Queue 声明多 consumer 能力，BasicContext 拒绝不兼容 Executor；SchedulerHandle 满足标准 scheduler 接口，header/module 入口一致 |
 
 普通 source 抛出的异常与最后 continues_on 存储 completion 时抛出的异常要区分：前者在本例的正常存储路径下转回调用方，后者可能在迁移前交付失败。基础 schedule 的 receiver stop token 检查也不等于取消所有已启动业务；sleep_for 的重工作不受 requestStop 抢占。
 
-性能基线测量空 poll、一次 dispatch、producer 提交/wake、run 入睡/唤醒、停止、批量软预算、两 Worker 合流、控制 continuation 和最终返回延迟。benchmark 不保留演示用 1 秒 sleep、100ms 心跳或日志；分配/queue/timer/wake 优化先存基线，再以相同 workload 比较，不能从整轮均值推导 p99。
+性能基线分别测量空 `pollOne`、空 poll、no-op dispatch、SPMC producer enqueue、consumer mutex 等待、run 入睡/唤醒、停止、批量软预算、两 Worker 合流、控制 continuation 和最终返回延迟；receiver 用户代码耗时单独统计。比较单 producer 入队延迟和多 consumer 领取/吞吐，不把 receiver 执行时间计入 executor 开销。基准不代替平台级 WCET 证明。benchmark 不保留演示用 1 秒 sleep、100ms 心跳或日志；其他 queue/timer/wake 优化先存基线，再以相同 workload 比较，不能从整轮均值推导 p99。
 
 ## 9. 接入与验证命令
 

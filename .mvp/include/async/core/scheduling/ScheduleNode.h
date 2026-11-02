@@ -1,9 +1,7 @@
 #pragma once
 
-#include <async/core/operations.h>
-
+#include <atomic>
 #include <cassert>
-#include <concepts>
 
 namespace lcf::async {
 
@@ -21,8 +19,14 @@ public:
     ScheduleNode & operator=(ScheduleNode &&) = delete;
 
     ~ScheduleNode() noexcept { assert(not m_queued); }
-    ScheduleNode * getNext() const noexcept { return m_next_p; }
-    void setNext(ScheduleNode * next_p) noexcept { m_next_p = next_p; }
+    ScheduleNode * getNext() const noexcept
+    {
+        return m_next_p.load(std::memory_order_acquire);
+    }
+    void setNext(ScheduleNode * next_p) noexcept
+    {
+        m_next_p.store(next_p, std::memory_order_release);
+    }
     bool isQueued() const noexcept { return m_queued; }
     void markQueued() noexcept
     {
@@ -31,7 +35,7 @@ public:
     }
     void clearQueueState() noexcept
     {
-        m_next_p = nullptr;
+        m_next_p.store(nullptr, std::memory_order_relaxed);
         m_queued = false;
     }
     void execute() noexcept
@@ -42,21 +46,10 @@ public:
         execute_f(state_p);
     }
 private:
-    ScheduleNode * m_next_p = nullptr;
+    std::atomic<ScheduleNode *> m_next_p{nullptr};
     void * m_state_p;
     ExecuteFunction m_execute_f;
     bool m_queued = false;
 };
-
-namespace details {
-
-template <typename Record>
-concept queue_record_c = schedule_record_c<Record>
-    && requires(Record & record) {
-        { get_schedule_node(record) } noexcept
-            -> std::same_as<ScheduleNode &>;
-};
-
-} // namespace details
 
 } // namespace lcf::async

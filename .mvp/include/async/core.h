@@ -9,7 +9,8 @@
 #include <async/core/thread_types.h>
 #include <async/core/scheduling/ScheduleNode.h>
 #include <async/core/scheduling/LogicalQueue.h>
-#include <async/core/scheduling/BasicEventLoop.h>
+#include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/scheduling/queue/MutexInbox.h>
+#include <async/core/scheduling/queue/FastProducerSpmcInbox.h>
