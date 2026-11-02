@@ -33,13 +33,17 @@ public:
 
     bool pollOne() noexcept
     {
-        return executeNode(m_queue.tryPop());
+        auto node_p = m_queue.tryPop();
+        if (node_p) { node_p->execute(); }
+        return static_cast<bool>(node_p);
     }
 
     bool waitOne() noexcept
-        requires blocking_schedule_queue_c<Queue, ScheduleNode>
+    requires blocking_schedule_queue_c<Queue, ScheduleNode>
     {
-        return executeNode(m_queue.waitPop());
+        auto node_p = m_queue.waitPop();
+        if (node_p) { node_p->execute(); }
+        return static_cast<bool>(node_p);
     }
 
     void requestStop() noexcept
@@ -50,20 +54,7 @@ public:
 
     void close() noexcept { m_queue.close(); }
     bool empty() const noexcept { return m_queue.empty(); }
-
 private:
-    static bool executeNode(ScheduleNode * node_p) noexcept
-    {
-        if (not node_p) {
-            return false;
-        }
-
-        // Completion may destroy the node. Copy dispatch data before calling it.
-        auto * state_p = node_p->getState();
-        auto execute_f = node_p->getExecuteFunction();
-        execute_f(state_p);
-        return true;
-    }
     Queue m_queue;
 };
 

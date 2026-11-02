@@ -610,7 +610,7 @@ core/concepts.h 中的 thread_c 服务于 BasicWorker 的 join/析构；thread_f
 
 ScheduleNode 是默认 EventLoop 与自定义 Queue 共用的公开调度 hook，位于 scheduling/ScheduleNode.h，直接声明在 lcf::async。它存 next、state 和函数指针，不是公共 operation 或基类。异构 dispatch 在 queue 边界确需运行时擦除，CPO 的静态分发不能单独替代这段存储；CPO 仍负责获取 hook 和提交。
 
-与默认 EventLoop 配合的 Queue 在接纳时调用 node.markQueued()，出队时调用 node.clearQueueState()；拒收不修改 node，出队后不再访问它。getNext/setNext 供链式存储实现使用，其他存储实现无需使用 next。node 由 record 内嵌，不逐次分配，无 friend；完成回调可能销毁 record，dispatch 之前复制回调与状态指针，之后不再读 node。
+与默认 EventLoop 配合的 Queue 在接纳时调用 node.markQueued()，出队时调用 node.clearQueueState()；拒收不修改 node，出队后不再访问它。getNext/setNext 供链式存储实现使用，其他存储实现无需使用 next。node 由 record 内嵌，不逐次分配，无 friend；EventLoop 直接调用 node.execute()，节点内部在 dispatch 前保存回调和状态指针。完成回调可能销毁 record，dispatch 后不再访问节点成员；状态和函数指针不通过 getter 暴露。
 
 queue_record_c 只是默认 EventLoop 检查 Record 是否提供 ScheduleNode 的内部适配约束，留在 details，不属于 Queue 扩展协议。
 
@@ -653,8 +653,13 @@ public:
         m_next_p = nullptr;
         m_queued = false;
     }
-    void * getState() const noexcept { return m_state_p; }
-    ExecuteFunction getExecuteFunction() const noexcept { return m_execute_f; }
+    void execute() noexcept
+    {
+        auto * state_p = m_state_p;
+        auto execute_f = m_execute_f;
+        // Completion may destroy this node. Do not access members after dispatch.
+        execute_f(state_p);
+    }
 private:
     ScheduleNode * m_next_p = nullptr;
     void * m_state_p;
@@ -881,10 +886,7 @@ private:
             return false;
         }
 
-        // Completion may destroy the node. Copy dispatch data before calling it.
-        auto * state_p = node_p->getState();
-        auto execute_f = node_p->getExecuteFunction();
-        execute_f(state_p);
+        node_p->execute();
         return true;
     }
     Queue m_queue;

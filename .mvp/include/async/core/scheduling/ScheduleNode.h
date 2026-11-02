@@ -34,8 +34,13 @@ public:
         m_next_p = nullptr;
         m_queued = false;
     }
-    void * getState() const noexcept { return m_state_p; }
-    ExecuteFunction getExecuteFunction() const noexcept { return m_execute_f; }
+    void execute() noexcept
+    {
+        auto * state_p = m_state_p;
+        auto execute_f = m_execute_f;
+        // Completion may destroy this node. Do not access members after dispatch.
+        execute_f(state_p);
+    }
 private:
     ScheduleNode * m_next_p = nullptr;
     void * m_state_p;
