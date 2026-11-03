@@ -4,7 +4,7 @@
 
 ## 1. 最终验收示例
 
-主线程驱动 control Executor；两个 CPU 逻辑队列上的独立 sender 分支经共享 CPU Executor 执行并由 `when_all` 汇合；调用方子线程持续心跳并 poll 自己的返回 Executor，最终 Receiver 在该子线程保存结果并请求主线程退出。Worker 数是 Context 的资源预算，业务代码只选择 LogicalQueue，不指定 Worker，也不需要同步原语协调任务。并行度 gate 只用于 verify 测试。此 MVP 不使用 C++ coroutine。
+主线程驱动 control Executor；调用方子线程作为唯一 CPU producer，将两个逻辑队列上的独立 sender 分支提交给共享 SPMC CPU Executor，由多个 Worker 执行并经 `when_all` 汇合；最终 Receiver 返回调用方线程。Worker 数是 Context 的资源预算，业务代码只选择 LogicalQueue，不指定 Worker，也不需要同步原语协调任务。并行度 gate 只用于 verify 测试。此 MVP 不使用 C++ coroutine。
 
 ```cpp
 #include <async/async.h>
@@ -24,6 +24,10 @@ namespace async = lcf::async;
 namespace ex = async::exec;
 namespace proto = async::protocols;
 using namespace std::chrono_literals;
+
+// Only the caller thread starts CPU operations in this example.
+using ExampleContext = async::BasicContext<async::BasicExecutor<>,
+    async::BasicExecutor<async::FastProducerSpmcInbox>>;
 
 struct BranchResult
 {
@@ -75,7 +79,7 @@ struct Receiver
         this->finish(Completion::eStopped);
     }
 
-    async::Context * m_context_p;
+    ExampleContext * m_context_p;
     Outcome * m_outcome_p;
     bool * m_caller_completed_p;
     std::thread::id m_caller_thread;
@@ -111,7 +115,7 @@ int main()
     const auto left_token = info.addCpuQueue();
     const auto right_token = info.addCpuQueue();
 
-    constexpr auto k_storage = async::Context::storageRequirements(k_worker_count, k_queue_count);
+    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count, k_queue_count);
     alignas(k_storage.m_workers.m_alignment)
         std::array<std::byte, k_storage.m_workers.m_bytes> worker_bytes;
     alignas(k_storage.m_routes.m_alignment)
@@ -121,7 +125,7 @@ int main()
     std::pmr::monotonic_buffer_resource route_arena{
         route_bytes.data(), route_bytes.size(), std::pmr::null_memory_resource()};
 
-    async::Context context{std::move(info), async::ContextAllocators{
+    ExampleContext context{std::move(info), async::ContextAllocators{
         std::pmr::polymorphic_allocator<std::byte>{&worker_arena},
         std::pmr::polymorphic_allocator<std::byte>{&route_arena}}};
 
@@ -269,7 +273,7 @@ int main()
 
 Worker 数量与逻辑队列数量彼此独立。一个 CPU Executor 可以由多个 Worker 同时调用 waitOne；Queue 必须支持多个并发消费者，Executor 通过 `supports_multiple_workers` 声明该能力。control 与调用方返回 Executor 各由唯一 owner 驱动。Worker 不选择逻辑队列、不承载优先级，也不将任务绑定到自己的线程 ID；任务选择和可执行性由 Executor/QueuePolicy 决定。
 
-MVP 的 Context 使用 MutexInbox 作为 control Queue，FastProducerSpmcInbox 作为 CPU Queue。CPU Queue 是侵入式 mailbox，record 节点由稳定 operation 提供；enqueue 不分配，也不获取 consumer mutex。一个 Context 的全部 CPU 提交必须由同一个 producer 串行发起；producer 以固定次数原子操作交换 head 并链接前驱。多个 Worker 在 consumer mutex 下领取，彼此可能等待，但不会阻塞 producer。若 producer 暂停在 exchange/link 之间，consumer 返回空，之后由发布完成时的 atomic wait 序号唤醒。close 阻止新提交并等待在途提交完成，再由 Workers 排空已接纳工作。调用方返回 Executor 使用默认 MutexInbox；本例最终仅由 control owner 投递。
+默认 Context 的 control/CPU Queue 都使用 MutexInbox，支持多 producer。本例显式定义 ExampleContext，以 MutexInbox 接收 control 工作、FastProducerSpmcInbox 接收 CPU 工作，caller 是唯一 CPU producer。SPMC Queue 是侵入式 mailbox，节点由稳定 operation 提供；enqueue 不分配、不获取 consumer mutex，producer 以固定次数原子操作交换 head 并链接前驱。多个 Worker 在 consumer mutex 下领取，彼此可能等待。发布缺口使 consumer 返回空，发布完成时的 atomic wait 序号唤醒 Worker。close 阻止新提交并等待在途提交完成；Worker 必须等 producer 不再发布且队列为空才退出。调用方返回 Executor 使用默认 MutexInbox，由 control owner 投递。
 
 这是 producer 路径固定次数原子操作、不等待 Worker 队列锁的契约，不是通用硬实时墙钟上界：atomic notification、平台调度、中断、cache/TLB 与被执行 record 都影响实际延迟。consumer 之间领取时会使用 mutex。验收分开测量 enqueue、consumer 争用、no-op dispatch 和 receiver 执行，不把用户代码耗时算作 queue 成本。
 
@@ -1514,12 +1518,12 @@ private:
     details::FixedCapacityVector<RouteBinding> m_queues;
 };
 
-using Context = BasicContext<BasicExecutor<>, BasicExecutor<FastProducerSpmcInbox>>;
+using Context = BasicContext<>;
 
 } // namespace lcf::async
 ```
 
-Context 内嵌不同类型的 control Executor 和 CPU Executor；control 使用 MutexInbox，CPU 默认使用 FastProducerSpmcInbox。固定数组保存 Worker 与 ContextLogicalQueue route binding，各使用 ContextAllocators 提供的 PMR allocator。每条 binding 持有一个轻量 ContextExecutorRoute，按 QueueTarget 转发到相应 Executor；ContextInfo 给出 WorkerCount 和实际 route 数，storageRequirements 报告 Worker 与 route binding 数组的请求字节数/对齐。Executor 对象内嵌，不进入这些数组分配。
+Context 可以内嵌不同类型的 control Executor 和 CPU Executor；默认两者使用 MutexInbox，第 1 节的 ExampleContext 显式将 CPU 侧换为 FastProducerSpmcInbox。固定数组保存 Worker 与 ContextLogicalQueue route binding，各使用 ContextAllocators 提供的 PMR allocator。每条 binding 持有轻量 ContextExecutorRoute，按 QueueTarget 转发到相应 Executor；storageRequirements 报告 Worker 与 route binding 数组的字节数/对齐。Executor 对象内嵌，不进入这些数组分配。
 
 构造顺序为 control/CPU Executor、Worker 与 route 数组存储块、全部 route bindings，最后启动 N 个 Worker；不使用 deque/vector 增长。所有 Worker 借用同一个 CPU Executor。FixedCapacityVector 不移动元素，Context 不可移动。ExecutorFactory 为两种 Executor 的 Queue 显式提供 allocator、容量及配置，不把数组 allocator 自动传入 Queue。ThreadFactory 独立选择线程后端。
 
@@ -1533,9 +1537,9 @@ run 复用控制 Executor 的 waitOne，不在 Context 另造 atomic+CV 状态�
 
 用户句柄为 SchedulerHandle<Executor>；它直接借用 LogicalQueue，提供 scheduler_concept/schedule/相等比较，满足标准 execution scheduler 协议，同时保留 Core record 提交能力。一次调度只需要这一层句柄。
 
-用户直接调用 context.getSchedulerHandle(token)，返回 SchedulerHandle，不使用 optional，也不经过 as_scheduler。独立返回 executor 用 SchedulerHandle{caller_queue}，两条路径得到同一种标准 scheduler 类型。句柄只有一个 route 指针，无额外分配或间接 adapter 对象；value completion scheduler 的查询返回该句柄本身。
+用户调用 context.getSchedulerHandle(token)，得到 SchedulerHandle，不使用 optional，也不经过 as_scheduler。独立返回 executor 用 SchedulerHandle{caller_queue}；两条路径使用同一类模板，具体模板实参可不同。Context 内的句柄借用 route；route 选择 control/CPU Executor，无每次投递分配。value completion scheduler 的查询返回句柄本身。
 
-BasicContext<ControlExecutor, CpuExecutor, Thread> 直接构造并返回统一的 SchedulerHandle<ContextExecutorRoute<...>>；route 内部按 ContextInfo 的 QueueTarget 转发，不让 SchedulerHandle 依赖具体 Queue 类型。Context 默认将 control 配置为 MutexInbox、CPU 配置为 FastProducerSpmcInbox。SchedulerHandle 本身承担标准 scheduler adapter 的职责；不再注入 Handle 类型，也不保留另一层 scheduler 包装。标准协议允许被 Core 使用，queue/executor/worker 的驱动和存储机制仍只消费它们实际需要的基础接口。
+BasicContext<ControlExecutor, CpuExecutor, Thread> 返回统一的 SchedulerHandle<ContextExecutorRoute<...>>；route 按 ContextInfo 的 QueueTarget 转发，允许 control/CPU 使用不同 Queue。Context = BasicContext<> 保留 MutexInbox 多 producer 默认配置；单 producer 专用配置由宿主显式选择。SchedulerHandle 承担标准 scheduler adapter 职责；queue/executor/worker 只消费各自需要的基础接口。
 
 getSchedulerHandle 与 findLogicalQueue 的前置条件是 token 已由构造此 Context 的配置成功签发；错误归属属于调用方契约违例，findLogicalQueue 在 debug 构建中 assert 域 ID，随后按 token 下标直接返回引用。域相同即保证下标来自该配置的已登记队列，不制造正常路径的“可能没有句柄”。token 不延长 Context/route 寿命，句柄仍须遵守存活约束。
 
@@ -1783,7 +1787,7 @@ receiver allocator 覆盖适用于实际拥有额外动态状态的 operation，
 | 必测项 | 观察结果 |
 | --- | --- |
 | poll 驱动 execution | 零 Worker、仅 control queue；connect/start 后无完成；pollOne 完成一项工作，poll 按预算推进，value 恰好一次；关闭后排空 |
-| SPMC CPU 提交 | Context CPU Executor 使用 FastProducerSpmcInbox；一个 producer 与多个 worker consumers 并发运行；consumer 持锁暂停时 producer 仍能完成 enqueue；多个 consumer exactly-once 领取，wait/close 无丢唤醒；并发第二 producer 属于契约违例 |
+| SPMC CPU 提交 | 显式选择 FastProducerSpmcInbox，默认 Context 保持多 producer 能力；明确单 producer 与多个 consumers 的归属；consumer 持锁暂停时 producer 仍能 enqueue；close 与进入提交区但尚未发布的 producer 竞争时 Worker 不提前退出，接纳节点 exactly-once 领取；不得将 SPMC handle 当作多 producer 通用入口 |
 | 完整成功链 | 两个 CPU LogicalQueue 的分支在同一 gate 同时就绪；共享 Executor 由两个 Worker 消费；主线程 then 得到 42；最终 Receiver 在调用方线程；随后 run 返回、join 完成 |
 | error 返回 | 在最后 continues_on 前注入 just_error(std::error_code) 或抛异常的 then；跳过后续 value 函数；set_error 恰好一次、在调用方线程、唤醒主线程退出 |
 | stopped 返回 | 在最后 continues_on 前注入 just_stopped；set_stopped 恰好一次且在调用方线程；不依赖成功分支才能退出 |

@@ -9,7 +9,6 @@
 #include <async/core/scheduling/details/ContextExecutorRoute.h>
 #include <async/core/scheduling/LogicalQueue.h>
 #include <async/core/scheduling/SchedulerHandle.h>
-#include <async/core/scheduling/queue/FastProducerSpmcInbox.h>
 
 #include <cassert>
 #include <chrono>
@@ -164,7 +163,6 @@ private:
     details::FixedCapacityVector<RouteBinding> m_queues;
 };
 
-using Context = BasicContext<BasicExecutor<>,
-    BasicExecutor<FastProducerSpmcInbox>>;
+using Context = BasicContext<>;
 
 } // namespace lcf::async

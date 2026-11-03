@@ -4,7 +4,6 @@
 #include <async/core/scheduling/ScheduleNode.h>
 
 #include <atomic>
-#include <cassert>
 #include <cstddef>
 #include <cstdint>
 #include <exception>
@@ -25,6 +24,8 @@ public:
         "FastProducerSpmcInbox requires lock-free 64-bit atomics");
     static_assert(std::atomic<unsigned>::is_always_lock_free,
         "FastProducerSpmcInbox requires lock-free unsigned atomics");
+    static_assert(std::atomic<std::size_t>::is_always_lock_free,
+        "FastProducerSpmcInbox requires lock-free size atomics");
 
     FastProducerSpmcInbox() noexcept
         : m_stub{nullptr, &execute_stub}, m_head_p{&m_stub}, m_tail_p(&m_stub) {}
@@ -49,7 +50,11 @@ public:
             }
             std::terminate();
         }
-
+#if defined(LCF_ASYNC_ENABLE_TEST_HOOKS)
+        if (m_after_producer_entry_hook_f) {
+            m_after_producer_entry_hook_f(m_after_producer_entry_hook_state_p);
+        }
+#endif
         node.markQueued();
         node.setNext(nullptr);
         m_queued_count.fetch_add(1, std::memory_order_relaxed);
@@ -85,7 +90,7 @@ public:
             if (auto * node_p = this->tryPop()) {
                 return node_p;
             }
-            if (this->isClosed() && this->empty()) {
+            if (this->isClosedAndQuiescent() and this->empty()) {
                 return nullptr;
             }
 
@@ -96,7 +101,7 @@ public:
             if (auto * node_p = this->tryPop()) {
                 return node_p;
             }
-            if (this->isClosed() && this->empty()) {
+            if (this->isClosedAndQuiescent() and this->empty()) {
                 return nullptr;
             }
             m_wake_sequence.wait(observed, std::memory_order_acquire);
@@ -130,6 +135,8 @@ private:
     using TestHook = void (*)(void *) noexcept;
     TestHook m_after_consumer_lock_hook_f = nullptr;
     void * m_after_consumer_lock_hook_state_p = nullptr;
+    TestHook m_after_producer_entry_hook_f = nullptr;
+    void * m_after_producer_entry_hook_state_p = nullptr;
 #endif
 
     static constexpr unsigned k_closed_bit = 1u;
@@ -179,9 +186,9 @@ private:
         return &node;
     }
 
-    bool isClosed() const noexcept
+    bool isClosedAndQuiescent() const noexcept
     {
-        return (m_lifecycle.load(std::memory_order_acquire) & k_closed_bit) != 0;
+        return m_lifecycle.load(std::memory_order_acquire) == k_closed_bit;
     }
 
     void notifyWaiters() noexcept
