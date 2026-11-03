@@ -1,7 +1,6 @@
 #pragma once
 
-#include <async/core/operations.h>
-#include <async/core/scheduling/ScheduleNode.h>
+#include <async/core/queue/intrusive/ExecutionNode.h>
 #include <async/core/concepts.h>
 #include <async/execution/operations.h>
 #include <async/execution/queries.h>
@@ -21,6 +20,8 @@ class ScheduleOperation
 public:
     using operation_state_concept = protocols::operation_state_t;
 public:
+    ~ScheduleOperation() noexcept = default;
+    ScheduleOperation() = delete;
     ScheduleOperation(Handle handle, Receiver receiver)
         noexcept(std::is_nothrow_copy_constructible_v<Handle>
             && std::is_nothrow_move_constructible_v<Receiver>)
@@ -30,11 +31,11 @@ public:
     ScheduleOperation(ScheduleOperation &&) = delete;
     ScheduleOperation & operator=(ScheduleOperation &&) = delete;
 public:
-    ScheduleNode & getScheduleNode() noexcept { return m_node; }
+    queue::intrusive::ExecutionNode & getExecutable() noexcept { return m_node; }
     void start() & noexcept
-        requires executor_c<Handle, ScheduleOperation>
+        requires record_submitter_c<Handle, ScheduleOperation>
     {
-        if (try_enqueue(m_handle, *this) == EnqueueResult::eAccepted) {
+        if (m_handle.tryEnqueue(*this) == EnqueueResult::eAccepted) {
             return;
         }
         exec::set_stopped(std::move(m_receiver));
@@ -53,7 +54,7 @@ private:
 private:
     Handle m_handle;
     Receiver m_receiver;
-    ScheduleNode m_node;
+    queue::intrusive::ExecutionNode m_node;
 };
 
 template <std::copyable Handle>
@@ -64,22 +65,41 @@ struct ScheduleSender
 
     struct Environment
     {
-        Handle m_scheduler;
-
+        ~Environment() noexcept = default;
+        Environment() = delete;
+        explicit Environment(Handle scheduler) noexcept(std::is_nothrow_move_constructible_v<Handle>)
+            : m_scheduler(std::move(scheduler)) {}
+        Environment(const Environment &) = default;
+        Environment(Environment &&) = default;
+        Environment & operator=(const Environment &) = default;
+        Environment & operator=(Environment &&) = default;
+    public:
         Handle query(exec::get_completion_scheduler_t<exec::set_value_t>) const noexcept
         {
             return m_scheduler;
         }
+    private:
+        Handle m_scheduler;
     };
-
-    Environment get_env() const noexcept { return {m_scheduler}; }
+public:
+    ~ScheduleSender() noexcept = default;
+    ScheduleSender() = delete;
+    explicit ScheduleSender(Handle scheduler) noexcept(std::is_nothrow_move_constructible_v<Handle>)
+        : m_scheduler(std::move(scheduler)) {}
+    ScheduleSender(const ScheduleSender &) = default;
+    ScheduleSender(ScheduleSender &&) = default;
+    ScheduleSender & operator=(const ScheduleSender &) = default;
+    ScheduleSender & operator=(ScheduleSender &&) = default;
+public:
+    Environment get_env() const noexcept { return Environment{m_scheduler}; }
     template <receiver_of_c<ScheduleCompletions> Receiver>
-    requires executor_c<Handle, ScheduleOperation<Handle, Receiver>>
+    requires record_submitter_c<Handle, ScheduleOperation<Handle, Receiver>>
     auto connect(Receiver receiver) const
     {
         return ScheduleOperation<Handle, Receiver>{m_scheduler, std::move(receiver)};
     }
 
+private:
     Handle m_scheduler;
 };
 

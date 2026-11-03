@@ -9,9 +9,10 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-struct StdThreadFactory;
+template <typename ThreadHandle>
+struct ThreadLauncher;
 
-template <typename Executor, typename Thread = std::thread>
+template <typename Executor, typename ThreadHandle = std::thread>
 class BasicWorker;
 
 } // namespace lcf::async

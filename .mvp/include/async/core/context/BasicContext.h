@@ -1,12 +1,10 @@
 #pragma once
 
 #include "ContextInfo.h"
-#include <async/core/operations.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/scheduling/poll_structs.h>
 #include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
-#include <async/core/scheduling/details/ContextExecutorRoute.h>
 #include <async/core/scheduling/LogicalQueue.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 
@@ -35,7 +33,7 @@ PollReport poll_executor(Executor & executor, PollBudget budget = {}) noexcept
     PollReport report;
     while (report.m_records < budget.m_max_records) {
         if (finite_time && Clock::now() - started >= budget.m_max_duration) { break; }
-        if (not executor.pollOne()) { break; }
+        if (not executor.executeOne()) { break; }
         ++report.m_records;
     }
     report.m_elapsed = Clock::now() - started;
@@ -46,36 +44,34 @@ PollReport poll_executor(Executor & executor, PollBudget budget = {}) noexcept
 
 } // namespace details
 
-template <work_executor_c ControlExecutor = BasicExecutor<>,
-    multi_worker_executor_c CpuExecutor = BasicExecutor<>,
-    thread_c Thread = std::thread>
+template <multi_worker_executor_c Executor = BasicExecutor<>,
+    join_handle_c ThreadHandle = std::thread>
 class BasicContext
 {
 public:
-    using Worker = BasicWorker<CpuExecutor, Thread>;
-    using Route = details::ContextExecutorRoute<ControlExecutor, CpuExecutor>;
-    using RouteBinding = details::ContextLogicalQueue<ControlExecutor, CpuExecutor>;
-
-    template <typename ExecutorFactory = DefaultExecutorFactory<ControlExecutor, CpuExecutor>,
-        thread_factory_c<Thread> ThreadFactory = StdThreadFactory>
-        requires work_executor_factory_c<ExecutorFactory, ControlExecutor, CpuExecutor>
+    using Worker = BasicWorker<Executor, ThreadHandle>;
+    using Queue = LogicalQueue<Executor>;
+public:
+    ~BasicContext() noexcept { assert(this->empty()); }
+    BasicContext() = delete;
+    template <typename ExecutorFactory = DefaultContextExecutorFactory<Executor>,
+        thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
+        requires context_executor_factory_c<ExecutorFactory, Executor>
     explicit BasicContext(ContextInfo context_info, ContextAllocators allocators,
-        ExecutorFactory executor_factory = {}, ThreadFactory thread_factory = {})
+        ExecutorFactory executor_factory = {}, Launcher thread_launcher = {})
         : m_domain_id(validate_info(context_info)),
-          m_control_executor(executor_factory.makeControlExecutor()),
-          m_cpu_executor(executor_factory.makeCpuExecutor()),
+          m_executor(executor_factory.makeExecutor()),
           m_workers(context_info.getWorkerCount(),
               std::pmr::polymorphic_allocator<Worker>{allocators.m_workers}),
-          m_queues(context_info.getQueueBindings().size(),
-              std::pmr::polymorphic_allocator<RouteBinding>{allocators.m_routes})
+          m_queues(context_info.getQueueCount(),
+              std::pmr::polymorphic_allocator<Queue>{allocators.m_routes})
     {
-        for (const auto & binding : context_info.getQueueBindings()) {
-            m_queues.emplaceBack(m_control_executor, m_cpu_executor,
-                binding.m_target == QueueTarget::eCpu);
+        for (std::size_t index = 0; index < context_info.getQueueCount(); ++index) {
+            m_queues.emplaceBack(m_executor);
         }
         try {
             for (WorkerCount index = 0; index < context_info.getWorkerCount(); ++index) {
-                m_workers.emplaceBack(m_cpu_executor, thread_factory);
+                m_workers.emplaceBack(m_executor, thread_launcher);
             }
         } catch (...) {
             this->close();
@@ -85,49 +81,49 @@ public:
     }
 
     BasicContext(const BasicContext &) = delete;
+    BasicContext(BasicContext &&) = delete;
     BasicContext & operator=(const BasicContext &) = delete;
-    ~BasicContext() noexcept { assert(this->empty()); }
-
+    BasicContext & operator=(BasicContext &&) = delete;
+public:
     static constexpr ContextStorageRequirements storageRequirements(
         WorkerCount worker_count, std::size_t queue_count) noexcept
     {
         return {storage_requirement<Worker>(worker_count),
-            storage_requirement<RouteBinding>(queue_count)};
+            storage_requirement<Queue>(queue_count)};
     }
 
     static ContextStorageRequirements storageRequirements(const ContextInfo & info) noexcept
     {
-        return storageRequirements(info.getWorkerCount(), info.getQueueBindings().size());
+        return storageRequirements(info.getWorkerCount(), info.getQueueCount());
     }
 
-    SchedulerHandle<Route> getSchedulerHandle(LogicalQueueToken token) const noexcept
+    SchedulerHandle<Executor> getSchedulerHandle(LogicalQueueToken token) const noexcept
     {
-        return SchedulerHandle<Route>{this->findLogicalQueue(token)};
+        return SchedulerHandle<Executor>{this->findLogicalQueue(token)};
     }
 
-    const LogicalQueue<Route> & findLogicalQueue(LogicalQueueToken token) const noexcept
+    const Queue & findLogicalQueue(LogicalQueueToken token) const noexcept
     {
         assert(token.getDomainId() == m_domain_id);
-        return m_queues[token.getIndex()].getLogicalQueue();
+        return m_queues[token.getIndex()];
     }
 
-    bool pollOne() noexcept { return m_control_executor.pollOne(); }
+    bool pollOne() noexcept { return m_executor.executeOne(); }
     PollReport poll(PollBudget budget = {}) noexcept
     {
-        return details::poll_executor(m_control_executor, budget);
+        return details::poll_executor(m_executor, budget);
     }
-    void run() noexcept requires stoppable_work_executor_c<ControlExecutor>
+    void run() noexcept requires stoppable_work_executor_c<Executor>
     {
-        while (m_control_executor.waitOne()) {}
+        while (m_executor.waitAndExecuteOne()) {}
     }
-    void requestStop() noexcept requires stoppable_work_executor_c<ControlExecutor>
+    void requestStop() noexcept requires stoppable_work_executor_c<Executor>
     {
-        m_control_executor.requestStop();
+        m_executor.requestStop();
     }
     void close() noexcept
     {
-        m_control_executor.close();
-        m_cpu_executor.close();
+        m_executor.close();
     }
     void joinWorkers() noexcept
     {
@@ -135,13 +131,13 @@ public:
     }
     bool empty() const noexcept
     {
-        return m_control_executor.empty() && m_cpu_executor.empty();
+        return m_executor.empty();
     }
 
 private:
     static std::uint32_t validate_info(const ContextInfo & info)
     {
-        if (info.getDomainId() == 0 || info.getQueueBindings().empty()) {
+        if (info.getDomainId() == 0 || info.getQueueCount() == 0) {
             throw std::invalid_argument{"Context requires an unconsumed configuration with routes"};
         }
         return info.getDomainId();
@@ -157,10 +153,9 @@ private:
     }
 
     std::uint32_t m_domain_id;
-    ControlExecutor m_control_executor;
-    CpuExecutor m_cpu_executor;
+    Executor m_executor;
     details::FixedCapacityVector<Worker> m_workers;
-    details::FixedCapacityVector<RouteBinding> m_queues;
+    details::FixedCapacityVector<Queue> m_queues;
 };
 
 using Context = BasicContext<>;

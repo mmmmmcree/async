@@ -20,7 +20,8 @@ class FixedCapacityVector
 {
 public:
     using Allocator = std::pmr::polymorphic_allocator<Value>;
-
+public:
+    FixedCapacityVector() = delete;
     FixedCapacityVector(std::size_t capacity, Allocator allocator)
         : m_allocator(allocator), m_capacity(capacity)
     {

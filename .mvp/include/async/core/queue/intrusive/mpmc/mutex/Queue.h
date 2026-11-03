@@ -1,22 +1,31 @@
 #pragma once
 
-#include <async/core/concepts.h>
-#include <async/core/scheduling/ScheduleNode.h>
+#include <async/core/enums.h>
+#include <async/core/queue/intrusive/ExecutionNode.h>
+#include <async/core/queue/intrusive/mpmc/queue_declarations.h>
 
 #include <cassert>
 #include <condition_variable>
 #include <mutex>
 
-namespace lcf::async {
+namespace lcf::async::queue::intrusive::mpmc {
 
-class MutexInbox
+template <>
+class Queue<AlgorithmTag::eMutex>
 {
 public:
-    using Node = ScheduleNode;
-    static constexpr bool supports_multiple_producers = true;
-    static constexpr bool supports_multiple_consumers = true;
-
-    EnqueueResult tryEnqueue(ScheduleNode & node) noexcept
+    using Executable = ExecutionNode;
+    static constexpr bool k_supports_multiple_producers = true;
+    static constexpr bool k_supports_multiple_consumers = true;
+public:
+    ~Queue() noexcept = default;
+    Queue() = default;
+    Queue(const Queue &) = delete;
+    Queue(Queue &&) = delete;
+    Queue & operator=(const Queue &) = delete;
+    Queue & operator=(Queue &&) = delete;
+public:
+    EnqueueResult tryEnqueue(ExecutionNode & node) noexcept
     {
         {
             std::lock_guard lock{m_mutex};
@@ -35,13 +44,13 @@ public:
         return EnqueueResult::eAccepted;
     }
 
-    ScheduleNode * tryPop() noexcept
+    ExecutionNode * tryPop() noexcept
     {
         std::lock_guard lock{m_mutex};
         return this->popFront();
     }
 
-    ScheduleNode * waitPop() noexcept
+    ExecutionNode * waitPop() noexcept
     {
         std::unique_lock lock{m_mutex};
         m_condition.wait(lock, [this] {
@@ -79,7 +88,7 @@ public:
 
 private:
     // The caller holds m_mutex. Never dispatch user code while holding it.
-    ScheduleNode * popFront() noexcept
+    ExecutionNode * popFront() noexcept
     {
         auto * node_p = m_head_p;
         if (not node_p) {
@@ -95,10 +104,10 @@ private:
 
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;
-    ScheduleNode * m_head_p = nullptr;
-    ScheduleNode * m_tail_p = nullptr;
+    ExecutionNode * m_head_p = nullptr;
+    ExecutionNode * m_tail_p = nullptr;
     bool m_closed = false;
     bool m_stop_requested = false;
 };
 
-} // namespace lcf::async
+} // namespace lcf::async::queue::intrusive::mpmc

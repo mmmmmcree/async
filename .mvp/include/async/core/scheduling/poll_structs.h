@@ -9,8 +9,7 @@ namespace lcf::async {
 struct PollBudget
 {
     std::size_t m_max_records = std::numeric_limits<std::size_t>::max();
-    std::chrono::steady_clock::duration m_max_duration =
-        std::chrono::steady_clock::duration::max();
+    std::chrono::steady_clock::duration m_max_duration = std::chrono::steady_clock::duration::max();
 };
 
 struct PollReport

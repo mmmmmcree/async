@@ -8,7 +8,7 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <typename Executor = BasicExecutor<>, typename Thread = std::thread>
+template <typename Executor = BasicExecutor<>, typename ThreadHandle = std::thread>
 class BasicContext;
 
 using Context = BasicContext<>;

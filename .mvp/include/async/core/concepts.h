@@ -25,90 +25,97 @@ concept operation_state_c = protocols::operation_state<Type>;
 template <typename Receiver, typename Completions>
 concept receiver_of_c = protocols::receiver_of<Receiver, Completions>;
 
-template <typename Node>
-concept schedule_node_c = requires(Node & node) {
-    { node.execute() } noexcept -> std::same_as<void>;
+template <typename Executable>
+concept executable_c = requires(Executable & executable) {
+    { executable.execute() } noexcept -> std::same_as<void>;
 };
 
 template <typename Record>
-concept schedule_record_c = requires(Record & record) {
-    { record.getScheduleNode() } noexcept;
-    requires std::is_lvalue_reference_v<decltype(record.getScheduleNode())>;
-    requires schedule_node_c<std::remove_reference_t<decltype(record.getScheduleNode())>>;
+concept work_record_c = requires(Record & record) {
+    { record.getExecutable() } noexcept;
+    requires std::is_lvalue_reference_v<decltype(record.getExecutable())>;
+    requires executable_c<std::remove_reference_t<decltype(record.getExecutable())>>;
 };
 
-template <typename Executor, typename Record>
-concept executor_c = schedule_record_c<Record> and
-    requires(Executor & executor, Record & record) {
-        { executor.tryEnqueue(record) } noexcept -> std::same_as<EnqueueResult>;
+template <typename Submitter, typename Record>
+concept record_submitter_c = work_record_c<Record> and
+    requires(Submitter & submitter, Record & record) {
+        { submitter.tryEnqueue(record) } noexcept -> std::same_as<EnqueueResult>;
     };
 
 template <typename Executor>
 concept work_executor_c = requires(Executor & executor, const Executor & const_executor) {
-    { executor.pollOne() } noexcept -> std::same_as<bool>;
+    { executor.executeOne() } noexcept -> std::same_as<bool>;
     { executor.close() } noexcept -> std::same_as<void>;
     { const_executor.empty() } noexcept -> std::same_as<bool>;
 };
 
 template <typename Executor>
-concept blocking_work_executor_c = work_executor_c<Executor> and
+concept waiting_work_executor_c = work_executor_c<Executor> and
     requires(Executor & executor) {
-        { executor.waitOne() } noexcept -> std::same_as<bool>;
+        { executor.waitAndExecuteOne() } noexcept -> std::same_as<bool>;
     };
 
 template <typename Executor>
-concept multi_worker_executor_c = blocking_work_executor_c<Executor> and
+concept multi_worker_executor_c = waiting_work_executor_c<Executor> and
     requires {
-        requires Executor::supports_multiple_workers;
+        requires std::same_as<decltype(Executor::k_supports_multiple_workers), const bool>;
+        requires Executor::k_supports_multiple_workers;
     };
 
 template <typename Executor>
-concept stoppable_work_executor_c = blocking_work_executor_c<Executor> and
+concept stoppable_work_executor_c = waiting_work_executor_c<Executor> and
     requires(Executor & executor) {
         { executor.requestStop() } noexcept -> std::same_as<void>;
     };
 
-template <typename Factory, typename ControlExecutor, typename CpuExecutor>
-concept work_executor_factory_c = work_executor_c<ControlExecutor> and
-    work_executor_c<CpuExecutor> and
+template <typename Factory, typename Executor>
+concept context_executor_factory_c = work_executor_c<Executor> and
     requires(Factory & factory) {
-        { factory.makeControlExecutor() } -> std::same_as<ControlExecutor>;
-        { factory.makeCpuExecutor() } -> std::same_as<CpuExecutor>;
+        { factory.makeExecutor() } -> std::same_as<Executor>;
     };
 
 template <typename Queue>
-concept schedule_queue_c = requires { typename Queue::Node; } and
-    schedule_node_c<typename Queue::Node> and
-    requires(Queue & queue, const Queue & const_queue, typename Queue::Node & node) {
-        { queue.tryEnqueue(node) } noexcept -> std::same_as<EnqueueResult>;
-        { queue.tryPop() } noexcept -> std::same_as<typename Queue::Node *>;
+concept work_queue_c = requires {
+        typename Queue::Executable;
+        requires std::same_as<decltype(Queue::k_supports_multiple_producers), const bool>;
+        requires std::same_as<decltype(Queue::k_supports_multiple_consumers), const bool>;
+        typename std::bool_constant<Queue::k_supports_multiple_producers>;
+        typename std::bool_constant<Queue::k_supports_multiple_consumers>;
+    } and executable_c<typename Queue::Executable> and
+    requires(Queue & queue, const Queue & const_queue, typename Queue::Executable & executable) {
+        { queue.tryEnqueue(executable) } noexcept -> std::same_as<EnqueueResult>;
+        { queue.tryPop() } noexcept -> std::same_as<typename Queue::Executable *>;
         { queue.close() } noexcept -> std::same_as<void>;
         { const_queue.empty() } noexcept -> std::same_as<bool>;
     };
 
 template <typename Queue>
-concept blocking_schedule_queue_c = schedule_queue_c<Queue> and
+concept waiting_work_queue_c = work_queue_c<Queue> and
     requires(Queue & queue) {
-        { queue.waitPop() } noexcept -> std::same_as<typename Queue::Node *>;
+        { queue.waitPop() } noexcept -> std::same_as<typename Queue::Executable *>;
     };
 
 template <typename Queue>
-concept stoppable_schedule_queue_c = blocking_schedule_queue_c<Queue> and
+concept stoppable_work_queue_c = waiting_work_queue_c<Queue> and
     requires(Queue & queue) {
         { queue.requestStop() } noexcept -> std::same_as<void>;
     };
 
-template <typename Thread>
-concept thread_c = std::destructible<Thread> and
-    requires(Thread & thread, const Thread & const_thread) {
-        { const_thread.joinable() } noexcept -> std::same_as<bool>;
-        { thread.join() } -> std::same_as<void>;
+// Join capability alone makes no claim about the kind of execution agent.
+template <typename Handle>
+concept join_handle_c = std::destructible<Handle> and
+    requires(Handle & handle, const Handle & const_handle) {
+        { const_handle.joinable() } noexcept -> std::same_as<bool>;
+        { handle.join() } -> std::same_as<void>;
     };
 
-template <typename Factory, typename Thread>
-concept thread_factory_c = thread_c<Thread> and
-    requires(Factory & factory, ThreadEntry entry_f, void * state_p) {
-        { factory(entry_f, state_p) } -> std::same_as<Thread>;
+// Semantic contract: launch entry exactly once on a separate thread, and return
+// its join handle. A failed launch must leave no entry or thread in flight.
+template <typename Launcher, typename ThreadHandle>
+concept thread_launcher_c = join_handle_c<ThreadHandle> and
+    requires(Launcher & launcher, ThreadEntry entry_f, void * state_p) {
+        { launcher(entry_f, state_p) } -> std::same_as<ThreadHandle>;
     };
 
 } // namespace lcf::async

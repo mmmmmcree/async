@@ -1,7 +1,7 @@
 #pragma once
 
-#include <async/core/operations.h>
-#include <async/core/scheduling/queue/MutexInbox.h>
+#include <async/core/concepts.h>
+#include <async/core/queue/intrusive/mpmc/Queue.h>
 
 #include <cassert>
 #include <concepts>
@@ -9,90 +9,74 @@
 
 namespace lcf::async {
 
-template <schedule_queue_c Queue = MutexInbox>
+template <work_queue_c Queue = queue::intrusive::mpmc::Queue<>>
 class BasicExecutor
 {
 public:
-    static constexpr bool supports_multiple_producers = [] {
-        if constexpr (requires { Queue::supports_multiple_producers; }) {
-            return Queue::supports_multiple_producers;
-        } else {
-            return false;
-        }
-    }();
-
-    static constexpr bool supports_multiple_workers = [] {
-        if constexpr (requires { Queue::supports_multiple_consumers; }) {
-            return Queue::supports_multiple_consumers;
-        } else {
-            return false;
-        }
-    }();
-
+    static constexpr bool k_supports_multiple_producers = Queue::k_supports_multiple_producers;
+    static constexpr bool k_supports_multiple_workers = Queue::k_supports_multiple_consumers;
+public:
+    ~BasicExecutor() noexcept { assert(m_queue.empty()); }
+    BasicExecutor() requires std::default_initializable<Queue> = default;
     template <typename... QueueArgs>
-        requires std::constructible_from<Queue, QueueArgs...>
+        requires (sizeof...(QueueArgs) > 0) and std::constructible_from<Queue, QueueArgs...>
     explicit BasicExecutor(QueueArgs &&... queue_args)
         : m_queue(std::forward<QueueArgs>(queue_args)...) {}
 
     BasicExecutor(const BasicExecutor &) = delete;
+    BasicExecutor(BasicExecutor &&) = delete;
     BasicExecutor & operator=(const BasicExecutor &) = delete;
-
-    ~BasicExecutor() noexcept { assert(m_queue.empty()); }
-
-    template <schedule_record_c Record>
-        requires requires(Queue & queue, Record & record) {
-            { queue.tryEnqueue(get_schedule_node(record)) } noexcept
-                -> std::same_as<EnqueueResult>;
-        }
+    BasicExecutor & operator=(BasicExecutor &&) = delete;
+public:
+    template <work_record_c Record>
+    requires requires(Queue & queue, Record & record) {
+        { queue.tryEnqueue(record.getExecutable()) } noexcept -> std::same_as<EnqueueResult>;
+    }
     EnqueueResult tryEnqueue(Record & record) noexcept
     {
-        return m_queue.tryEnqueue(get_schedule_node(record));
+        return m_queue.tryEnqueue(record.getExecutable());
     }
-
-    bool pollOne() noexcept
+    bool executeOne() noexcept
     {
-        if (auto * node_p = m_queue.tryPop()) {
-            node_p->execute();
+        if (auto * executable_p = m_queue.tryPop()) {
+            executable_p->execute();
             return true;
         }
         return false;
     }
-
-    bool waitOne() noexcept
-        requires blocking_schedule_queue_c<Queue>
+    bool waitAndExecuteOne() noexcept
+    requires waiting_work_queue_c<Queue>
     {
-        if (auto * node_p = m_queue.waitPop()) {
-            node_p->execute();
+        if (auto * executable_p = m_queue.waitPop()) {
+            executable_p->execute();
             return true;
         }
         return false;
     }
-
     void requestStop() noexcept
-        requires stoppable_schedule_queue_c<Queue>
+        requires stoppable_work_queue_c<Queue>
     {
         m_queue.requestStop();
     }
-
     void close() noexcept { m_queue.close(); }
     bool empty() const noexcept { return m_queue.empty(); }
-
 private:
     Queue m_queue;
 };
 
-template <work_executor_c ControlExecutor, work_executor_c CpuExecutor = ControlExecutor>
-struct DefaultExecutorFactory
+template <work_executor_c Executor>
+struct DefaultContextExecutorFactory
 {
-    ControlExecutor makeControlExecutor() const
-        requires std::default_initializable<ControlExecutor>
+    ~DefaultContextExecutorFactory() noexcept = default;
+    DefaultContextExecutorFactory() noexcept = default;
+    DefaultContextExecutorFactory(const DefaultContextExecutorFactory &) noexcept = default;
+    DefaultContextExecutorFactory(DefaultContextExecutorFactory &&) noexcept = default;
+    DefaultContextExecutorFactory & operator=(const DefaultContextExecutorFactory &) noexcept = default;
+    DefaultContextExecutorFactory & operator=(DefaultContextExecutorFactory &&) noexcept = default;
+public:
+    Executor makeExecutor() const requires std::default_initializable<Executor>
     {
-        return ControlExecutor{};
-    }
-
-    CpuExecutor makeCpuExecutor() const requires std::default_initializable<CpuExecutor>
-    {
-        return CpuExecutor{};
+        return Executor{};
     }
 };
 

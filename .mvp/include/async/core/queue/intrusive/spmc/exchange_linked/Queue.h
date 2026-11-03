@@ -1,7 +1,8 @@
 #pragma once
 
 #include <async/core/enums.h>
-#include <async/core/scheduling/ScheduleNode.h>
+#include <async/core/queue/intrusive/ExecutionNode.h>
+#include <async/core/queue/intrusive/spmc/queue_declarations.h>
 
 #include <atomic>
 #include <cstddef>
@@ -9,31 +10,36 @@
 #include <exception>
 #include <mutex>
 
-namespace lcf::async {
+namespace lcf::async::queue::intrusive::spmc {
 
-class FastProducerSpmcInbox
+template <>
+class Queue<AlgorithmTag::eExchangeLinked>
 {
 public:
-    using Node = ScheduleNode;
-    static constexpr bool supports_multiple_producers = false;
-    static constexpr bool supports_multiple_consumers = true;
+    using Executable = ExecutionNode;
+    static constexpr bool k_supports_multiple_producers = false;
+    static constexpr bool k_supports_multiple_consumers = true;
 
-    static_assert(std::atomic<Node *>::is_always_lock_free,
-        "FastProducerSpmcInbox requires lock-free pointer atomics");
+    static_assert(std::atomic<ExecutionNode *>::is_always_lock_free,
+        "Queue<AlgorithmTag::eExchangeLinked> requires lock-free pointer atomics");
     static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
-        "FastProducerSpmcInbox requires lock-free 64-bit atomics");
+        "Queue<AlgorithmTag::eExchangeLinked> requires lock-free 64-bit atomics");
     static_assert(std::atomic<unsigned>::is_always_lock_free,
-        "FastProducerSpmcInbox requires lock-free unsigned atomics");
+        "Queue<AlgorithmTag::eExchangeLinked> requires lock-free unsigned atomics");
     static_assert(std::atomic<std::size_t>::is_always_lock_free,
-        "FastProducerSpmcInbox requires lock-free size atomics");
+        "Queue<AlgorithmTag::eExchangeLinked> requires lock-free size atomics");
 
-    FastProducerSpmcInbox() noexcept
+public:
+    ~Queue() noexcept = default;
+    Queue() noexcept
         : m_stub{nullptr, &execute_stub}, m_head_p{&m_stub}, m_tail_p(&m_stub) {}
 
-    FastProducerSpmcInbox(const FastProducerSpmcInbox &) = delete;
-    FastProducerSpmcInbox & operator=(const FastProducerSpmcInbox &) = delete;
-
-    EnqueueResult tryEnqueue(Node & node) noexcept
+    Queue(const Queue &) = delete;
+    Queue(Queue &&) = delete;
+    Queue & operator=(const Queue &) = delete;
+    Queue & operator=(Queue &&) = delete;
+public:
+    EnqueueResult tryEnqueue(ExecutionNode & node) noexcept
     {
         auto state = m_lifecycle.load(std::memory_order_acquire);
         if ((state & k_closed_bit) != 0) {
@@ -70,7 +76,7 @@ public:
         return EnqueueResult::eAccepted;
     }
 
-    Node * tryPop() noexcept
+    ExecutionNode * tryPop() noexcept
     {
         std::lock_guard lock{m_consumer_mutex};
 #if defined(LCF_ASYNC_ENABLE_TEST_HOOKS)
@@ -81,7 +87,7 @@ public:
         return this->popFront();
     }
 
-    Node * waitPop() noexcept
+    ExecutionNode * waitPop() noexcept
     {
         for (;;) {
             if (m_stop_requested.load(std::memory_order_acquire)) {
@@ -131,7 +137,7 @@ public:
 
 private:
 #if defined(LCF_ASYNC_ENABLE_TEST_HOOKS)
-    friend struct FastProducerSpmcInboxTestAccess;
+    friend struct QueueTestAccess;
     using TestHook = void (*)(void *) noexcept;
     TestHook m_after_consumer_lock_hook_f = nullptr;
     void * m_after_consumer_lock_hook_state_p = nullptr;
@@ -144,7 +150,7 @@ private:
 
     static void execute_stub(void *) noexcept {}
 
-    Node * popFront() noexcept
+    ExecutionNode * popFront() noexcept
     {
         auto * tail_p = m_tail_p;
         auto * next_p = tail_p->getNext();
@@ -179,7 +185,7 @@ private:
         return nullptr;
     }
 
-    Node * releaseNode(Node & node) noexcept
+    ExecutionNode * releaseNode(ExecutionNode & node) noexcept
     {
         node.clearQueueState();
         m_queued_count.fetch_sub(1, std::memory_order_relaxed);
@@ -198,13 +204,13 @@ private:
     }
 
     mutable std::mutex m_consumer_mutex;
-    Node m_stub;
-    std::atomic<Node *> m_head_p;
-    Node * m_tail_p;
+    ExecutionNode m_stub;
+    std::atomic<ExecutionNode *> m_head_p;
+    ExecutionNode * m_tail_p;
     std::atomic<std::size_t> m_queued_count{0};
     std::atomic<std::uint64_t> m_wake_sequence{0};
     std::atomic<unsigned> m_lifecycle{0};
     std::atomic<bool> m_stop_requested{false};
 };
 
-} // namespace lcf::async
+} // namespace lcf::async::queue::intrusive::spmc
