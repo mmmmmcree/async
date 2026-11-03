@@ -57,8 +57,8 @@ concept blocking_work_executor_c = work_executor_c<Executor> and
     };
 
 template <typename Executor>
-concept multi_worker_executor_c = blocking_work_executor_c<Executor>
-    && requires {
+concept multi_worker_executor_c = blocking_work_executor_c<Executor> and
+    requires {
         requires Executor::supports_multiple_workers;
     };
 
@@ -69,8 +69,8 @@ concept stoppable_work_executor_c = blocking_work_executor_c<Executor> and
     };
 
 template <typename Factory, typename ControlExecutor, typename CpuExecutor>
-concept work_executor_factory_c = work_executor_c<ControlExecutor>
-    and work_executor_c<CpuExecutor> and
+concept work_executor_factory_c = work_executor_c<ControlExecutor> and
+    work_executor_c<CpuExecutor> and
     requires(Factory & factory) {
         { factory.makeControlExecutor() } -> std::same_as<ControlExecutor>;
         { factory.makeCpuExecutor() } -> std::same_as<CpuExecutor>;

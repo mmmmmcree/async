@@ -133,54 +133,42 @@ int main()
             async::LogicalQueue caller_queue{caller_executor};
 
             auto caller_scheduler = async::SchedulerHandle{caller_queue};
-            auto left = ex::schedule(left_scheduler)
-                | ex::then([] {
+            auto left = ex::schedule(left_scheduler) |
+                ex::then([] {
                     std::this_thread::sleep_for(1s);
                     return BranchResult{20, std::this_thread::get_id()};
                 });
 
-            auto right = ex::schedule(right_scheduler)
-                | ex::then([] {
+            auto right = ex::schedule(right_scheduler) |
+                ex::then([] {
                     std::this_thread::sleep_for(1s);
                     return BranchResult{22, std::this_thread::get_id()};
                 });
 
-            auto graph = ex::when_all(std::move(left), std::move(right))
-                | ex::continues_on(control_scheduler)
-                | ex::then([](BranchResult lhs, BranchResult rhs) noexcept {
+            auto graph = ex::when_all(std::move(left), std::move(right)) |
+                ex::continues_on(control_scheduler) |
+                ex::then([](BranchResult lhs, BranchResult rhs) noexcept {
                     // Context's owner thread consumes the merged values.
                     return GraphResult{
                         lhs.m_value + rhs.m_value,
                         lhs.m_worker_thread,
                         rhs.m_worker_thread,
                         std::this_thread::get_id()};
-                })
-                | ex::continues_on(caller_scheduler);
+                }) | ex::continues_on(caller_scheduler);
 
             bool caller_completed = false;
-            auto operation = ex::connect(
-                std::move(graph),
-                Receiver{
-                    &context,
-                    &outcome,
-                    &caller_completed,
-                    caller_thread});
+            auto operation = ex::connect(std::move(graph), Receiver{&context, &outcome, &caller_completed, caller_thread});
 
             ex::start(operation);
 
             std::size_t heartbeat_count = 0;
-
             while (not caller_completed) {
-                std::cout << "caller heartbeat: "
-                          << ++heartbeat_count << '\n';
-
+                std::cout << "caller heartbeat: " << ++heartbeat_count << '\n';
                 caller_executor.pollOne();
-
                 if (not caller_completed) {
                     std::this_thread::sleep_for(100ms);
                 }
             }
-
             caller_executor.close();
         }};
     } catch (...) {

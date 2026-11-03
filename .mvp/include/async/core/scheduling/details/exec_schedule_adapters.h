@@ -20,19 +20,17 @@ class ScheduleOperation
 {
 public:
     using operation_state_concept = protocols::operation_state_t;
-
+public:
     ScheduleOperation(Handle handle, Receiver receiver)
         noexcept(std::is_nothrow_copy_constructible_v<Handle>
             && std::is_nothrow_move_constructible_v<Receiver>)
         : m_handle(handle), m_receiver(std::move(receiver)), m_node(this, &execute) {}
-
     ScheduleOperation(const ScheduleOperation &) = delete;
     ScheduleOperation & operator=(const ScheduleOperation &) = delete;
     ScheduleOperation(ScheduleOperation &&) = delete;
     ScheduleOperation & operator=(ScheduleOperation &&) = delete;
-
+public:
     ScheduleNode & getScheduleNode() noexcept { return m_node; }
-
     void start() & noexcept
         requires executor_c<Handle, ScheduleOperation>
     {
@@ -41,7 +39,6 @@ public:
         }
         exec::set_stopped(std::move(m_receiver));
     }
-
 private:
     static void execute(void * state_p) noexcept
     {
@@ -53,7 +50,7 @@ private:
         }
         exec::set_value(std::move(operation.m_receiver));
     }
-
+private:
     Handle m_handle;
     Receiver m_receiver;
     ScheduleNode m_node;
@@ -76,9 +73,8 @@ struct ScheduleSender
     };
 
     Environment get_env() const noexcept { return {m_scheduler}; }
-
     template <receiver_of_c<ScheduleCompletions> Receiver>
-        requires executor_c<Handle, ScheduleOperation<Handle, Receiver>>
+    requires executor_c<Handle, ScheduleOperation<Handle, Receiver>>
     auto connect(Receiver receiver) const
     {
         return ScheduleOperation<Handle, Receiver>{m_scheduler, std::move(receiver)};
