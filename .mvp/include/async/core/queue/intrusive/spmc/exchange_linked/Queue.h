@@ -83,11 +83,11 @@ public:
         for (;;) {
             if (m_stop_requested.load(std::memory_order_acquire)) { return nullptr; }
             if (auto * node_p = this->tryPop()) { return node_p; }
-            if (this->isClosedAndQuiescent() and this->empty()) { return nullptr; }
+            if (this->isClosedAndQuiescent() and this->isEmpty()) { return nullptr; }
             const auto observed = m_wake_sequence.load(std::memory_order_acquire);
             if (m_stop_requested.load(std::memory_order_acquire)) { return nullptr; }
             if (auto * node_p = this->tryPop()) { return node_p; }
-            if (this->isClosedAndQuiescent() and this->empty()) { return nullptr; }
+            if (this->isClosedAndQuiescent() and this->isEmpty()) { return nullptr; }
             m_wake_sequence.wait(observed, std::memory_order_acquire);
         }
     }
@@ -105,7 +105,7 @@ public:
         }
         this->notifyWaiters();
     }
-    bool empty() const noexcept
+    bool isEmpty() const noexcept
     {
         return m_queued_count.load(std::memory_order_relaxed) == 0;
     }

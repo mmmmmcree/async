@@ -16,7 +16,7 @@ public:
     static constexpr bool k_supports_multiple_producers = Queue::k_supports_multiple_producers;
     static constexpr bool k_supports_multiple_workers = Queue::k_supports_multiple_consumers;
 public:
-    ~BasicExecutor() noexcept { assert(m_queue.empty()); }
+    ~BasicExecutor() noexcept { assert(m_queue.isEmpty()); }
     BasicExecutor() requires std::default_initializable<Queue> = default;
     template <typename... QueueArgs>
     requires (sizeof...(QueueArgs) > 0) and std::constructible_from<Queue, QueueArgs...>
@@ -54,7 +54,7 @@ public:
         m_queue.requestStop();
     }
     void close() noexcept { m_queue.close(); }
-    bool empty() const noexcept { return m_queue.empty(); }
+    bool isEmpty() const noexcept { return m_queue.isEmpty(); }
 private:
     Queue m_queue;
 };

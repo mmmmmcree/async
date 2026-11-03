@@ -1,11 +1,10 @@
 #pragma once
 
 #include "ContextInfo.h"
+#include "poll_structs.h"
 #include <async/core/details/containers/FixedCapacityVector.h>
-#include <async/core/scheduling/poll_structs.h>
 #include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
-#include <async/core/scheduling/LogicalQueue.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 
 #include <cassert>
@@ -44,15 +43,13 @@ PollReport poll_executor(Executor & executor, PollBudget budget = {}) noexcept
 
 } // namespace details
 
-template <multi_worker_executor_c Executor = BasicExecutor<>,
-    join_handle_c ThreadHandle = std::thread>
+template <multi_worker_executor_c Executor = BasicExecutor<>, join_handle_c ThreadHandle = std::thread>
 class BasicContext
 {
-public:
     using Worker = BasicWorker<Executor, ThreadHandle>;
-    using Queue = LogicalQueue<Executor>;
+    using WorkerList = details::FixedCapacityVector<Worker>;
 public:
-    ~BasicContext() noexcept { assert(this->empty()); }
+    ~BasicContext() noexcept { assert(this->isEmpty()); }
     BasicContext() = delete;
     template <typename ExecutorFactory = DefaultContextExecutorFactory<Executor>,
         thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
@@ -62,13 +59,8 @@ public:
         : m_domain_id(validate_info(context_info)),
           m_executor(executor_factory.makeExecutor()),
           m_workers(context_info.getWorkerCount(),
-              std::pmr::polymorphic_allocator<Worker>{allocators.m_workers}),
-          m_queues(context_info.getQueueCount(),
-              std::pmr::polymorphic_allocator<Queue>{allocators.m_routes})
+              std::pmr::polymorphic_allocator<Worker>{allocators.m_workers})
     {
-        for (std::size_t index = 0; index < context_info.getQueueCount(); ++index) {
-            m_queues.emplaceBack(m_executor);
-        }
         try {
             for (WorkerCount index = 0; index < context_info.getWorkerCount(); ++index) {
                 m_workers.emplaceBack(m_executor, thread_launcher);
@@ -86,26 +78,36 @@ public:
     BasicContext & operator=(BasicContext &&) = delete;
 public:
     static constexpr ContextStorageRequirements storageRequirements(
-        WorkerCount worker_count, std::size_t queue_count) noexcept
+        WorkerCount worker_count) noexcept
     {
-        return {storage_requirement<Worker>(worker_count),
-            storage_requirement<Queue>(queue_count)};
+        return {storage_requirement<Worker>(worker_count)};
     }
 
     static ContextStorageRequirements storageRequirements(const ContextInfo & info) noexcept
     {
-        return storageRequirements(info.getWorkerCount(), info.getQueueCount());
+        return storageRequirements(info.getWorkerCount());
     }
-
-    SchedulerHandle<Executor> getSchedulerHandle(LogicalQueueToken token) const noexcept
+    static std::uint32_t validate_info(const ContextInfo & info)
     {
-        return SchedulerHandle<Executor>{this->findLogicalQueue(token)};
+        if (info.getDomainId() == 0 || info.getSchedulerCount() == 0) {
+            throw std::invalid_argument{"Context requires an unconsumed configuration with schedulers"};
+        }
+        return info.getDomainId();
     }
 
-    const Queue & findLogicalQueue(LogicalQueueToken token) const noexcept
+    template <std::destructible Value>
+    static constexpr StorageRequirement storage_requirement(std::size_t count) noexcept
+    {
+        if (count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
+            std::terminate();
+        }
+        return {count * sizeof(Value), alignof(Value)};
+    }
+public:
+    SchedulerHandle<Executor> getSchedulerHandle(SchedulerToken token) const noexcept
     {
         assert(token.getDomainId() == m_domain_id);
-        return m_queues[token.getIndex()];
+        return SchedulerHandle<Executor>{m_executor, token};
     }
 
     bool pollOne() noexcept { return m_executor.executeOne(); }
@@ -129,33 +131,15 @@ public:
     {
         for (auto & worker : m_workers.values()) { worker.join(); }
     }
-    bool empty() const noexcept
+    bool isEmpty() const noexcept
     {
-        return m_executor.empty();
+        return m_executor.isEmpty();
     }
 
 private:
-    static std::uint32_t validate_info(const ContextInfo & info)
-    {
-        if (info.getDomainId() == 0 || info.getQueueCount() == 0) {
-            throw std::invalid_argument{"Context requires an unconsumed configuration with routes"};
-        }
-        return info.getDomainId();
-    }
-
-    template <std::destructible Value>
-    static constexpr StorageRequirement storage_requirement(std::size_t count) noexcept
-    {
-        if (count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
-            std::terminate();
-        }
-        return {count * sizeof(Value), alignof(Value)};
-    }
-
     std::uint32_t m_domain_id;
-    Executor m_executor;
-    details::FixedCapacityVector<Worker> m_workers;
-    details::FixedCapacityVector<Queue> m_queues;
+    mutable Executor m_executor;
+    WorkerList m_workers;
 };
 
 using Context = BasicContext<>;

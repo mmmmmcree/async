@@ -47,7 +47,7 @@ template <typename Executor>
 concept work_executor_c = requires(Executor & executor, const Executor & const_executor) {
     { executor.executeOne() } noexcept -> std::same_as<bool>;
     { executor.close() } noexcept -> std::same_as<void>;
-    { const_executor.empty() } noexcept -> std::same_as<bool>;
+    { const_executor.isEmpty() } noexcept -> std::same_as<bool>;
 };
 
 template <typename Executor>
@@ -87,7 +87,7 @@ concept work_queue_c = requires {
         { queue.tryEnqueue(executable) } noexcept -> std::same_as<EnqueueResult>;
         { queue.tryPop() } noexcept -> std::same_as<typename Queue::Executable *>;
         { queue.close() } noexcept -> std::same_as<void>;
-        { const_queue.empty() } noexcept -> std::same_as<bool>;
+        { const_queue.isEmpty() } noexcept -> std::same_as<bool>;
     };
 
 template <typename Queue>

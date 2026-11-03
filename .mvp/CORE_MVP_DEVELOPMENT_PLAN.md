@@ -4,7 +4,7 @@
 
 ## 1. 最终验收示例
 
-调用方子线程是 Context 的唯一 producer，通过 addQueue 注册的两个逻辑目标启动独立 sender，共享 SPMC Executor 由 N 个同类 Worker 与宿主 run 共同驱动。when_all 合流后继续计算，再通过 caller scheduler 返回调用方。业务不指定线程，不承担同步控制；gate 仅用于 verify 的并行性测试。本 MVP 不依赖 C++ coroutine。
+调用方子线程是 Context 的唯一 producer，通过 addScheduler 注册的两个逻辑目标启动独立 sender，共享 SPMC Executor 由 N 个同类 Worker 与宿主 run 共同驱动。when_all 合流后继续计算，再通过 caller scheduler 返回调用方。业务不指定线程，不承担同步控制；gate 仅用于 verify 的并行性测试。本 MVP 不依赖 C++ coroutine。
 
 ```cpp
 #include <async/async.h>
@@ -117,27 +117,21 @@ private:
 int main()
 {
     constexpr async::WorkerCount k_worker_count = 2;
-    constexpr std::size_t k_queue_count = 2;
     const auto main_thread = std::this_thread::get_id();
 
     async::ContextInfo info{k_worker_count};
 
-    const auto left_token = info.addQueue();
-    const auto right_token = info.addQueue();
+    const auto left_token = info.addScheduler();
+    const auto right_token = info.addScheduler();
 
-    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count, k_queue_count);
+    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count);
     alignas(k_storage.m_workers.m_alignment)
         std::array<std::byte, k_storage.m_workers.m_bytes> worker_bytes;
-    alignas(k_storage.m_routes.m_alignment)
-        std::array<std::byte, k_storage.m_routes.m_bytes> route_bytes;
     std::pmr::monotonic_buffer_resource worker_arena{
         worker_bytes.data(), worker_bytes.size(), std::pmr::null_memory_resource()};
-    std::pmr::monotonic_buffer_resource route_arena{
-        route_bytes.data(), route_bytes.size(), std::pmr::null_memory_resource()};
 
     ExampleContext context{std::move(info), async::ContextAllocators{
-        std::pmr::polymorphic_allocator<std::byte>{&worker_arena},
-        std::pmr::polymorphic_allocator<std::byte>{&route_arena}}};
+        std::pmr::polymorphic_allocator<std::byte>{&worker_arena}}};
 
     auto left_scheduler = context.getSchedulerHandle(left_token);
     auto right_scheduler = context.getSchedulerHandle(right_token);
@@ -152,9 +146,7 @@ int main()
 
             // The caller owns and drives this return executor independently of Context.
             async::BasicExecutor<> caller_executor;
-            async::LogicalQueue caller_queue{caller_executor};
-
-            auto caller_scheduler = async::SchedulerHandle{caller_queue};
+            auto caller_scheduler = async::SchedulerHandle{caller_executor};
             auto left = ex::schedule(left_scheduler) |
                 ex::then([] {
                     std::this_thread::sleep_for(1s);
@@ -230,7 +222,7 @@ int main()
 ```
 
 ```text
-调用方 connect/start → 两个逻辑队列 → 共享 Executor
+调用方 connect/start → 两个逻辑调度目标 → 共享 Executor
                                      ↓ 任意可用执行线程
                                 两个独立分支 → when_all → then：20 + 22
                                      ↓ continues_on(caller_scheduler)
@@ -250,19 +242,19 @@ caller_completed 只在调用方线程读写；宿主通过 requestStop 唤醒�
 | 一个 Executor、N 个同类 Worker 与宿主 poll/run 共同执行 | Worker 动态增删、work stealing、异构执行域映射 |
 | 调用方直接拥有和驱动返回 Executor；复用同一 scheduler adapter | 多种外部 render/gfx executor 的通用注册与 Context 借用 API |
 | 默认 queue::intrusive::mpmc::Queue<> MPMC；示例显式选择 queue::intrusive::spmc::Queue<> SPMC | non_intrusive 预分配有界指针队列及 record/hook 适配、eFull 完成语义、多 producer 独立 lane 和可配置等待策略 |
-| addQueue 登记稳定逻辑身份，全部共用 Executor | 可选 QueueConfig 的优先级、公平性、并发上限、容量与亲和性 |
+| addScheduler 登记稳定逻辑身份，全部共用 Executor | 可选 QueueConfig 的优先级、公平性、并发上限、容量与亲和性 |
 | Core 可执行对象/record/submitter/executor/queue concepts；标准 scheduler adapter | Task、timer、取消 registration、expected 与 frame 策略 |
 | 显式 PMR、内嵌 operation/node、构造回滚、关闭/drain/join | receiver allocator 覆盖、无异常 typed storage 和资源失败交付 |
 
 ### 2.2 Executor 与 Workers 的关系
 
-Context 内嵌一个 Executor，N 个同类 BasicWorker 共享它；poll/run 的调用线程也可加入消费。LogicalQueue 只提供稳定目标身份，所有逻辑队列共用该 Executor，不区分 control/CPU，不保存 Worker 下标。零 Worker 配置通过同一个 addQueue 登记，完全由宿主 poll/run 驱动。
+Context 内嵌一个 Executor，N 个同类 BasicWorker 共享它；poll/run 的调用线程也可加入消费。SchedulerHandle 自带稳定逻辑身份并直接引用该 Executor，不区分 control/CPU，不保存 Worker 下标。零 Worker 配置通过同一个 addScheduler 登记，完全由宿主 poll/run 驱动。
 
 默认 Context 使用 queue::intrusive::mpmc::Queue<>，支持多 producer。示例 Context 使用 queue::intrusive::spmc::Queue<>，caller 是整个共享 Queue 的唯一 producer；后台 Worker 和主线程 run 都是 consumer。独立的 caller_executor 使用 queue::intrusive::mpmc::Queue<>，只有调用方驱动它执行最终 Receiver。
 
 SPMC 提交不分配、不获取 consumer mutex，原子步骤固定。consumer 在自身 mutex 下领取；发布缺口返回空，发布完成后通知等待者。close 等待在途提交完成后唤醒；关闭且 producer 不再发布、队列为空时才退出。通知、抢占与平台调度影响墙钟时间，不宣称通用硬实时上界。
 
-run 不保证主线程亲和性；需要固定 owner 时，当前使用独立的零 Worker Context 或自行驱动的 Executor。后续按需求加入 addQueue(QueueConfig)，表达优先级、并发度、亲和性和独立入口。SchedulerHandle 不拥有引用的 LogicalQueue 或 Executor，Context 不关闭调用方独立返回域。
+run 不保证主线程亲和性；需要固定 owner 时，当前使用独立的零 Worker Context 或自行驱动的 Executor。后续按需求加入 addScheduler(QueueConfig)，表达优先级、并发度、亲和性和独立入口。SchedulerHandle 不拥有 Executor，Context 不关闭调用方独立返回域。
 
 ### 2.3 run、requestStop、close、join 的区别
 
@@ -274,7 +266,7 @@ run 不保证主线程亲和性；需要固定 owner 时，当前使用独立的
 | Context::close() | 关闭新准入并唤醒等待者；未停止的驱动者继续排空；不直接执行 callback |
 | Context::joinWorkers() | 等待自有 Worker 退出；宿主先 close 或 requestStop，禁止 join 自身 |
 
-停止请求先于 run 也有效，MVP 不重置停止状态。已取出的 record 执行至返回，其余节点仍在 Queue；若已 requestStop，宿主须显式 poll/drain，不能依赖 close 重新启动 Worker。未停止时 close 后的等待驱动排空已接纳工作再退出。empty 只表示排队为空，不证明 root 或正在执行的 callback 已完成。
+停止请求先于 run 也有效，MVP 不重置停止状态。已取出的 record 执行至返回，其余节点仍在 Queue；若已 requestStop，宿主须显式 poll/drain，不能依赖 close 重新启动 Worker。未停止时 close 后的等待驱动排空已接纳工作再退出。isEmpty 只表示排队为空，不证明 root 或正在执行的 callback 已完成。
 
 默认 queue::intrusive::mpmc::Queue<> 在同一 mutex 下维护等待 predicate 与队列状态，SPMC 使用持久停止位及唤醒序号；虚假唤醒须重查状态。timer 与可配置等待策略后续加入，不在内部用固定 sleep/yield 代替唤醒协议。
 
@@ -284,7 +276,7 @@ run 不保证主线程亲和性；需要固定 owner 时，当前使用独立的
 
 正常验收保持目标 executors 准入，使用不抛异常的 value/error 存储和移动，因此最后的 `continues_on(caller_scheduler)` 把上游 value/error/stopped 都交给调用方线程。返回 scheduler 拒收或 completion 存储/转移抛异常是独立失败边界，不能假定失败仍在目标线程交付；另测恰好一次完成，不在来源线程访问 owner 专有状态。
 
-本例只有一个 root。所有 executors 保持有效并被驱动 → 最终 Receiver 写入 Outcome/调用方 bool 并请求停止 → 主线程 run 返回后 join 调用方 → 调用方 executeOne 返回，operation/route/executor/resource 可销毁 → Context close/join workers → 释放 Context 和资源。run 返回不等于 Receiver 已经返回，不能省掉 join。多个 root 时由 root owner 计数，最后一个 root 才请求停止；空队列、一个 Receiver 完成或 requestStop 本身都不能代替 root drain。
+本例只有一个 root。所有 executors 保持有效并被驱动 → 最终 Receiver 写入 Outcome/调用方 bool 并请求停止 → 主线程 run 返回后 join 调用方 → 调用方 executeOne 返回，operation/executor/resource 可销毁 → Context close/join workers → 释放 Context 和资源。run 返回不等于 Receiver 已经返回，不能省掉 join。多个 root 时由 root owner 计数，最后一个 root 才请求停止；空队列、一个 Receiver 完成或 requestStop 本身都不能代替 root drain。
 
 析构不运行用户 callback，也不偷偷阻塞 drain/join。Context/Worker 要求宿主事先完成显式关闭、join 和最后访问；线程创建中途失败则由构造函数回滚已创建线程。进程超时用于检测死锁，不是销毁仍被异步访问的 operation 的许可。
 
@@ -326,12 +318,13 @@ include/async/
 │   ├── scheduling/
 │   │   ├── BasicExecutor.h
 │   │   ├── BasicWorker.h
-│   │   ├── poll_structs.h
-│   │   ├── LogicalQueue.h
 │   │   ├── SchedulerHandle.h
 │   │   └── details/exec_schedule_adapters.h
 │   ├── details/containers/FixedCapacityVector.h
-│   └── context/{ContextInfo.h,BasicContext.h}
+│   └── context/
+│       ├── ContextInfo.h
+│       ├── BasicContext.h
+│       └── poll_structs.h
 ├── execution.h              # 标准协议、操作、查询和组合算法的聚合入口
 ├── execution/              # async::exec
 │   ├── operations.h        # connect/start/schedule、完成通知 CPO
@@ -355,12 +348,12 @@ include/async/
 | core/concepts.h | 在 async 定义 Core 接口约束和标准概念的 _c 转发；依赖 enums.h、thread_types.h 与 protocol.h，因此加载 provider；不依赖 scheduling，execution 不反向包含它 |
 | Core concepts/enums | 分别定义能力约束与接纳结果；成员接口直接调用，Queue 的 Executable 不要求节点布局 |
 | core/details/containers | 管理元素生命周期、容量和访问；FixedCapacityVector 用显式 typed allocator，不依赖 Context 或 execution；资源策略属于 memory |
-| PollBudget、PollReport | scheduling/poll_structs.h 中的批量驱动包装值类型；由 Context 直接包含，不属于协议入口或 concepts |
+| PollBudget、PollReport | context/poll_structs.h 中的批量驱动包装值类型；由 Context 直接包含，不属于协议入口或 concepts |
 | ThreadEntry | core/thread_types.h 中的线程入口函数类型；Core concepts 与 scheduling 共用，不依赖 scheduling |
 | core/queue 的 ExecutionNode、具体 Queue | 只依赖 core/enums.h、节点和标准同步设施；不包含 Core concepts、scheduling 或 execution provider |
 | Executor、Worker | 各自需要的基础协议，经 concepts.h 加载 provider；Executor 依赖 Queue，Worker 不包含具体 Executor |
-| LogicalQueue | Core 提交协议和稳定路由身份；经 operations/concepts 使用标准词汇，不依赖 execution 算法 |
-| BasicContext | 组合 executors、workers、固定 routes 和资源；直接返回标准 SchedulerHandle |
+| SchedulerToken | 配置阶段的域 ID 与目标下标；和 SchedulerHandle 同在 SchedulerHandle.h，无独立代理对象 |
+| BasicContext | 组合共享 Executor、Workers、域 ID 和资源；按 token 直接返回标准 SchedulerHandle |
 | execution.h | 聚合标准协议、操作、查询和组合算法；不包含 Core，重导出保持 provider 身份 |
 | Core SchedulerHandle、scheduling/details/exec_schedule_adapters.h | Core 基础提交接口、Core 概念别名及标准操作/查询头；句柄直接实现 scheduler，内部完成 sender/operation 适配 |
 
@@ -440,7 +433,7 @@ template <typename Executor>
 concept work_executor_c = requires(Executor & executor, const Executor & const_executor) {
     { executor.executeOne() } noexcept -> std::same_as<bool>;
     { executor.close() } noexcept -> std::same_as<void>;
-    { const_executor.empty() } noexcept -> std::same_as<bool>;
+    { const_executor.isEmpty() } noexcept -> std::same_as<bool>;
 };
 
 template <typename Executor>
@@ -480,7 +473,7 @@ concept work_queue_c = requires {
         { queue.tryEnqueue(executable) } noexcept -> std::same_as<EnqueueResult>;
         { queue.tryPop() } noexcept -> std::same_as<typename Queue::Executable *>;
         { queue.close() } noexcept -> std::same_as<void>;
-        { const_queue.empty() } noexcept -> std::same_as<bool>;
+        { const_queue.isEmpty() } noexcept -> std::same_as<bool>;
     };
 
 template <typename Queue>
@@ -518,7 +511,7 @@ concept thread_launcher_c = join_handle_c<ThreadHandle> and
 
 ### 4.2 驱动、阻塞等待与停止
 
-上述 concepts 按实际能力命名：record_submitter_c 只描述对某种 Record 的投递；work_executor_c 描述 executeOne/close/empty；waiting_work_executor_c 再增加 waitAndExecuteOne。executeOne 不等待新工作，仍可能等待 Queue 的内部 mutex；waitAndExecuteOne 同时表达等待工作和执行一个 record。两者返回 true 均表示一个 record 执行完成，不代表全部 root 完成；后者返回 false 表示停止或关闭且排空，不应把虚假唤醒当作退出。
+上述 concepts 按实际能力命名：record_submitter_c 只描述对某种 Record 的投递；work_executor_c 描述 executeOne/close/isEmpty；waiting_work_executor_c 再增加 waitAndExecuteOne。executeOne 不等待新工作，仍可能等待 Queue 的内部 mutex；waitAndExecuteOne 同时表达等待工作和执行一个 record。两者返回 true 均表示一个 record 执行完成，不代表全部 root 完成；后者返回 false 表示停止或关闭且排空，不应把虚假唤醒当作退出。
 
 concept 的表达式检查只建立接口形状，模型还必须履行语义契约。多 Worker 标记不证明线程安全，join/joinable 也不证明另起线程；不靠添加无调用需求的 get_id/detach 或限定为 std::thread 来伪造证明。并发、完成同步、恰好一次、失败回滚和生命周期通过实现及测试验证。
 
@@ -593,7 +586,7 @@ join_handle_c 表示可析构并支持 joinable/join 的完成句柄，不把它
 | BasicContext<Executor, ThreadHandle> | multi_worker_executor_c、join_handle_c、context_executor_factory_c 与 thread_launcher_c；所有 Worker 和 poll/run 共用 Executor |
 | DefaultContextExecutorFactory<Executor> | work_executor_c；makeExecutor 按实际构造能力启用默认构造 |
 | FixedCapacityVector<Value> | std::destructible；emplaceBack 检查构造关系，emplaceWith 检查 factory 的精确返回类型以支持不可移动元素 |
-| LogicalQueue<Executor>、SchedulerHandle<Executor> | 类只保存引用，尚不知道实际 Record，保留 typename；tryEnqueue<Record> 检查二元 record_submitter_c；SchedulerHandle 直接在 Core 实现标准 scheduler 协议 |
+| SchedulerHandle<Executor> | 类保存 Executor 引用与身份，尚不知道实际 Record，保留 typename；tryEnqueue<Record> 检查二元 record_submitter_c；直接在 Core 实现标准 scheduler 协议 |
 | QueueArgs... | std::constructible_from<Queue, Args...>，不能用一个空泛 concept 限定所有配置值 |
 | 内部 ScheduleSender/Operation 的 Handle / Receiver | Handle 用 std::copyable 约束实际值复制，实例为已完成定义的 SchedulerHandle；Receiver 使用转发到标准协议的 receiver_of_c<Receiver, ScheduleCompletions> |
 | ScheduleSender::connect、ScheduleOperation::start | 实际 operation 完整后再检查 record_submitter_c<Handle, Operation>；不在句柄定义期间递归检查 scheduler 概念 |
@@ -796,7 +789,7 @@ public:
             if (auto * node_p = this->tryPop()) {
                 return node_p;
             }
-            if (this->isClosedAndQuiescent() and this->empty()) {
+            if (this->isClosedAndQuiescent() and this->isEmpty()) {
                 return nullptr;
             }
 
@@ -807,7 +800,7 @@ public:
             if (auto * node_p = this->tryPop()) {
                 return node_p;
             }
-            if (this->isClosedAndQuiescent() and this->empty()) {
+            if (this->isClosedAndQuiescent() and this->isEmpty()) {
                 return nullptr;
             }
             m_wake_sequence.wait(observed, std::memory_order_acquire);
@@ -830,7 +823,7 @@ public:
         this->notifyWaiters();
     }
 
-    bool empty() const noexcept
+    bool isEmpty() const noexcept
     {
         return m_queued_count.load(std::memory_order_relaxed) == 0;
     }
@@ -1054,7 +1047,7 @@ public:
         m_condition.notify_all();
     }
 
-    bool empty() const noexcept
+    bool isEmpty() const noexcept
     {
         std::lock_guard lock{m_mutex};
         return m_head_p == nullptr;
@@ -1089,40 +1082,7 @@ private:
 
 所有接纳、取出、关闭、停止和等待 predicate 都用同一 mutex 排序，因而没有“检查空 → notify → 入睡”的丢唤醒窗口。queue::intrusive::mpmc::Queue<> 支持多 producer、多 consumer；回调在出队解锁后执行，FIFO 只约束取出顺序，不承诺多 Worker 的开始或完成顺序；tryPop 不等待新工作，但获取 mutex 可能短暂阻塞，它是正确性基线，不是 wait-free。close 后仍可取出已接纳节点；stop 请求优先终止 waitPop，但 tryPop 仍可排空。拒收不修改 node，接纳后恰好出队一次；同一 operation/node 只能 start/提交一次，并保持地址稳定至最后访问。
 
-### 5.2 Executor、Worker 与预算包装
-
-PollBudget 和 PollReport 服务于 Context::poll 的批量驱动包装，不是 work_executor_c 的基础协议。它们放在 scheduling/poll_structs.h，由 BasicContext.h 直接包含；protocol.h、concepts.h 不包含它们。
-
-`include/async/core/scheduling/poll_structs.h`：
-
-```cpp
-#pragma once
-
-#include <chrono>
-#include <cstddef>
-#include <limits>
-
-namespace lcf::async {
-
-struct PollBudget
-{
-    std::size_t m_max_records = std::numeric_limits<std::size_t>::max();
-    std::chrono::steady_clock::duration m_max_duration =
-        std::chrono::steady_clock::duration::max();
-};
-
-struct PollReport
-{
-    std::size_t m_records = 0;
-    std::chrono::steady_clock::duration m_elapsed{};
-    bool m_count_limit_reached = false;
-    bool m_time_limit_reached = false;
-};
-
-} // namespace lcf::async
-```
-
-pollOne 最多执行一条 record；一条 record 中可执行普通函数链或未来的协程段，预算不能抢占它。poll 在 record 边界检查数量与软时间限制，计入执行和必要维护开销；pollOne 本身不强制读取时钟。空队列立即返回，不证明全部 root 已结束。
+### 5.2 Executor 与 Worker
 
 `include/async/core/scheduling/BasicExecutor.h`：
 
@@ -1145,28 +1105,21 @@ public:
     static constexpr bool k_supports_multiple_producers = Queue::k_supports_multiple_producers;
     static constexpr bool k_supports_multiple_workers = Queue::k_supports_multiple_consumers;
 public:
-    ~BasicExecutor() noexcept { assert(m_queue.empty()); }
+    ~BasicExecutor() noexcept { assert(m_queue.isEmpty()); }
     BasicExecutor() requires std::default_initializable<Queue> = default;
     template <typename... QueueArgs>
-        requires (sizeof...(QueueArgs) > 0) and std::constructible_from<Queue, QueueArgs...>
-    explicit BasicExecutor(QueueArgs &&... queue_args)
-        : m_queue(std::forward<QueueArgs>(queue_args)...) {}
-
+    requires (sizeof...(QueueArgs) > 0) and std::constructible_from<Queue, QueueArgs...>
+    explicit BasicExecutor(QueueArgs &&... queue_args) : m_queue(std::forward<QueueArgs>(queue_args)...) {}
     BasicExecutor(const BasicExecutor &) = delete;
     BasicExecutor(BasicExecutor &&) = delete;
     BasicExecutor & operator=(const BasicExecutor &) = delete;
     BasicExecutor & operator=(BasicExecutor &&) = delete;
 public:
     template <work_record_c Record>
-        requires requires(Queue & queue, Record & record) {
-            { queue.tryEnqueue(record.getExecutable()) } noexcept
-                -> std::same_as<EnqueueResult>;
-        }
-    EnqueueResult tryEnqueue(Record & record) noexcept
-    {
-        return m_queue.tryEnqueue(record.getExecutable());
+    requires requires(Queue & queue, Record & record) {
+        { queue.tryEnqueue(record.getExecutable()) } noexcept -> std::same_as<EnqueueResult>;
     }
-
+    EnqueueResult tryEnqueue(Record & record) noexcept { return m_queue.tryEnqueue(record.getExecutable()); }
     bool executeOne() noexcept
     {
         if (auto * executable_p = m_queue.tryPop()) {
@@ -1175,9 +1128,8 @@ public:
         }
         return false;
     }
-
     bool waitAndExecuteOne() noexcept
-        requires waiting_work_queue_c<Queue>
+    requires waiting_work_queue_c<Queue>
     {
         if (auto * executable_p = m_queue.waitPop()) {
             executable_p->execute();
@@ -1185,16 +1137,13 @@ public:
         }
         return false;
     }
-
     void requestStop() noexcept
-        requires stoppable_work_queue_c<Queue>
+    requires stoppable_work_queue_c<Queue>
     {
         m_queue.requestStop();
     }
-
     void close() noexcept { m_queue.close(); }
-    bool empty() const noexcept { return m_queue.empty(); }
-
+    bool isEmpty() const noexcept { return m_queue.isEmpty(); }
 private:
     Queue m_queue;
 };
@@ -1218,7 +1167,7 @@ public:
 } // namespace lcf::async
 ```
 
-BasicExecutor 拥有 Queue，负责 tryEnqueue、executeOne/waitAndExecuteOne、close 与 empty；不创建线程。DefaultContextExecutorFactory::makeExecutor 创建一个 Executor。能力常量直接引用所选 Queue，multi_worker_executor_c 检查多 Worker 消费能力。
+BasicExecutor 拥有 Queue，负责 tryEnqueue、executeOne/waitAndExecuteOne、close 与 isEmpty；不创建线程。DefaultContextExecutorFactory::makeExecutor 创建一个 Executor。能力常量直接引用所选 Queue，multi_worker_executor_c 检查多 Worker 消费能力。
 
 `include/async/core/scheduling/BasicWorker.h`：
 
@@ -1294,6 +1243,38 @@ private:
 Worker 借用的 Executor 必须保持到 join 结束。Worker 析构要求线程已 join；宿主负责显式 close/join。
 
 ### 5.3 逻辑身份、配置与 Context
+
+PollBudget 和 PollReport 服务于 Context::poll 的批量驱动包装，不是 work_executor_c 的基础协议。它们放在 context/poll_structs.h，由 BasicContext.h 直接包含；归属 Context 的驱动接口，Queue、Executor、Scheduler 和 concepts 不依赖它们。
+
+`include/async/core/context/poll_structs.h`：
+
+```cpp
+#pragma once
+
+#include <chrono>
+#include <cstddef>
+#include <limits>
+
+namespace lcf::async {
+
+struct PollBudget
+{
+    std::size_t m_max_records = std::numeric_limits<std::size_t>::max();
+    std::chrono::steady_clock::duration m_max_duration = std::chrono::steady_clock::duration::max();
+};
+
+struct PollReport
+{
+    std::size_t m_records = 0;
+    std::chrono::steady_clock::duration m_elapsed{};
+    bool m_count_limit_reached = false;
+    bool m_time_limit_reached = false;
+};
+
+} // namespace lcf::async
+```
+
+pollOne 最多执行一条 record；一条 record 中可执行普通函数链或未来的协程段，预算不能抢占它。poll 在 record 边界检查数量与软时间限制，计入执行和必要维护开销；pollOne 本身不强制读取时钟。空队列立即返回，不证明全部 root 已结束。
 
 Context 的数量在构造前已经确定，不需要 deque 的分块表或运行时扩容。内部 FixedCapacityVector 用显式 typed allocator 一次申请容量，只构造实际元素，保留原 allocator 和元素数用于逆序销毁与释放。它只服务固定数组，不实现通用容器的 uses-allocator 传播；需要内部分配的元素由工厂显式配置。
 
@@ -1415,73 +1396,14 @@ private:
 ```
 
 
-LogicalQueueToken 与 LogicalQueue 定义在同一个头文件。token 用两个 std::uint32_t 保存域 ID 与下标，共 8 字节。LogicalQueue 借用共享 Executor，稳定地址形成逻辑身份。ContextInfo 当前只计数，不引入队列类别或空配置对象。
-
-`include/async/core/scheduling/LogicalQueue.h`：
-
-```cpp
-#pragma once
-
-#include <async/core/concepts.h>
-
-#include <cstdint>
-
-namespace lcf::async {
-
-class ContextInfo;
-
-class LogicalQueueToken
-{
-    friend class ContextInfo;
-public:
-    ~LogicalQueueToken() noexcept = default;
-    LogicalQueueToken() = delete;
-    LogicalQueueToken(const LogicalQueueToken &) noexcept = default;
-    LogicalQueueToken(LogicalQueueToken &&) noexcept = default;
-    LogicalQueueToken & operator=(const LogicalQueueToken &) noexcept = default;
-    LogicalQueueToken & operator=(LogicalQueueToken &&) noexcept = default;
-public:
-
-    std::uint32_t getDomainId() const noexcept { return m_domain_id; }
-    std::uint32_t getIndex() const noexcept { return m_index; }
-    bool operator==(const LogicalQueueToken &) const noexcept = default;
-
-private:
-    LogicalQueueToken(std::uint32_t domain_id, std::uint32_t index) noexcept
-        : m_domain_id(domain_id), m_index(index) {}
-private:
-    std::uint32_t m_domain_id;
-    std::uint32_t m_index;
-};
-
-template <typename Executor>
-class LogicalQueue
-{
-public:
-    ~LogicalQueue() noexcept = default;
-    LogicalQueue() = delete;
-    explicit LogicalQueue(Executor & executor) noexcept : m_executor_p(&executor) {}
-    LogicalQueue(const LogicalQueue &) noexcept = default;
-    LogicalQueue(LogicalQueue &&) noexcept = default;
-    LogicalQueue & operator=(const LogicalQueue &) noexcept = default;
-    LogicalQueue & operator=(LogicalQueue &&) noexcept = default;
-public:
-    template <typename Record>
-    requires record_submitter_c<Executor, Record>
-    EnqueueResult tryEnqueue(Record & record) const noexcept { return m_executor_p->tryEnqueue(record); }
-private:
-    Executor * m_executor_p;
-};
-
-} // namespace lcf::async
-```
+SchedulerToken 与 SchedulerHandle 统一定义在 `core/scheduling/SchedulerHandle.h`，完整定义见第 5.4 节。token 仅携带两个 std::uint32_t：域 ID 与目标下标，共 8 字节。ContextInfo 当前只计数，不引入队列类别、空配置对象或运行时路由数组。
 
 `include/async/core/context/ContextInfo.h`：
 
 ```cpp
 #pragma once
 
-#include <async/core/scheduling/LogicalQueue.h>
+#include <async/core/scheduling/SchedulerHandle.h>
 
 #include <atomic>
 #include <cstddef>
@@ -1504,7 +1426,6 @@ struct StorageRequirement
 struct ContextStorageRequirements
 {
     StorageRequirement m_workers;
-    StorageRequirement m_routes;
 };
 
 struct ContextAllocators
@@ -1513,15 +1434,14 @@ struct ContextAllocators
 public:
     ~ContextAllocators() noexcept = default;
     ContextAllocators() = delete;
-    ContextAllocators(Allocator workers, Allocator routes) noexcept
-        : m_workers(workers), m_routes(routes) {}
+    explicit ContextAllocators(Allocator workers) noexcept :
+        m_workers(workers) {}
     ContextAllocators(const ContextAllocators &) noexcept = default;
     ContextAllocators(ContextAllocators &&) noexcept = default;
     ContextAllocators & operator=(const ContextAllocators &) = delete;
     ContextAllocators & operator=(ContextAllocators &&) = delete;
 public:
     Allocator m_workers;
-    Allocator m_routes;
 };
 
 class ContextInfo
@@ -1537,22 +1457,22 @@ public:
     ContextInfo(ContextInfo && other) noexcept
         : m_domain_id(std::exchange(other.m_domain_id, 0)),
           m_worker_count(std::exchange(other.m_worker_count, 0)),
-          m_queue_count(std::exchange(other.m_queue_count, 0)) {}
+          m_scheduler_count(std::exchange(other.m_scheduler_count, 0)) {}
     ContextInfo & operator=(ContextInfo &&) = delete;
 
 public:
-    LogicalQueueToken addQueue() noexcept
+    SchedulerToken addScheduler() noexcept
     {
-        if (m_domain_id == 0 || m_queue_count == std::numeric_limits<std::uint32_t>::max()) {
+        if (m_domain_id == 0 || m_scheduler_count == std::numeric_limits<std::uint32_t>::max()) {
             std::terminate();
         }
-        const auto index = static_cast<std::uint32_t>(m_queue_count++);
-        return LogicalQueueToken{m_domain_id, index};
+        const auto index = static_cast<std::uint32_t>(m_scheduler_count++);
+        return SchedulerToken{m_domain_id, index};
     }
 
     WorkerCount getWorkerCount() const noexcept { return m_worker_count; }
     std::uint32_t getDomainId() const noexcept { return m_domain_id; }
-    std::size_t getQueueCount() const noexcept { return m_queue_count; }
+    std::size_t getSchedulerCount() const noexcept { return m_scheduler_count; }
 
 private:
     static std::uint32_t acquire_domain_id() noexcept
@@ -1572,17 +1492,17 @@ private:
     inline static std::atomic<std::uint32_t> s_next_domain_id{1};
     std::uint32_t m_domain_id;
     WorkerCount m_worker_count;
-    std::size_t m_queue_count = 0;
+    std::size_t m_scheduler_count = 0;
 };
 
 } // namespace lcf::async
 ```
 
-LogicalQueueToken 不能默认或数值构造；ContextInfo 的 addQueue() noexcept 直接返回 token，当前仅递增计数，不分配。零 Worker 也可登记，由 poll/run 推进；已移动配置上登记终止。域号耗尽时终止、不复用。配置操作单线程执行，WorkerCount 构造后不变；QueueConfig 与普通配置容器后续按需加入。
+SchedulerToken 不能默认或数值构造；ContextInfo 的 addScheduler() noexcept 直接返回 token，当前仅递增计数，不分配。零 Worker 也可登记，由 poll/run 推进；已移动配置上登记终止。域号耗尽时终止、不复用。配置操作单线程执行，WorkerCount 构造后不变；QueueConfig 与普通配置容器后续按需加入。
 
-ContextInfo 取得不复用的域 ID，移动转移域和数量并使源对象失效，Context 按值消费配置。token 用两个 std::uint32_t 保存 domain/index，共 8 字节，不延长运行时寿命。findLogicalQueue 以 assert 检查域；同域下标来自该配置签发，不提供错误域恢复路径。配置计数与存储计算仍用 std::size_t，签发前检查 UINT32_MAX 上限，避免下标截断。域号从 1 起签发，0 留给移走配置，耗尽时终止、不回绕复用；不承诺跨独立动态模块的唯一性。
+ContextInfo 取得不复用的域 ID，移动转移域和数量并使源对象失效，Context 按值消费配置。token 用两个 std::uint32_t 保存 domain/index，共 8 字节，不延长运行时寿命。getSchedulerHandle 以 assert 检查域，直接把 Executor 引用和 token 身份写入句柄；同域下标来自该配置签发，无需额外查表或重复边界检查。配置计数与存储计算仍用 std::size_t，签发前检查 UINT32_MAX 上限，避免下标截断。域号从 1 起签发，0 留给移走配置；耗尽时终止、不回绕复用；不承诺跨独立动态模块的唯一性。
 
-独立调用方 executor 用 LogicalQueue{executor} 建立路由，不伪造 Context token，也不写入 ContextInfo。标准 SchedulerHandle 直接引用路由；相同路由对象得到相等 handle；不同路由即使映射到同一物理 executor 也不相等。LogicalQueue 不存 record、不提供 pop/poll，运行期不移动或重绑已发布路由。
+独立调用方 executor 直接用 SchedulerHandle{executor} 建立提交句柄，不需要 Context token，也不写入 ContextInfo。其身份使用域 ID 0、下标 0；同一独立 Executor 的句柄相等，不同 Executor 的句柄不相等。Context 返回的句柄保存 token 身份，同一 token 产生相等句柄，不同 token 即使共享 Executor 也不相等。复制不分配，句柄不保活 Executor。
 
 `include/async/core/context/BasicContext.h`：
 
@@ -1590,11 +1510,10 @@ ContextInfo 取得不复用的域 ID，移动转移域和数量并使源对象�
 #pragma once
 
 #include "ContextInfo.h"
+#include "poll_structs.h"
 #include <async/core/details/containers/FixedCapacityVector.h>
-#include <async/core/scheduling/poll_structs.h>
 #include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
-#include <async/core/scheduling/LogicalQueue.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 
 #include <cassert>
@@ -1633,15 +1552,13 @@ PollReport poll_executor(Executor & executor, PollBudget budget = {}) noexcept
 
 } // namespace details
 
-template <multi_worker_executor_c Executor = BasicExecutor<>,
-    join_handle_c ThreadHandle = std::thread>
+template <multi_worker_executor_c Executor = BasicExecutor<>, join_handle_c ThreadHandle = std::thread>
 class BasicContext
 {
-public:
     using Worker = BasicWorker<Executor, ThreadHandle>;
-    using Queue = LogicalQueue<Executor>;
+    using WorkerList = details::FixedCapacityVector<Worker>;
 public:
-    ~BasicContext() noexcept { assert(this->empty()); }
+    ~BasicContext() noexcept { assert(this->isEmpty()); }
     BasicContext() = delete;
     template <typename ExecutorFactory = DefaultContextExecutorFactory<Executor>,
         thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
@@ -1651,13 +1568,8 @@ public:
         : m_domain_id(validate_info(context_info)),
           m_executor(executor_factory.makeExecutor()),
           m_workers(context_info.getWorkerCount(),
-              std::pmr::polymorphic_allocator<Worker>{allocators.m_workers}),
-          m_queues(context_info.getQueueCount(),
-              std::pmr::polymorphic_allocator<Queue>{allocators.m_routes})
+              std::pmr::polymorphic_allocator<Worker>{allocators.m_workers})
     {
-        for (std::size_t index = 0; index < context_info.getQueueCount(); ++index) {
-            m_queues.emplaceBack(m_executor);
-        }
         try {
             for (WorkerCount index = 0; index < context_info.getWorkerCount(); ++index) {
                 m_workers.emplaceBack(m_executor, thread_launcher);
@@ -1675,26 +1587,36 @@ public:
     BasicContext & operator=(BasicContext &&) = delete;
 public:
     static constexpr ContextStorageRequirements storageRequirements(
-        WorkerCount worker_count, std::size_t queue_count) noexcept
+        WorkerCount worker_count) noexcept
     {
-        return {storage_requirement<Worker>(worker_count),
-            storage_requirement<Queue>(queue_count)};
+        return {storage_requirement<Worker>(worker_count)};
     }
 
     static ContextStorageRequirements storageRequirements(const ContextInfo & info) noexcept
     {
-        return storageRequirements(info.getWorkerCount(), info.getQueueCount());
+        return storageRequirements(info.getWorkerCount());
     }
-
-    SchedulerHandle<Executor> getSchedulerHandle(LogicalQueueToken token) const noexcept
+    static std::uint32_t validate_info(const ContextInfo & info)
     {
-        return SchedulerHandle<Executor>{this->findLogicalQueue(token)};
+        if (info.getDomainId() == 0 || info.getSchedulerCount() == 0) {
+            throw std::invalid_argument{"Context requires an unconsumed configuration with schedulers"};
+        }
+        return info.getDomainId();
     }
 
-    const Queue & findLogicalQueue(LogicalQueueToken token) const noexcept
+    template <std::destructible Value>
+    static constexpr StorageRequirement storage_requirement(std::size_t count) noexcept
+    {
+        if (count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
+            std::terminate();
+        }
+        return {count * sizeof(Value), alignof(Value)};
+    }
+public:
+    SchedulerHandle<Executor> getSchedulerHandle(SchedulerToken token) const noexcept
     {
         assert(token.getDomainId() == m_domain_id);
-        return m_queues[token.getIndex()];
+        return SchedulerHandle<Executor>{m_executor, token};
     }
 
     bool pollOne() noexcept { return m_executor.executeOne(); }
@@ -1718,33 +1640,15 @@ public:
     {
         for (auto & worker : m_workers.values()) { worker.join(); }
     }
-    bool empty() const noexcept
+    bool isEmpty() const noexcept
     {
-        return m_executor.empty();
+        return m_executor.isEmpty();
     }
 
 private:
-    static std::uint32_t validate_info(const ContextInfo & info)
-    {
-        if (info.getDomainId() == 0 || info.getQueueCount() == 0) {
-            throw std::invalid_argument{"Context requires an unconsumed configuration with routes"};
-        }
-        return info.getDomainId();
-    }
-
-    template <std::destructible Value>
-    static constexpr StorageRequirement storage_requirement(std::size_t count) noexcept
-    {
-        if (count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
-            std::terminate();
-        }
-        return {count * sizeof(Value), alignof(Value)};
-    }
-
     std::uint32_t m_domain_id;
-    Executor m_executor;
-    details::FixedCapacityVector<Worker> m_workers;
-    details::FixedCapacityVector<Queue> m_queues;
+    mutable Executor m_executor;
+    WorkerList m_workers;
 };
 
 using Context = BasicContext<>;
@@ -1752,25 +1656,25 @@ using Context = BasicContext<>;
 } // namespace lcf::async
 ```
 
-Context 内嵌一个 Executor，默认使用 queue::intrusive::mpmc::Queue<>；ExampleContext 显式换成 queue::intrusive::spmc::Queue<>。Worker 与 LogicalQueue 固定数组分别使用 ContextAllocators，storageRequirements 报告请求字节数/对齐；每个 LogicalQueue 直接引用共享 Executor，无额外 route 分支对象。
+Context 内嵌一个 Executor，默认使用 queue::intrusive::mpmc::Queue<>；ExampleContext 显式换成 queue::intrusive::spmc::Queue<>。只有 Worker 固定数组使用 ContextAllocators，storageRequirements 只报告该数组的字节数/对齐；SchedulerHandle 直接引用共享 Executor，不构造逐目标路由对象。
 
-构造顺序为 Executor、两个数组存储块、全部 LogicalQueue，最后启动 N 个 Worker。固定数组不移动元素，Context 不可移动。工厂独立注入 Queue 参数，不自动传播数组 allocator；ThreadLauncher 选择线程后端。
+构造顺序为 Executor、Worker 数组存储块，最后启动 N 个 Worker。固定数组不移动元素，Context 不可移动。工厂独立注入 Queue 参数，不自动传播 Worker allocator；ThreadLauncher 选择线程后端。
 
 数组分配或 Executor 构造失败时按已构造范围回滚；线程启动失败关闭共享 Executor、join 已启动 Worker，再释放数组。close 一次即可唤醒所有等待者，构造阶段没有业务投递。
 
-pollOne/poll/run/requestStop 与全部 LogicalQueue 均使用同一个 Executor。close/empty 覆盖该执行域；token 查询只访问固定 LogicalQueue 表，不使用 Worker 下标。
+pollOne/poll/run/requestStop 与全部 SchedulerHandle 均使用同一个 Executor。close/isEmpty 覆盖该执行域；token 查询检查域后直接构造句柄，不访问路由表或 Worker 下标。
 
-run 复用共享 Executor 的 waitAndExecuteOne，不另造等待状态。requestStop 同时结束 run 与后台 Worker 的等待驱动；剩余节点可 poll/drain。未停止时 close 关闭准入并唤醒消费者，排空后退出。empty 不证明没有执行中或未来投递的 root。
+run 复用共享 Executor 的 waitAndExecuteOne，不另造等待状态。requestStop 同时结束 run 与后台 Worker 的等待驱动；剩余节点可 poll/drain。未停止时 close 关闭准入并唤醒消费者，排空后退出。isEmpty 不证明没有执行中或未来投递的 root。
 
 ### 5.4 用户直接使用的 SchedulerHandle
 
-用户句柄为 SchedulerHandle<Executor>；它直接借用 LogicalQueue，提供 scheduler_concept/schedule/相等比较，满足标准 execution scheduler 协议，同时保留 Core record 提交能力。一次调度只需要这一层句柄。
+用户句柄为 SchedulerHandle<Executor>；它保存非拥有 Executor 指针、域 ID 和目标下标，提供 scheduler_concept/schedule/相等比较，满足标准 execution scheduler 协议，同时保留 Core record 提交能力。SchedulerToken 与句柄统一定义在 SchedulerHandle.h，不再需要独立逻辑调度目标代理类型。
 
-用户调用 context.getSchedulerHandle(token) 直接取得 SchedulerHandle<Executor>；独立返回域用 SchedulerHandle{caller_queue}，不经 as_scheduler 或 optional。句柄借用稳定 LogicalQueue，每次投递不分配；value completion scheduler 查询返回句柄本身。
+用户调用 context.getSchedulerHandle(token) 取得 SchedulerHandle<Executor>；独立返回域用 SchedulerHandle{caller_executor}。句柄可自由复制，获取、复制和投递不分配；value completion scheduler 查询返回包含相同身份的句柄。宿主须保持被引用的 Executor 存活至最后一个操作访问结束。
 
-BasicContext<Executor, ThreadHandle> 返回 SchedulerHandle<Executor>，全部 addQueue 目标统一共享该 Executor。默认 Context 保持多 producer queue::intrusive::mpmc::Queue<>；SPMC 配置须显式选择并遵守整个 Queue 的单 producer 限制。SchedulerHandle 实现标准 scheduler，基础 Queue/Executor/Worker 直接消费成员能力。
+BasicContext<Executor, ThreadHandle> 返回 SchedulerHandle<Executor>，全部 addScheduler 目标统一共享该 Executor。默认 Context 保持多 producer queue::intrusive::mpmc::Queue<>；SPMC 配置须显式选择并遵守整个 Queue 的单 producer 限制。SchedulerHandle 实现标准 scheduler，基础 Queue/Executor/Worker 直接消费成员能力。
 
-getSchedulerHandle 与 findLogicalQueue 的前置条件是 token 已由构造此 Context 的配置成功签发；错误归属属于调用方契约违例，findLogicalQueue 在 debug 构建中 assert 域 ID，随后按 token 下标直接返回引用。域相同即保证下标来自该配置的已登记队列，不制造正常路径的“可能没有句柄”。token 不延长 Context/route 寿命，句柄仍须遵守存活约束。
+getSchedulerHandle(token) const noexcept 的前置条件是 token 已由构造此 Context 的配置签发；错误归属属于调用方契约违例，在 debug 构建中 assert 域 ID 后直接构造句柄。域相同即保证下标来自该配置登记，不制造正常路径的“可能没有句柄”。token 与句柄都不延长 Context/Executor 寿命。
 
 SchedulerHandle 位于 core/scheduling，Context 常用别名随 BasicContext 定义；标准 sender/operation 适配位于 core/scheduling/details，用户只使用公开句柄和标准 CPO。Core 按需包含协议、operations 和 queries 头，不包含 execution.h，不调用 then/when_all 等组合算法，也不使用 stdexec 私有类型。protocols 和 execution 的基础接口不反向依赖 Core，因此没有循环。
 
@@ -1892,10 +1796,36 @@ private:
 ```cpp
 #pragma once
 
-#include "LogicalQueue.h"
 #include <async/core/scheduling/details/exec_schedule_adapters.h>
+#include <async/core/concepts.h>
+
+#include <cstdint>
 
 namespace lcf::async {
+
+class ContextInfo;
+
+class SchedulerToken
+{
+    friend class ContextInfo;
+public:
+    ~SchedulerToken() noexcept = default;
+    SchedulerToken() = delete;
+    SchedulerToken(const SchedulerToken &) noexcept = default;
+    SchedulerToken(SchedulerToken &&) noexcept = default;
+    SchedulerToken & operator=(const SchedulerToken &) noexcept = default;
+    SchedulerToken & operator=(SchedulerToken &&) noexcept = default;
+    bool operator==(const SchedulerToken &) const noexcept = default;
+private:
+    SchedulerToken(std::uint32_t domain_id, std::uint32_t index) noexcept :
+        m_domain_id(domain_id), m_index(index) {}
+public:
+    std::uint32_t getDomainId() const noexcept { return m_domain_id; }
+    std::uint32_t getIndex() const noexcept { return m_index; }
+private:
+    std::uint32_t m_domain_id;
+    std::uint32_t m_index;
+};
 
 template <typename Executor>
 class SchedulerHandle
@@ -1905,21 +1835,25 @@ public:
 public:
     ~SchedulerHandle() noexcept = default;
     SchedulerHandle() = delete;
-    explicit SchedulerHandle(const LogicalQueue<Executor> & queue) noexcept : m_queue_p(&queue) {}
-    SchedulerHandle(const LogicalQueue<Executor> &&) = delete;
+    explicit SchedulerHandle(Executor & executor) noexcept :
+        m_executor_p(&executor), m_domain_id(0), m_scheduler_index(0) {}
+    SchedulerHandle(Executor & executor, SchedulerToken token) noexcept :
+        m_executor_p(&executor), m_domain_id(token.getDomainId()),
+        m_scheduler_index(token.getIndex()) {}
     SchedulerHandle(const SchedulerHandle &) noexcept = default;
     SchedulerHandle(SchedulerHandle &&) noexcept = default;
     SchedulerHandle & operator=(const SchedulerHandle &) noexcept = default;
     SchedulerHandle & operator=(SchedulerHandle &&) noexcept = default;
-public:
     bool operator==(const SchedulerHandle &) const noexcept = default;
 public:
     auto schedule() const noexcept;
     template <typename Record>
-    requires record_submitter_c<const LogicalQueue<Executor>, Record>
-    EnqueueResult tryEnqueue(Record & record) const noexcept { return m_queue_p->tryEnqueue(record); }
+    requires record_submitter_c<Executor, Record>
+    EnqueueResult tryEnqueue(Record & record) const noexcept { return m_executor_p->tryEnqueue(record); }
 private:
-    const LogicalQueue<Executor> * m_queue_p;
+    Executor * m_executor_p;
+    std::uint32_t m_domain_id;
+    std::uint32_t m_scheduler_index;
 };
 
 template <typename Executor>
@@ -1946,10 +1880,9 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 #include <async/core/enums.h>
 #include <async/core/context/ContextInfo.h>
 #include <async/core/context/BasicContext.h>
-#include <async/core/scheduling/poll_structs.h>
+#include <async/core/context/poll_structs.h>
 #include <async/core/thread_types.h>
 #include <async/core/queue/intrusive/ExecutionNode.h>
-#include <async/core/scheduling/LogicalQueue.h>
 #include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicWorker.h>
 #include <async/core/scheduling/SchedulerHandle.h>
@@ -1974,7 +1907,7 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 
 `std::pmr::polymorphic_allocator<T>` 是容器/typed storage 使用的类型化分配器；它把 `n` 个 T 转为字节数和对齐，交给 `memory_resource`。resource 决定字节从哪里来、是否缓存、何时归还上游；它不负责决定需要多少个元素，也不负责构造对象。标准 PMR 容器接收 resource 指针是合法的便捷构造，内部仍使用 polymorphic_allocator；问题在于是否声明了实际容量和生命周期，而不是有没有出现 resource 参数。
 
-本轮用 FixedCapacityVector 保存 Worker 与 LogicalQueue 固定数组，每个非空数组恰好一次 allocator.allocate(count)，无几何增长或分块表。Executor 内嵌，Worker 不可移动；factory placement new 只构造已有存储。ContextInfo 当前只保存计数，无逐队列动态分配。
+本轮用 FixedCapacityVector 保存 Worker 固定数组，非空时恰好一次 allocator.allocate(count)，无几何增长或分块表。Executor 内嵌，Worker 不可移动；factory placement new 只构造已有存储。ContextInfo 只保存域 ID 和计数，句柄携带身份，无逐目标动态分配。
 
 `storageRequirement(s)` 报告 typed storage 的请求字节数/对齐，不是任意 resource 的上游保留量。第 1 节给每次固定申请提供正确对齐的缓冲区和 null upstream，容量不足立即抛 bad_alloc，不偷偷转到系统堆；真实数量来自 info 时用 `Context::storageRequirements(info)` 规划宿主 arena。若合并多个数组到一个 arena，还必须计算各段的对齐填充。pool 的 chunk、簿记和缓存空间另外计量，不能拿 count * sizeof(T) 宣称覆盖其全部成本。
 
@@ -1982,11 +1915,11 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 
 | 位置/所有者 | 申请与容量 | allocator/后端、释放与线程 |
 | --- | --- | --- |
-| ContextInfo | Worker/queue 数量与域 ID | 当前不动态分配；QueueConfig 出现后再引入普通配置容器 |
+| ContextInfo | Worker/scheduler 数量与域 ID | 当前不动态分配；QueueConfig 出现后再引入普通配置容器 |
 | token 域 ID | 一个静态 atomic；签发只使用已分配的配置位置 | 无动态申请；不以堆对象地址作为可复用的身份 |
 | Context Executor/Queue | 一个内嵌 Executor，N 个 Worker 与宿主共享，不随 Worker 数复制 Queue | 工厂注入 Queue 配置；最后访问及 join 后释放 |
 | Workers 对象数组 | worker_count 个 Worker，一个固定块；只存驱动者对象 | ContextAllocators::m_workers 重绑定到 Worker；不代表线程栈/启动状态也由它分配；销毁前须 join |
-| LogicalQueue routes | 实际登记数个路由，一个固定块，O(1) token 查询 | ContextAllocators::m_routes 重绑定到路由类型；构造后无增长；最后一个 handle/operation 访问结束后才能释放 |
+| SchedulerToken / SchedulerHandle 身份 | token 为 domain/index，handle 额外保存 Executor 指针；无独立运行时数组 | 获取及复制不分配；最后一个 handle/operation 访问结束后才能销毁 Executor |
 | 默认 queue::intrusive::mpmc::Queue<> | head/tail、锁、CV 和状态内嵌，不为每次投递分配 node | 不接收无用 allocator；节点由 operation 提供；mutex/CV 的系统实现边界单列 |
 | 自定义 Queue backing storage | 由具体结构与容量决定，不能计入 Executor 对象大小 | 工厂注入 Queue 的 allocator、容量和回收策略；构造失败回滚 |
 | SchedulerHandle、内部 ScheduleSender/ScheduleOperation、Receiver、ExecutionNode | 本例栈/operation 内嵌存储；sender 与 operation 的组合类型决定大小 | adapter 不额外 new hook、record 或 owning callback；connect 的稳定 operation 活到最终完成返回，完成允许立即销毁自身 |
@@ -2002,11 +1935,11 @@ sender 的 environment 只对 set_value 声明 completion scheduler；拒收的 
 
 ### 6.3 正确使用与后续扩展
 
-第 1 节的 ContextInfo 仅计数；Worker 与 LogicalQueue 数组分别绑定有界 arena，Executor 内嵌，Queue backing storage 由工厂管理。同一资源可由宿主显式复用，但不混淆元数据、Queue 与线程栈的所有权及失败策略。
+第 1 节的 ContextInfo 仅保存域 ID 和计数；Worker 数组绑定有界 arena，Executor 内嵌，Queue backing storage 由工厂管理，逻辑目标不单独申请存储。同一资源可由宿主显式复用，但不混淆元数据、Queue 与线程栈的所有权及失败策略。
 
-数组的分配/释放在宿主构造/销毁路径发生，资源不因 Worker 存在就必须同步。Queue 若跨线程分配/释放，应使用线程安全后端或将回收归并到资源 owner。resource/初始缓冲区必须活到最后 deallocate；arena.release 不执行对象析构，两块 runtime arena 均活到 Context 析构之后。
+Worker 数组的分配/释放在宿主构造/销毁路径发生，资源不因 Worker 存在就必须同步。Queue 若跨线程分配/释放，应使用线程安全后端或将回收归并到资源 owner。resource/初始缓冲区必须活到最后 deallocate；arena.release 不执行对象析构，runtime arena 活到 Context 析构之后。
 
-当前 addQueue 只递增计数，无配置期分配失败。运行时数组需验证资源不足、乘法溢出、对齐、零数量、部分构造失败与线程创建失败。统计区分 PMR 请求与上游量，用会失败的上游证明无 fallback。需要可恢复分配失败时，由实际不抛异常的后端提供错误结果，不能仅包装标准 allocator 为 noexcept。
+当前 addScheduler 只递增计数，无配置期分配失败。运行时数组需验证资源不足、乘法溢出、对齐、零数量、部分构造失败与线程创建失败。统计区分 PMR 请求与上游量，用会失败的上游证明无 fallback。需要可恢复分配失败时，由实际不抛异常的后端提供错误结果，不能仅包装标准 allocator 为 noexcept。
 
 receiver allocator 覆盖适用于实际拥有额外动态状态的 operation，而不是反向改写已建好的 Context 存储；需保存原释放能力，不假定所有 allocator 都有 resource()。错误码分配能力 `allocation_resource_c`、typed storage 与 FramePolicy 按 [CORE_DESIGN.md](../CORE_DESIGN.md) 第 4/8 节扩展。队列结构、timer index、分配缓存、等待策略和默认算法选择由 benchmark 驱动。
 
@@ -2018,7 +1951,7 @@ receiver allocator 覆盖适用于实际拥有额外动态状态的 operation，
 | --- | --- | --- |
 | M1 协议与单步执行 | executable/record/submitter/queue/executor concepts、枚举、标准概念转发；ExecutionNode、两种 intrusive Queue、BasicExecutor | 能力常量缺失/类型错/非编译期时拒绝；无节点布局的 executable 可用；完成中销毁正确；SPMC producer 不等待 consumer mutex |
 | M2 等待与停止 | waiting/stoppable queue；waitAndExecuteOne、持久停止、close/wake、BasicWorker | 不空转或丢唤醒；停止前于等待、执行中停止、关闭排空与停止后 poll 正确 |
-| M3 运行时组合 | ContextInfo::addQueue 计数与 token；一个共享 Executor；固定 Worker/LogicalQueue 数组 | 零 Worker 支持任意逻辑目标；身份独立且不绑定线程；宿主与 Worker 消费同池；构造回滚与显式 close/join 正确 |
+| M3 运行时组合 | ContextInfo::addScheduler 计数与 token；一个共享 Executor；固定 Worker 数组；句柄直接保存逻辑身份 | 零 Worker 支持任意逻辑目标；身份独立且不绑定线程；宿主与 Worker 消费同池；构造回滚与显式 close/join 正确 |
 | M4 execution 与返回域 | provider 词汇、SchedulerHandle、内部 sender/operation 与独立 caller Executor | 先由零 Worker Context 的 pollOne/poll 完成 schedule→then→receiver；再验证共享执行、when_all 得到 42、最终交付 caller；停止唤醒宿主和 Worker |
 | M5 生命周期和基线 | value/error/stopped、取消/拒收、关闭竞争、PMR/线程创建失败、完成中销毁；接入 verify/benchmark/modules | 第 8 节必测项通过；建立空 pollOne、no-op dispatch、run/wake、两 Worker 合流、调用方返回和内存基线；receiver 执行时间单列 |
 
@@ -2030,19 +1963,19 @@ receiver allocator 覆盖适用于实际拥有额外动态状态的 operation，
 
 | 必测项 | 观察结果 |
 | --- | --- |
-| poll 驱动 execution | 零 Worker、多个 addQueue；start 后尚未完成，pollOne/poll 按预算推进所有逻辑目标，value 恰好一次 |
+| poll 驱动 execution | 零 Worker、多个 addScheduler；start 后尚未完成，pollOne/poll 按预算推进所有逻辑目标，value 恰好一次 |
 | SPMC CPU 提交 | 显式选择 queue::intrusive::spmc::Queue<>，默认 Context 保持多 producer 能力；明确单 producer 与多个 consumers 的归属；consumer 持锁暂停时 producer 仍能 enqueue；close 与进入提交区但尚未发布的 producer 竞争时 Worker 不提前退出，接纳节点 exactly-once 领取；不得将 SPMC handle 当作多 producer 通用入口 |
 | 完整成功链 | 两个逻辑目标共享 Executor，分支合流得到 42；最终 Receiver 在 caller；随后 run 返回并 join |
 | error 返回 | 在最后 continues_on 前注入 just_error(std::error_code) 或抛异常的 then；跳过后续 value 函数；set_error 恰好一次、在调用方线程、唤醒主线程退出 |
 | stopped 返回 | 在最后 continues_on 前注入 just_stopped；set_stopped 恰好一次且在调用方线程；不依赖成功分支才能退出 |
-| 共享消费与返回域隔离 | Context poll/run 与 Worker 都可领取任意逻辑队列；仅 caller Executor 执行最终 Receiver |
+| 共享消费与返回域隔离 | Context poll/run 与 Worker 都可领取任意逻辑调度目标；仅 caller Executor 执行最终 Receiver |
 | 真正并行 | 两个受控 gate 证明共享 CPU Executor 的两个 Worker 可同时领取并执行分支；不使用耗时阈值或 Worker 身份 作为业务 API 证明并行 |
 | 等待与竞态 | 空队列等待、新投递唤醒、虚假唤醒重查 predicate、检查空与入睡竞争、requestStop 前于 run/等待中/有工作时均无丢唤醒 |
 | 停止和关闭独立 | requestStop 停止 run 和 Workers；仍可接纳与 poll；close 拒收且未停止时排空；两种状态不混淆 |
-| 配置与逻辑身份 | addQueue noexcept 直接返回 8 字节 token；两个 uint32_t 表达 domain/index，签发无截断；0/1/N Worker 与数千逻辑目标正确；跨域 assert；共享 Executor 的不同逻辑身份仍不相等 |
+| 配置与逻辑身份 | addScheduler noexcept 直接返回 8 字节 token；两个 uint32_t 表达 domain/index，签发无截断；0/1/N Worker 与数千逻辑目标正确；跨域 assert；共享 Executor 的不同逻辑身份仍不相等 |
 | 固定存储与资源 | ContextInfo 登记不分配；每个非空数组一次精确申请，零数量不申请；start/poll 不增长元数据；null upstream 证明无 fallback；按原 allocator 回收 |
 | 构造失败与扩展 | 逐点注入数组分配、executor 构造、thread factory 失败；部分元素逆序销毁、已启动线程全部 close/join；自定义 queue 消费自己的 allocator；线程后端扩展实际被使用 |
-| 存活与竞争 | eAccepted 后立即消费、完成中销毁、producer/close 竞争恰好一次；最后访问结束前不释放 route/executor/operation；跨线程回收遵守后端契约 |
+| 存活与竞争 | eAccepted 后立即消费、完成中销毁、producer/close 竞争恰好一次；最后访问结束前不释放 executor/operation；跨线程回收遵守后端契约 |
 | 失败边界 | 提前关闭返回 scheduler 可在来源线程 stopped；单独断言完成/存活，不在来源线程修改 owner 专有状态；completion 存储抛异常按 provider 契约测试 |
 | 分层和配置 | 基础 queue/Executor/Worker 不调用 execution 算法；Queue 声明多 consumer 能力，BasicContext 拒绝不兼容 Executor；SchedulerHandle 满足标准 scheduler 接口，header/module 入口一致 |
 

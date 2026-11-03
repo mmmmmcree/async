@@ -69,7 +69,7 @@ public:
         }
         m_condition.notify_all();
     }
-    bool empty() const noexcept
+    bool isEmpty() const noexcept
     {
         std::lock_guard lock{m_mutex};
         return m_head_p == nullptr;

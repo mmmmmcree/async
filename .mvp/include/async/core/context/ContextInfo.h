@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/scheduling/LogicalQueue.h>
+#include <async/core/scheduling/SchedulerHandle.h>
 
 #include <atomic>
 #include <cstddef>
@@ -23,7 +23,6 @@ struct StorageRequirement
 struct ContextStorageRequirements
 {
     StorageRequirement m_workers;
-    StorageRequirement m_routes;
 };
 
 struct ContextAllocators
@@ -32,15 +31,14 @@ struct ContextAllocators
 public:
     ~ContextAllocators() noexcept = default;
     ContextAllocators() = delete;
-    ContextAllocators(Allocator workers, Allocator routes) noexcept
-        : m_workers(workers), m_routes(routes) {}
+    explicit ContextAllocators(Allocator workers) noexcept :
+        m_workers(workers) {}
     ContextAllocators(const ContextAllocators &) noexcept = default;
     ContextAllocators(ContextAllocators &&) noexcept = default;
     ContextAllocators & operator=(const ContextAllocators &) = delete;
     ContextAllocators & operator=(ContextAllocators &&) = delete;
 public:
     Allocator m_workers;
-    Allocator m_routes;
 };
 
 class ContextInfo
@@ -56,22 +54,22 @@ public:
     ContextInfo(ContextInfo && other) noexcept
         : m_domain_id(std::exchange(other.m_domain_id, 0)),
           m_worker_count(std::exchange(other.m_worker_count, 0)),
-          m_queue_count(std::exchange(other.m_queue_count, 0)) {}
+          m_scheduler_count(std::exchange(other.m_scheduler_count, 0)) {}
     ContextInfo & operator=(ContextInfo &&) = delete;
 
 public:
-    LogicalQueueToken addQueue() noexcept
+    SchedulerToken addScheduler() noexcept
     {
-        if (m_domain_id == 0 || m_queue_count == std::numeric_limits<std::uint32_t>::max()) {
+        if (m_domain_id == 0 || m_scheduler_count == std::numeric_limits<std::uint32_t>::max()) {
             std::terminate();
         }
-        const auto index = static_cast<std::uint32_t>(m_queue_count++);
-        return LogicalQueueToken{m_domain_id, index};
+        const auto index = static_cast<std::uint32_t>(m_scheduler_count++);
+        return SchedulerToken{m_domain_id, index};
     }
 
     WorkerCount getWorkerCount() const noexcept { return m_worker_count; }
     std::uint32_t getDomainId() const noexcept { return m_domain_id; }
-    std::size_t getQueueCount() const noexcept { return m_queue_count; }
+    std::size_t getSchedulerCount() const noexcept { return m_scheduler_count; }
 
 private:
     static std::uint32_t acquire_domain_id() noexcept
@@ -91,7 +89,7 @@ private:
     inline static std::atomic<std::uint32_t> s_next_domain_id{1};
     std::uint32_t m_domain_id;
     WorkerCount m_worker_count;
-    std::size_t m_queue_count = 0;
+    std::size_t m_scheduler_count = 0;
 };
 
 } // namespace lcf::async

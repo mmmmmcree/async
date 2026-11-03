@@ -108,27 +108,21 @@ private:
 int main()
 {
     constexpr async::WorkerCount k_worker_count = 2;
-    constexpr std::size_t k_queue_count = 2;
     const auto main_thread = std::this_thread::get_id();
 
     async::ContextInfo info{k_worker_count};
 
-    const auto left_token = info.addQueue();
-    const auto right_token = info.addQueue();
+    const auto left_token = info.addScheduler();
+    const auto right_token = info.addScheduler();
 
-    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count, k_queue_count);
+    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count);
     alignas(k_storage.m_workers.m_alignment)
         std::array<std::byte, k_storage.m_workers.m_bytes> worker_bytes;
-    alignas(k_storage.m_routes.m_alignment)
-        std::array<std::byte, k_storage.m_routes.m_bytes> route_bytes;
     std::pmr::monotonic_buffer_resource worker_arena{
         worker_bytes.data(), worker_bytes.size(), std::pmr::null_memory_resource()};
-    std::pmr::monotonic_buffer_resource route_arena{
-        route_bytes.data(), route_bytes.size(), std::pmr::null_memory_resource()};
 
     ExampleContext context{std::move(info), async::ContextAllocators{
-        std::pmr::polymorphic_allocator<std::byte>{&worker_arena},
-        std::pmr::polymorphic_allocator<std::byte>{&route_arena}}};
+        std::pmr::polymorphic_allocator<std::byte>{&worker_arena}}};
 
     auto left_scheduler = context.getSchedulerHandle(left_token);
     auto right_scheduler = context.getSchedulerHandle(right_token);
@@ -143,9 +137,7 @@ int main()
 
             // The caller owns and drives this return executor independently of Context.
             async::BasicExecutor<> caller_executor;
-            async::LogicalQueue caller_queue{caller_executor};
-
-            auto caller_scheduler = async::SchedulerHandle{caller_queue};
+            auto caller_scheduler = async::SchedulerHandle{caller_executor};
             auto left = ex::schedule(left_scheduler) |
                 ex::then([] {
                     std::this_thread::sleep_for(1s);
