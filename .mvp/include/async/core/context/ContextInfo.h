@@ -22,6 +22,7 @@ struct StorageRequirement
 
 struct ContextStorageRequirements
 {
+    StorageRequirement m_executors;
     StorageRequirement m_workers;
 };
 
@@ -31,13 +32,14 @@ struct ContextAllocators
 public:
     ~ContextAllocators() noexcept = default;
     ContextAllocators() = delete;
-    explicit ContextAllocators(Allocator workers) noexcept :
-        m_workers(workers) {}
+    ContextAllocators(Allocator executors, Allocator workers) noexcept :
+        m_executors(executors), m_workers(workers) {}
     ContextAllocators(const ContextAllocators &) noexcept = default;
     ContextAllocators(ContextAllocators &&) noexcept = default;
     ContextAllocators & operator=(const ContextAllocators &) = delete;
     ContextAllocators & operator=(ContextAllocators &&) = delete;
 public:
+    Allocator m_executors;
     Allocator m_workers;
 };
 
@@ -70,6 +72,7 @@ public:
     WorkerCount getWorkerCount() const noexcept { return m_worker_count; }
     std::uint32_t getDomainId() const noexcept { return m_domain_id; }
     std::size_t getSchedulerCount() const noexcept { return m_scheduler_count; }
+    std::size_t getExecutorCount() const noexcept { return m_scheduler_count + 1; }
 
 private:
     static std::uint32_t acquire_domain_id() noexcept

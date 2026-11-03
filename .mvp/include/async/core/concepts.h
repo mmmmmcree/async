@@ -57,7 +57,7 @@ concept waiting_work_executor_c = work_executor_c<Executor> and
     };
 
 template <typename Executor>
-concept multi_worker_executor_c = waiting_work_executor_c<Executor> and
+concept multi_worker_executor_c = work_executor_c<Executor> and
     requires {
         requires std::same_as<decltype(Executor::k_supports_multiple_workers), const bool>;
         requires Executor::k_supports_multiple_workers;

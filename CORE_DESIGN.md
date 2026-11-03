@@ -10,7 +10,7 @@
 
 首个消费目标是 LCFEngine 仓库 <https://github.com/mmmmmcree/LCFEngine.git> 的 `examples/shader_toy`，用于替换其 Asio 调度。本文提及该项目时均使用仓库 URL 与仓库内相对路径。
 
-运行时组合通用 Executor、N 个 Worker，以及 render/gfx 等具有线程归属的外部 Executor。专有系统通过逻辑调度目标的 SchedulerHandle 提交工作，并显式选择完成目标；业务选择提交语义与执行属性，不读取物理 Worker 下标，也不依赖其他系统的 scheduler 实现。
+运行时组合 N 个 Executor、M 个 Worker，以及 render/gfx 等外部执行域。一个 Executor 专属 Context 的驱动线程，其他 Executor 由 Workers 消费；零 Worker 时宿主也能推进普通任务。专有系统通过 SchedulerHandle 选择提交目标和返回域，不读取物理 Worker 下标。
 
 Core 应可嵌入、可由调用方驱动，独立支持 record、timer 和 coroutine。标准 sender/receiver 负责任务组合，公开 SchedulerHandle 直接满足标准 scheduler 协议，内部适配实现将运行时能力接入该模型。普通 sender 业务使用 CPU workers 不以协程实现为前提。
 
@@ -94,9 +94,9 @@ flowchart BT
 | `core/memory`、`core/cancellation` | 资源策略、对象分配、取消状态与 registration | 按需使用标准资源/stop vocabulary |
 | `core/details/containers` | 容器的元素生命周期、容量、布局与访问；内部 FixedCapacityVector 的容量在运行期确定，之后不扩容 | 使用显式 allocator；不依赖 Context、execution 或具体 queue；memory 负责资源策略，容器负责管理元素 |
 | `core/queue` | 工作接纳、存储、领取及并发/存活契约；按存储结构、拓扑和算法组织 | 与 scheduling 并列；当前实现只依赖 core/enums.h、具体节点和标准同步设施，不包含 concepts.h、Executor、Worker、Context 或 execution provider |
-| `core/scheduling`、`core/timer` | Executor、Workers、逻辑目标、标准 scheduler 句柄、驱动预算与 deadline 索引 | Executor 消费 Queue，Worker 驱动 Executor；基础机制使用实际需要的协议；SchedulerHandle 和内部 sender/operation 直接使用标准 execution 协议；不调用组合算法 |
+| `core/scheduling`、`core/timer` | Executor、Worker、标准 scheduler 句柄与 deadline 索引 | Executor 消费 Queue，Worker 驱动可等待执行对象；不包含 Context 的 EventLoop 组合与驱动预算 |
 | `core/coroutine` | Task、promise、awaiter、frame 与 continuation policy | Core 能力及语言协程协议 |
-| `core/context` | 组合与管理 executor、Workers、映射和生命周期；直接返回 SchedulerHandle | Core 组件和标准调度接口；不拥有业务 root scope，不增加句柄策略参数 |
+| `core/context` | N 个 Executor、M 个 Workers、专属 EventLoop、统一等待、启动模式与驱动预算 | 组合 Core 能力并管理生命周期；不拥有业务 root scope |
 | `execution.h`、后续扩展算法 | 聚合标准词汇、操作/查询接口、标准算法和扩展算法 | 复用统一协议；不依赖 Core |
 | `core/scheduling/details/` | 内部 sender/operation 的接纳、执行与完成适配 | 使用 Core 提交接口、概念别名和标准 operations/queries；不建立公开 adapters API，不被基础 queue/executor 反向包含 |
 
@@ -108,15 +108,19 @@ flowchart BT
 
 ```mermaid
 flowchart TB
-    C["L0 Context / ContextInfo<br/>配置身份 + Executor + N Workers"]
+    C["L0 Context / ContextInfo<br/>配置身份 + N Executors + M Workers"]
     S["L1 SchedulerHandle / SchedulerToken<br/>标准 scheduler 句柄与配置身份"]
     E["L2 BasicExecutor&lt;Queue&gt;<br/>接纳、存储及选择可执行工作"]
-    W["L2 BasicWorker<br/>多个 Worker 共享 Executor"]
+    W["L2 BasicWorker<br/>M 个 Worker 驱动普通 Executor 集合"]
     P["L3 队列后端、ready/timer、wake 与资源策略"]
     O["L4 ScheduleSender / Operation / Record"]
     T["L5 Task / Awaitable / Awaiter / Environment"]
     C --> E
     C --> W
+    L["L2 ContextEventLoop<br/>owner Executor + 统一等待"]
+    C --> L
+    S -.-> L
+    L -.->|"无 Workers 时推进普通域"| E
     C -.->|"token 获取句柄"| S
     S --> E
     W --> E
@@ -127,13 +131,16 @@ flowchart TB
 
 | 层 | 目标类型 | 定位与功能 | 所有权 |
 | --- | --- | --- | --- |
-| L0 | `BasicContext`、`async::Context` | 组合 Executor、Worker 集合、配置身份和关闭协议 | 拥有共享 Executor 与 Workers；独立返回 Executor 由调用方驱动 |
+| L0 | `BasicContext`、`async::Context` | 组合 Executor、Worker 集合、配置身份和关闭协议 | 拥有普通 Executor 数组、专属 EventLoop 和 Worker 集合 |
 | L0 | `ContextInfo` | 声明 Worker 数量，通过 addScheduler 登记逻辑目标 | 当前只保存域 ID 和计数；后续按需加入 QueueConfig |
 | L1 | `SchedulerToken` | 配置阶段签发的域 ID 与目标下标，供 Context 构造后查询句柄 | 两个 uint32_t，可复制；与 SchedulerHandle 同在 SchedulerHandle.h |
 | L1 | `SchedulerHandle<Executor>` | 自带逻辑身份，满足标准 scheduler 并直接向 Executor 提交 | 保存非拥有 Executor 指针、域 ID 和下标；可复制，不延长 Context 寿命 |
 | L1 | `ProducerEndpoint` | 固定 producer 预登记的低延迟提交入口 | 借用专用 lane，遵守 producer 限制 |
 | L2 | `BasicExecutor<Queue>` | 接纳 Record，从 Queue 取出可执行对象并调用 execute；不创建线程 | 持有 Queue，可由多个 Worker 和宿主并发驱动 |
-| L2 | `BasicWorker<Executor, ThreadHandle>` | 等待并消费 Executor 提供的工作；数量由宿主预算控制 | 每个 Worker 拥有线程 join 句柄并借用 Executor，不绑定逻辑目标 |
+| L2 | `BasicWorker<Executor, ThreadHandle>` | 等待并消费 Executor 提供的工作；数量由宿主预算控制 | 每个 Worker 借用 ExecutorSet 并拥有 join 句柄，不绑定普通目标 |
+| L2 | `details::ContextEventLoop` | 绑定 owner，驱动专属 Executor；无后台驱动时兼顾普通域 | 内嵌专属 Executor，借用普通集合和事件循环信号 |
+| L2 | `details::ExecutorSet` | Worker 面向的可等待执行对象，轮转扫描普通 Executor | 借用稳定数组，维护共享消费游标与停止/关闭状态 |
+| L3 | `details::NotifiedExecutor`、`details::WorkSignal` | 组合原有 Executor 与成功提交通知，序号等待防止丢唤醒 | 包装对象与两个信号均由 Context 保活 |
 | L3 | `queue::intrusive::mpmc::Queue<>`、`queue::intrusive::spmc::Queue<>`、后续 non_intrusive 后端、`BoundedProducerLane`、`InboxSet` | 实现 producer 入口、多 consumer 消费及公平/优先级选择 | node 借用；实际策略兑现并发与进展契约 |
 | L3 | `IntrusiveReadyQueue`、`HeapTimerIndex`、`TimerNode` | owner-local ready/backlog 与 deadline 索引 | node 嵌入 operation；动态 backing storage 来源明确 |
 | L3 | `Clock`、`WakePolicy`、`std::pmr::memory_resource`、`allocation_resource_c`、`StopState` | 时钟、等待握手、分配能力与取消支持 | 策略或具体状态；资源引用非拥有 |
@@ -221,7 +228,7 @@ ready queue 和 timer index 不执行 receiver，也不在内部锁下调用用�
 
 `using lcf::async::record_submitter_c;` 可把同一 concept 引入其他命名空间；需要改名时，可定义带完整参数的转发 concept `runtime_submitter_c = record_submitter_c<Submitter, Record>`。concept 不是类型，不能用类型别名语法替代；通常不新增同义公共名字。
 
-约束放在实际消费能力的位置。BasicContext<Executor, ThreadHandle> 检查多 Worker 执行、线程启动与工厂能力；getSchedulerHandle 返回 SchedulerHandle<Executor>。BasicExecutor<Queue> 使用 work_queue_c，实际提交时检查 Queue 与 Record 的接纳关系。SchedulerHandle 尚不知道 Record，只在 tryEnqueue 成员上检查二元 record_submitter_c，不人为选择 probe record。内部 receiver_of_c 复用标准完成签名；公共句柄完整后再验证 scheduler_c，避免递归约束。单类型参数优先使用 template <concept Type>；跨类型关系、参数包和条件成员使用 requires，审查表见 MVP 指南第 4.6 节。
+约束放在实际消费能力的位置。BasicContext<Executor, ThreadHandle, LoopExecutor> 只对普通 Executor 要求 multi_worker_executor_c；专属 LoopExecutor 使用 work_executor_c，BasicWorker 消费的集合提供 waiting_work_executor_c。工厂与启动器分别在构造和启动阶段检查。SchedulerHandle 在实际 tryEnqueue 成员上检查二元 record_submitter_c，不人为选择 probe record；内部 receiver_of_c 复用标准完成签名。
 
 Core executor 不自动满足标准 scheduler，标准 scheduler 也不自动满足 `record_submitter_c`。反向接入外部 scheduler 时，需要显式 adapter 管理 `schedule/connect/start` 的 operation state 和失败映射，不能强制要求其提供旧版 `enqueue/workStarted/workFinished` 等额外成员，也不能继承低延迟入口的保证。
 
@@ -233,7 +240,7 @@ Core executor 不自动满足标准 scheduler，标准 scheduler 也不自动满
 
 | 对象 | 资源来源与管理方式 |
 | --- | --- |
-| Context 配置与固定运行时数组 | ContextInfo 只保存域 ID 和计数；Workers 使用显式 typed allocator 与字节/对齐报告；Executor 内嵌，scheduler 身份直接存于句柄，无逐目标数组 |
+| Context 配置与固定运行时数组 | ContextInfo 保存域和计数；普通 Executor 与 Worker 各一块固定 typed storage；专属 Executor 和等待状态内嵌 |
 | queue/timer backing storage | 各自存储 owner 消费的容量与 allocator/policy；不自动使用 Context 数组 allocator |
 | record、timer node、connect 返回的 operation、adaptor 成员 | 优先嵌入 owner 的稳定存储，不因统一接口而强制堆分配 |
 | async 自有操作的额外动态存储和 owning post 闭包 | receiver 环境可查询的 allocator 优先，否则使用操作绑定的显式 Context 默认值 |
@@ -243,9 +250,9 @@ Core executor 不自动满足标准 scheduler，标准 scheduler 也不自动满
 
 `memory_resource` 提供字节后端，`polymorphic_allocator<T>` 把元素数量转换为带对齐的申请。PMR 容器从 resource 指针构造是合法便捷接口，不能把接受一个 resource 参数等同于完整的资源设计。每项存储仍需声明数量、容量、分配/释放线程、失败行为与寿命。
 
-MVP 的 ContextInfo(worker_count) 通过 addScheduler() noexcept 登记逻辑目标并直接返回 token，当前只增加计数，不分配逐目标配置存储。零 Worker 时由宿主驱动；已移动配置上登记属于契约违例。域 ID 耗尽时终止，不回绕复用。Context::storageRequirements(info) 只报告 Worker 固定数组请求的字节数和对齐，乘法溢出终止。ContextAllocators 只提供 Worker allocator；Executor 内嵌，其 Queue 参数由工厂注入，ThreadLauncher 独立选择线程后端。
+MVP 的 ContextInfo(worker_count) 通过 addScheduler() noexcept 登记普通目标，直接返回 token；配置只计数。Context::storageRequirements(info) 报告普通 Executor 数组和 Worker 数组的字节数/对齐，ContextAllocators 分别绑定资源。专属 LoopExecutor 内嵌，零普通目标、零 Worker 时不需数组分配；构造不启动线程。
 
-Worker 固定数组由 `core/details/containers/FixedCapacityVector.h` 的内部容器管理：容量在运行期指定，已构造元素数量可逐步增加，元素连续存储且追加不迁移已有元素。`core/memory` 负责分配与回收策略，容器属于 `core/details/containers`。C++26 `std::inplace_vector<T, N>` 将容量放在类型中、元素内嵌于容器对象，和本轮通过 allocator 获取运行期容量的容器有不同的存储契约；不能仅因固定容量就直接替换。
+普通 Executor 和 Worker 固定数组由 `core/details/containers/FixedCapacityVector.h` 管理：运行期确定容量，逐步构造元素且不迁移已有对象；每个非空数组一次 typed allocation。Context 构造时建好 Executor，Worker 存储预留后由 startWorkers/run 构造；构造后的 Executor 地址保持稳定。
 
 数量确定后，用正确对齐的有界缓冲区和 null upstream 可以证明元数据无堆 fallback；合并多个数组时必须计入各段对齐，pool 的 chunk/缓存量不能用元素字节数代替。兼容的生命周期与线程需求允许宿主显式共用 resource，但不能默认把所有需求汇入一个 Context resource。逐项申请审查、正确用法和失败验证见 MVP 指南第 6 节；无异常分配能力另按本文第 4.4 节选择。
 
@@ -275,10 +282,11 @@ Worker 固定数组由 `core/details/containers/FixedCapacityVector.h` 的内部
 app::TrackingMemoryResource tracked_resource{upstream_resource, statistics};
 ContextInfo context_info{worker_count};
 ContextAllocators context_allocators{
+    std::pmr::polymorphic_allocator<std::byte>{&tracked_resource},
     std::pmr::polymorphic_allocator<std::byte>{&tracked_resource}};
 ```
 
-这里的 hook 跟踪 Context 运行时 Worker 存储。当前 ContextInfo 只保存域 ID 和计数，scheduler 身份由句柄携带，不需要运行时路由存储；后续加入 QueueConfig 容器时，其构造期分配与运行时数组的 allocator 分开管理。
+这里的 hook 跟踪 Context 运行时普通 Executor 与 Worker 数组。ContextInfo 只计数；后续 QueueConfig 容器的配置期分配与运行时 typed storage 分开管理。
 
 execution 的普通 allocator 可通过 allocator wrapper 加入同类行为。无异常 resource 则通过满足 `allocation_resource_c` 的组合装饰器包装 `tryAllocate/deallocate`；其 hook 也须不抛异常，不能因记录一次分配而递归触发被跟踪的分配器。
 
@@ -326,7 +334,7 @@ concept allocation_resource_c = requires(
 
 标准 `get_allocator` 本身不保证可恢复的无异常分配。受限 operation 对所选 allocator/resource 检查额外能力或声明其不分配条件；无法满足时明确诊断，不能忽略用户 allocator 覆盖而偷偷换成 Context 默认。严格资源的具体类型和值通过显式 ResourcePolicy/工厂绑定，静态类型在创建对应对象前确定，不能塞入普通 PMR 引用冒充同一契约。
 
-资源策略的扩展落在实际存储 owner 上：queue、timer backing storage、typed operation storage 与 FramePolicy 各自消费所需分配能力。BasicContext 通过 ExecutorFactory::makeExecutor 为一个 Executor 绑定 Queue 参数，不把数组 allocator 自动传给 Queue。基础 queue/executor concept 不要求默认构造；默认 intrusive queue 没有动态 backing storage，不保存无用 resource。PMR 装饰器已可支持统计等行为，无需增加只有转发的 ResourcePolicy。
+资源策略的扩展落在实际存储 owner 上：Queue、timer、operation 和 FramePolicy 各自消费所需能力。普通与专属 Executor 工厂分别绑定 Queue 参数，ContextAllocators 只覆盖对象数组；默认 intrusive Queue 没有动态 backing storage，不接收无用 allocator。PMR 装饰器支持统计，无需增加只有转发作用的 ResourcePolicy。
 
 线程资源独立于容器。`std::thread` 的启动状态、栈和系统句柄没有标准 PMR 注入接口；MVP 用 `BasicWorker<Executor, ThreadHandle>`、`join_handle_c` 和 `thread_launcher_c<Launcher, ThreadHandle>` 暴露后端。join 句柄只表达等待完成能力，线程的创建由 launcher 负责：在独立线程恰好调用一次 entry，返回句柄代表该执行；join 等待该执行结束并与其完成同步。检查 joinable/join 的表达式不能证明另起了线程，这些语义须由实现及集成测试兑现。默认 ThreadLauncher<std::thread> 的线程资源不受 allocator 控制；严格路径用受控后端或宿主线程驱动 executor。mutex/CV 的平台资源、provider 算法、异常对象和用户值同样单独审查。
 
@@ -346,26 +354,27 @@ registration 处理注册与 request_stop 的竞争，以及析构期间 callbac
 
 ### 5.1 Executor 与 Worker 的驱动关系
 
-`BasicExecutor<Queue>` 封装接纳、队列取出和可执行对象的执行。executeOne() 不等待新工作，尝试执行一项，但可能等待 Queue 内部 mutex；waitAndExecuteOne() 可等待工作再执行一项。Executor 不创建线程、不包含隐式永久循环或 timer/I/O reactor。event loop 是宿主持续驱动 Executor 并协调外部事件源的过程；MVP 的 Context poll/run 与后台 Workers 驱动同一个 Executor。
+`BasicExecutor<Queue>` 负责接纳和单步执行，不创建线程。独立使用时可通过 waitAndExecuteOne 等待自己的 Queue；Context 组合多个 Executor 时，由执行集合负责统一等待，不能逐个阻塞等待某个队列。Queue 的发布、关闭和节点存活契约保持独立。
 
-多个 Worker 与宿主驱动者可以共享同一个 Executor，不区分工作类别。Executor/QueuePolicy 决定下一项可执行工作；Worker 只提供执行线程。多 consumer Queue 必须保证接纳、等待、出队、关闭安全，回调在锁外执行。仅有一个后台 Worker 不代表总消费并发度为一，宿主也可能通过 poll/run 加入执行。
+Context 中的普通 Executor 由 M 个同类 Worker 共享。内部 ExecutorSet 轮转选择扫描起点，尝试 executeOne，全部暂时无工作时等待统一 WorkSignal。调度句柄引用 NotifiedExecutor，成功提交后通知共享等待者和事件循环；投递后不再访问 record。WorkSignal 在扫描前读取持久序号，扫描后按原序号等待，避免工作发布与入睡竞争造成丢唤醒。工作信号与事件循环信号分离，Worker 不会抢走专属事件循环任务的唤醒。
+
+EventLoop 独占一个 Executor，由首次调用 run/poll/pollOne 的线程建立 owner；后续驱动保持同一线程，禁止重入或并发驱动。Workers 不消费该 Executor。未启动 Workers、Worker 数为零或 joinWorkers 完成后，EventLoop 也轮转推进普通 Executor；Workers 运行期间则专注处理专属任务。只有通用共享 Executor 要求 multi_worker_executor_c；专属 LoopExecutor 只要求 work_executor_c，不强加多 consumer 能力。
 
 | 成员入口 | 行为 |
 | --- | --- |
-| `Executor::executeOne()` | 不等待新工作，尝试取出并执行一个 ready record；返回 true 表示该 record 已执行并返回 |
-| `Executor::waitAndExecuteOne()` | 可等待工作；执行一个 record 后返回 true，停止或关闭且排空时返回 false |
-| `Context::pollOne()` | 转调共享 Executor 的 executeOne，执行至多一项 |
-| `Context::poll(PollBudget = {})` | 不等待新工作，在 record 边界检查数量和软时间预算 |
-| `Worker` 循环 | 等待并驱动共享 Executor，直至停止或关闭且排空 |
-| `Context::run()` | 当前线程加入共享 Executor 的等待驱动，直到停止或关闭且排空 |
+| `Executor::executeOne()` | 尝试取出并执行一个 ready record；不等待新工作，但可能等待 Queue 的内部锁 |
+| `Executor::waitAndExecuteOne()` | 独立 Executor 的可选等待驱动；Context 使用集合级等待 |
+| `Context::startWorkers(launcher)` | 仅启动后台 Workers，调用线程返回；重复调用不增加线程 |
+| `Context::run(launcher)` | 启动尚未启动的 Workers，在当前线程运行 EventLoop，直到停止或该域关闭且排空 |
+| `Context::pollOne()` | 不启动线程；在 owner 线程至多执行一项；无运行中的 Workers 时也推进普通域 |
+| `Context::poll(PollBudget = {})` | 同一驱动范围，按 record 数和软时间预算推进；不等待新工作 |
+| `Worker` 循环 | 驱动普通 Executor 集合，统一等待；不绑定某个 Executor 或 scheduler |
 
-空唤醒不计为执行记录。WakePolicy 协调队列状态、下一个 deadline 和 stop/close，避免“检查为空 → producer 发布并通知 → owner 入睡”的丢唤醒。timer 注册/取消若限定由 owner 访问，则跨线程请求经控制 record 投递。
+executeOne/pollOne 限制 record 数量，不限制函数链长度；预算不能抢占一个 record。空查询与无工作返回不证明业务 root 已完成。requestStop 唤醒两种驱动者并在 record 边界退出；close 先关闭准入，再发布集合关闭状态并唤醒，允许未停止的驱动者排空。标准单队列等待与 Context 集合等待是两种组合方式，不应叠加阻塞等待。
 
-`executeOne` 和 `Context::pollOne` 限制 record 数量，不限制一次 record 内的函数链长度。record 可恢复协程直至下一挂起点，也可能同步触发其他 completion，因此不能将其解释为“一次 resume”或固定业务指令数。
+`work_executor_c` 描述 executeOne/close/isEmpty，`multi_worker_executor_c` 增加明确的多 Worker 能力声明，不要求每个成员自行阻塞等待；`waiting_work_executor_c` 独立描述 waitAndExecuteOne。BasicWorker 实际借用的 ExecutorSet 满足等待协议。`record_submitter_c` 只检查实际 Record 的接纳能力；概念检查不能证明线程安全、恰好一次或生命周期语义，仍需实现及测试验证。
 
-`record_submitter_c<Submitter, Record>` 仅检查目标是否接纳实际 Record，不要求它驱动工作；SchedulerHandle 提供这项能力。`work_executor_c` 检查 executeOne/close/isEmpty，`waiting_work_executor_c` 增加 waitAndExecuteOne，`multi_worker_executor_c` 要求实现明确声明支持多 Worker 消费。投递目标不因有 tryEnqueue 就成为工作执行器。concept 表达式只能检查接口形状；eAccepted 后的恰好一次执行、节点存活、停止/关闭和多 consumer 安全都属于模型必须兑现的语义契约，由实现审查及测试验证。`PollBudget`、`PollReport`、`poll`、`runOne` 和 `run` 属于 Context/Worker 的组合接口。
-
-`PollBudget` 和 `PollReport` 是 `Context::poll()` 的参数与结果类型，位于 `core/context/poll_structs.h`；它们不属于 Queue、Executor 或 Scheduler 的基础协议。`EnqueueResult` 位于 `core/enums.h`；`protocol.h` 只聚合标准 execution 协议，不包含 Core 运行时定义。
+`PollBudget` 和 `PollReport` 属于 `Context::poll()`，位于 `core/context/poll_structs.h`。protocols/execution 不依赖这些 Core 值类型。timer、文件监听等事件源后续接入 EventLoop 的等待后端，不加入 Queue 或 BasicExecutor 的基础协议。
 
 ### 5.2 队列职责与选择
 
@@ -416,7 +425,7 @@ using Executor = async::BasicExecutor<SubmitQueue>;
 | 逻辑调度目标入口 | 多 producer；CPU pool 可有多个 consumer | queue::intrusive::mpmc::Queue<> 正确性基线；明确标记多 consumer 能力 |
 | owner 本地 ready/backlog | 单线程维护 | IntrusiveReadyQueue，借用节点，不额外分配 |
 | 多 producer 专用入口 | 固定 producer 或一般 producer | 可登记 BoundedProducerLane；由符合其消费契约的 Executor 收取 |
-| CPU 工作执行 | N 个 Worker 消费同一 CPU Executor | 多 consumer 安全队列；逻辑调度目标数与 Worker 数无固定比例 |
+| CPU 工作执行 | M 个 Worker 消费多个普通 Executor | 集合级统一唤醒；Executor 数与 Worker 数独立，专属域仅由 owner 驱动 |
 
 公开的 work_queue_c<Queue> 要求 Queue::Executable 满足 executable_c，并提供 tryEnqueue/tryPop/close/isEmpty。等待与停止由 waiting_work_queue_c、stoppable_work_queue_c 表达。Executable 不暗示节点布局；Record 返回可执行对象的稳定左值引用，BasicExecutor 在实际提交点检查 Queue 是否接纳它。
 
@@ -424,7 +433,7 @@ Queue 必须显式定义编译期 bool 常量 k_supports_multiple_producers 与 
 
 默认 ExecutionNode 为 queue::intrusive::mpmc::Queue<> 和标准 schedule adapter 共用的 intrusive hook。链表链接与 queued 标记属于该 Queue 实现，不是所有 Queue/Node 的要求。自定义 Queue 可以使用不同节点；若要接入当前标准 schedule adapter，还须接纳其 operation 内嵌的 ExecutionNode，或提供匹配的 operation adapter。最终适配按后端选择 record/hook，保持可执行语义与侵入式链接分离。
 
-队列策略由逻辑目标配置或 producer 登记选择，用户经 SchedulerHandle 提交，不挑物理 Worker。MVP 的 addScheduler() 只登记稳定身份，全部目标共享 FIFO 工作队列；后续通过可选 QueueConfig 表达提交延迟、容量、顺序、优先级、公平性、并发上限和执行亲和性，并以 verify/benchmark 逐项验证。
+队列策略由逻辑目标或 producer 登记选择，用户经 SchedulerHandle 提交，不挑物理 Worker。MVP 每个普通目标有独立 FIFO Queue，全部由 Worker 集合轮转领取；后续 QueueConfig 再描述提交延迟、容量、优先级、公平性、顺序、并发上限与亲和性。
 
 | 候选入口 | producer 成本 | consumer 限制 | 定位 |
 | --- | --- | --- | --- |
@@ -434,7 +443,7 @@ Queue 必须显式定义编译期 bool 常量 k_supports_multiple_producers 与 
 | exchange intrusive SPMC | 单 producer 固定次数原子发布 | consumer 侧串行处理发布缺口；producer 不获取 consumer mutex | MVP 的 CPU 提交路径 |
 | 固定 producer 的预分配 SPSC ring | 无 producer 间共享入队锁，满时立即返回 | 必须指定唯一 consumer，或由 owner 汇入多 consumer Executor | 专有线程低延迟候选 |
 
-MVP 提供显式可选的 BasicExecutor<queue::intrusive::spmc::Queue<>>。默认 Context 使用 queue::intrusive::mpmc::Queue<>，示例 Context 的唯一工作入口使用 SPMC，caller 是唯一 producer。record 内嵌稳定节点；提交不分配、不获取 consumer mutex，以固定次数原子操作交换 head 并发布前驱链接。consumer mutex 串行 pop，发布缺口返回空而不自旋，发布完成后通知等待者。close 阻止新提交并等待在途 producer；关闭、producer 静止且为空时等待驱动才退出。一个共享 SPMC inbox 只允许一个 producer，多个系统必须使用独立 lane 后汇合，不能因逻辑调度目标不同而共用它并发提交。
+MVP 提供显式可选的 BasicExecutor<queue::intrusive::spmc::Queue<>>。默认 Context 使用 queue::intrusive::mpmc::Queue<>，示例 Context 的唯一工作入口使用 SPMC，caller 是唯一 producer。record 内嵌稳定节点；提交不分配、不获取 consumer mutex，以固定次数原子操作交换 head 并发布前驱链接。consumer mutex 串行 pop，发布缺口返回空而不自旋，发布完成后通知等待者。close 阻止新提交并等待在途 producer；关闭、producer 静止且为空时等待驱动才退出。一个共享 SPMC inbox 只允许一个 producer，多个 producer 若共享一个 SPMC 目标仍违反契约；当前不同 token 有各自 Queue，可由不同单 producer 提交。
 
 该模式限制的是 producer 发布路径的队列操作量：不获取 consumer mutex、不扫描 backlog、不进行 CAS 重试循环。consumer 的 poll 仍可能等待其他 consumer 持锁。atomic notification 的库实现、平台调度/中断和 cache miss 都影响实际时间，因此不能由源码操作数量推出完整 enqueue 的硬实时墙钟上界。benchmark 分别测量发布、通知、consumer 争用及 receiver 执行；严格平台仍需单独分析 WCET。
 
@@ -444,7 +453,7 @@ MVP 提供显式可选的 BasicExecutor<queue::intrusive::spmc::Queue<>>。默�
 
 ### 5.3 专有 producer 的低延迟契约
 
-render/gfx 的逻辑调度目标应能选择独立的低延迟 ingress，避免在 TaskSystem 通用入口的锁竞争上等待；CPU 工作仍由共享 Executor 的任意可用 Worker 执行。producer 选择的是逻辑调度目标及其入口策略，不是物理 Worker。MVP 的 queue::intrusive::spmc::Queue<> 是一个单 producer lane，由 N 个 Worker 共同消费；它不是可供多个系统任意并发提交的通用 CPU scheduler。后续多个 producer 各自使用独立 lane，再由 Executor 汇合消费。
+render/gfx 的逻辑调度目标应能选择独立的低延迟 ingress，避免在 TaskSystem 通用入口的锁竞争上等待；CPU 工作仍由 Worker 集合中的可用线程执行。producer 选择的是逻辑调度目标及其入口策略，不是物理 Worker。MVP 的 queue::intrusive::spmc::Queue<> 是一个单 producer lane，由 N 个 Worker 共同消费；它不是可供多个系统任意并发提交的通用 CPU scheduler。后续多个 producer 各自使用独立 lane，再由 Executor 汇合消费。
 
 ```text
 render producer --> render SPMC lane --+
@@ -475,46 +484,43 @@ PollBudget 包含 record 数和持续时间限制；PollReport 的 `m_records` �
 
 ## 6. Workers、逻辑调度目标与 Context
 
-### 6.1 组件职责
+### 6.1 组件职责和启动模式
 
-MVP 的 `BasicContext<Executor, ThreadHandle>` 拥有一个 Executor、N 个同类 BasicWorker 和配置域 ID。通过 token 获取的 SchedulerHandle 直接引用该 Executor，并携带逻辑目标身份。Worker 反复调用 `waitAndExecuteOne()`；宿主可通过 Context 的 `pollOne/poll/run` 驱动同一个 Executor。Worker 数量与逻辑目标数量独立，任务不绑定物理 Worker 下标。
+`BasicContext<Executor, ThreadHandle, LoopExecutor>` 组合 N ≥ 1 个 Executor 与 M ≥ 0 个同类 Worker。N 包含一个事件循环专属 Executor；其余为普通执行域。MVP 的每次 addScheduler 登记一个普通目标，Context 构造时为它创建一个 Executor；因此 N = 普通 scheduler 数 + 1，M 与 N 独立。只有事件循环的配置也有效。
 
-Executor 负责接纳、选择和执行工作，不创建线程；Worker 只拥有线程 join 句柄并驱动借用的 Executor，不识别业务类型或逻辑调度目标。后台 Worker 与宿主驱动者都可以领取任一逻辑调度目标的工作。BasicContext 要求 `multi_worker_executor_c`，并发消费契约由具体 Queue 兑现。
+构造只准备稳定存储和执行对象，不创建线程。startWorkers 只启动 M 个后台 Worker，宿主可继续自己的控制流；run 启动尚未启动的 Workers，并在调用线程运行 EventLoop。已有宿主循环可以调用 startWorkers 后自行 poll/pollOne。poll 不隐式启动后台线程。线程启动器从 Context 构造参数移至 startWorkers/run，移动专用启动器也可使用。
 
-Worker 不划分 control/CPU 类别。`Context::run()` 只表示当前线程加入执行，不承诺主线程亲和性。需要固定线程执行时，宿主可使用独立的零 Worker Context 或自行驱动的 Executor；主 event loop 协调外部事件源和后台工作时，依靠明确的 scheduler 目标切换。后续可通过 `addScheduler(QueueConfig)` 表达亲和性等属性，当前仅提供 `addScheduler()`，不预设队列类别。
+```cpp
+// Choose the entry for the host's execution model.
+context.startWorkers();           // Background execution; returns to the host.
+// Or, on another Context:
+other_context.run();              // Workers plus this thread's event loop.
+// A host-managed loop can call context.poll() after startWorkers().
+```
+
+run 所在线程不强制是进程主线程。专属 scheduler 的已接纳任务只在 owner 驱动时执行；仅启动 Workers 时，宿主必须避免依赖无人驱动的事件循环完成。普通工作不绑定某个 Worker；Worker 为零时也能由 run/poll 推进，但耗时 CPU record 会延迟单线程事件处理。
 
 ### 6.2 SchedulerHandle 与用户可观察策略
 
-SchedulerHandle 是用户持有的逻辑提交目标，包含非拥有 Executor 指针、域 ID 与目标下标；不再需要独立的逻辑调度目标代理类。句柄可以复制，同一 Executor 与同一身份的句柄相等；不同 token 的句柄即使共享 Executor 也不相等。逻辑目标数量可远多于 Worker 数量，但身份不同不自动产生优先级、公平性、独立容量或串行保证；FIFO 只约束取出顺序，不保证多 Worker 的开始或完成顺序。
+配置阶段 addScheduler 返回 SchedulerToken，构造后 getSchedulerHandle(token) 获取普通提交目标。getEventLoopSchedulerHandle() 直接返回专属目标。两者都满足标准 scheduler，可复制且不拥有执行资源；MVP 中具体句柄的模板参数可能不同，业务用 auto 或模板保存，不强求相同具体类型。独立 Executor 仍可直接构造 SchedulerHandle{executor}。
 
-| 后续 QueueConfig 属性 | 用户可观察的语义 |
-| --- | --- |
-| ingress/producer contract | 提交是否等待、是否有界、满载如何返回；render/gfx 可选择专用入口 |
-| priority/fairness | 跨逻辑调度目标的执行优先级、公平性及老化规则 |
-| ordering | FIFO 或可重排范围；完成顺序的保证 |
-| concurrency | serial、bounded-parallel 或 pool-parallel |
-| affinity/execution domain | 是否必须由指定 owner 推进；显式接入外部 render/gfx 执行域 |
-| resource budget | 容量、backlog 上限和拒收策略 |
+MVP 每个普通 token 对应独立 Executor/Queue，所有普通域共享 Worker 集合。不同 token 不绑定不同线程，同一队列也允许多 Worker 消费，不提供串行或完成顺序保证。轮转扫描用于基础可用性，不承诺优先级或时间上界；后续 QueueConfig 再描述入口、容量、公平性、并发上限和亲和性。逻辑目标仍是用户语义，当前的一目标一 Executor 是 MVP 映射，不要求未来保持一一对应。
 
-默认 Context 使用 queue::intrusive::mpmc::Queue<>，支持多 producer、多 consumer。示例显式使用 `BasicExecutor<queue::intrusive::spmc::Queue<>>`，调用方是 Context 的唯一 producer，后台 Worker 与主线程 run 都可消费；两个 sender 分支合流后通过独立的 caller scheduler 返回调用方。SPMC 限制适用于整个共享 Queue，不因 SchedulerHandle 的身份不同而允许多个 producer。
+默认普通域使用 intrusive::mpmc::Queue<>；示例的两个普通域显式使用 intrusive::spmc::Queue<>，各自遵守单 producer 契约。专属域默认使用支持多 producer 的 BasicExecutor<>，接纳 Worker 返回的 completion。只有 owner 消费专属域，不意味着其 producer 也是单线程。低延迟队列的 producer 保证不自动涵盖统一通知的系统成本，也不等于通用硬实时上界。
 
-调用方返回 Executor 独立拥有和驱动，示例使用 queue::intrusive::mpmc::Queue<>。SPMC 的快速路径用于反方向的工作提交：producer 不获取 consumer mutex、不分配、原子步骤固定；consumer 之间仍可能等待。通知、抢占和平台调度影响墙钟延迟，不宣称通用硬实时上界。
+### 6.3 配置、内存和生命周期
 
-### 6.3 MVP 配置、身份与生命周期
+ContextInfo 保存配置域、Worker 数和普通目标数。getSchedulerCount 返回普通目标数，getExecutorCount 返回总数，包含专属 Executor。addScheduler noexcept 只签发计数 token；真正的 Executor 数组分配发生在 Context 构造。token 和 handle 定义在 SchedulerHandle.h；token 的 domain/index 仍为两个 uint32_t，不默认构造、不允许数值伪造，不保活 Context。
 
-`ContextInfo(worker_count)` 保存 Worker 数量、配置域 ID 和逻辑目标计数。`addScheduler() noexcept` 直接签发 `SchedulerToken`，零 Worker 时也允许登记，由宿主 poll/run 推进。当前没有逐目标配置数据，因此只需计数，不保存空配置结构或 vector；Context 也不构造逐目标代理对象。后续 QueueConfig 出现后再引入普通配置容器。
+getSchedulerHandle 检查域后按 token 下标访问稳定 Executor 数组。SchedulerHandle 直接引用通知包装对象，无独立逻辑队列代理或路由表。Context 不可移动，数组构造后不扩容；专属 Executor 内嵌。ContextAllocators 分别提供 m_executors 与 m_workers，storageRequirements 报告两块固定数组的字节数和对齐；不覆盖 Queue 内部 backing storage、线程栈或 OS 资源。两个工厂分别创建普通 Executor 和 LoopExecutor，构造失败依靠已构造成员回滚，此时没有后台线程。
 
-SchedulerToken 与 SchedulerHandle 统一定义在 `core/scheduling/SchedulerHandle.h`。token 保存两个 std::uint32_t：域 ID 与目标下标，共 8 字节。配置计数和字节计算仍用 std::size_t；每个配置最多登记 UINT32_MAX 个逻辑目标，签发前检查上限，避免截断或回绕。域号从 1 起单调签发，0 表示配置已移走；域号耗尽时终止、不复用，不承诺跨独立动态模块唯一。向已移动配置登记属于契约违例。
+startWorkers/run 启动线程失败时，持久停止整个 Context，join 已启动 Worker 后重抛；已接纳 record 保留供宿主手动排空，不能直接销毁。Context 的 start/drive/join 生命周期操作由宿主串行调用；requestStop/close 和符合 Queue producer 契约的提交可以跨线程。启动只进行一次；停止后不自动重启。
 
-token 不能默认或数值构造，也不保活 Context。`getSchedulerHandle(token) const noexcept` 要求 token 来自构造该 Context 的配置；assert 检查 domain 后，直接返回包含 Executor 引用与 token 身份的句柄，无路由查表或动态分配。独立返回 Executor 直接使用 `SchedulerHandle{executor}`，不需要 Context token；其域 ID 与下标为 0，同一独立 Executor 构造的句柄相等。token、handle 和 operation 均不延长 Executor 寿命，宿主保证最后访问结束后才销毁执行域。
+requestStop 停止 Worker 集合及 EventLoop 的等待循环，不关闭准入、不取消 root。joinWorkers 等待后台访问结束后，poll 可排空普通域和专属域，且仍遵守 owner。close 关闭全部域并唤醒等待者；仅 Workers 模式不会执行专属任务，run 关闭退出也不替代 joinWorkers。isEmpty 只观察各队列，不证明没有执行中的 callback、挂起 root 或后续 producer。
 
-Context 内嵌一个 Executor，其 Queue 参数由 ExecutorFactory 的 `makeExecutor()` 注入。ContextAllocators 只为 Worker 数组提供 allocator，`storageRequirements` 只报告该数组请求的字节数和对齐；登记更多 scheduler 不增加运行时数组分配，也不把 Worker allocator 自动传给 Queue 或线程后端。线程由 ThreadLauncher 创建；构造失败关闭 Executor、join 已启动 Worker，再回滚固定数组。
+文件监听等轻量服务的注册、注销和状态处理应归 EventLoop owner，后端通知经专属 scheduler 交付短任务；读取、解析、编译交给普通 scheduler，完成后 continues_on(loop_scheduler) 返回 owner。MVP 已提供工作通知与专属执行域；原生文件监听、timer 与可等待事件源注册仍是后续 EventLoop 后端能力，不能通过阻塞文件读取占住 owner 来模拟异步监听。
 
-`requestStop()` 请求所有共享等待驱动者在 record 边界退出，包括 run 和后台 Worker；不关闭准入、不取消 root、不丢弃节点。停止后剩余工作须显式 poll/drain；停止状态在 MVP 不重置。`close()` 关闭准入并唤醒等待者；未请求停止时，等待驱动者排空已接纳工作后退出。isEmpty 只观察共享 Queue，不证明没有正在执行或未来投递的 root，也不涵盖独立返回 Executor。
-
-验证以两个逻辑调度目标共享 Executor、任意可用 Worker 执行独立分支、when_all 合流、caller scheduler 上交付 value/error/stopped 为完整链；并行重叠通过 verify 的 gate 验证，应用只组合 sender。最终完成后停止驱动、join 调用方、close/join Workers，再释放句柄引用的存储。Worker identity 只用于观测，不进入业务 API。
-
-逻辑资源与物理资源分离参考 LCFEngine 仓库 <https://github.com/mmmmmcree/LCFEngine.git> 的 vk_core DeviceContext、LogicalQueue 和 QueueAccess；CPU 工作由共享 Executor 动态交给可用 Worker，不照搬 Vulkan 固定的物理队列映射。
+验证覆盖 Worker-only、Workers+EventLoop、零 Worker run/poll、专属域线程归属、多个普通队列唤醒、跨域 sender 合流以及启动回滚。并行证明只在测试中使用 gate，业务不承担同步控制。逻辑/物理资源分离参考 LCFEngine 仓库 <https://github.com/mmmmmcree/LCFEngine.git> 的 vk_core DeviceContext、LogicalQueue 和 QueueAccess，CPU 实现不照搬 Vulkan 的物理队列映射。
 
 ### 6.4 Producer 和跨域工作
 
@@ -522,7 +528,7 @@ Context 内嵌一个 Executor，其 Queue 参数由 ExecutorFactory 的 `makeExe
 
 render 提交通用工作时选择由 addScheduler 登记的 scheduler，完成后显式 continues_on(render_scheduler) 回到所属执行域。若需统一准入或记账，可先在宿主指定的 scheduler 上提交短操作，再发起后续工作；执行位置由该 scheduler 的实际契约决定。
 
-main_loop 表示宿主自行维护的事件循环，不强制是进程主线程。要求 owner 亲和性的工作使用独立或明确绑定的执行域。长时间阻塞读取或 GPU 等待不应占用通用 Worker，除非接受该资源代价，或配置独立阻塞执行域。
+main_loop 表示宿主驱动的事件循环，可使用 Context 的专属执行域，不强制是进程主线程。重型或阻塞任务交给普通 Executor；零 Worker 时宿主能完成这些任务，但不会获得后台并行或事件延迟隔离。
 
 render 的低延迟 ingress 通过逻辑调度目标与 CPU Executor 相连。专用 SPSC lane 若由单 owner 汇入共享池，应明确这一步的批次、通知与延迟；若允许任意 Worker 直接消费，则必须采用支持该 consumer 拓扑的队列。多 consumer 队列替换需单独验证线程安全和锁竞争，不推断 SPSC 的性能保证。
 
@@ -735,7 +741,7 @@ final_suspend 通过 continuation policy 选择目标提交；严格 executor �
 | 角色 | 当前消费端对象 | async 目标 |
 | --- | --- | --- |
 | 通用控制 | TaskSystem 的 m_io_context、m_worker | 与 CPU 工作统一为通用 Context；有 owner 亲和性要求时显式分离执行域 |
-| CPU 计算 | m_cpu_io_context、当前两个 m_cpu_workers | 同类 Workers 共享 Executor；逻辑目标不绑定线程 |
+| CPU 计算 | m_cpu_io_context、当前两个 m_cpu_workers | 多个普通 Executor 共享同类 Worker 集合；逻辑目标不绑定线程 |
 | render | RenderTaskSystem 的 `m_render_io_context`、processOne/waitOne | 外部 owner 驱动 Executor，维护 render 状态 |
 | gfx | `m_gfx_io_context`、`m_gfx_worker` | 指定 owner 执行上传与图形操作 |
 
@@ -753,7 +759,7 @@ const auto render_token = context_info.addExternalScheduler(render_loop);
 
 // Runtime metadata, queue storage and thread backend are separate choices.
 async::Context async_context{
-    std::move(context_info), context_allocators, executor_factory, thread_launcher};
+    std::move(context_info), context_allocators, executor_factory, loop_executor_factory};
 
 const auto task_context = ShaderToyTaskContext{
     .m_image_scheduler = async_context.getSchedulerHandle(image_token),
@@ -766,7 +772,7 @@ const auto task_context = ShaderToyTaskContext{
 };
 ```
 
-前三条是不同的逻辑 CPU 目标，共享 CPU Executor，并由任意可用 Worker 执行。一个 Worker 时仍能正确运行，多个 Worker 时独立工作可以并行；CPU queue 不因 token 不同而自动获得串行、优先级或隔离保证。gfx/render 绑定其 owner。外部 Executor 使用显式资源与容量策略；专有低延迟入口及实际 start 线程约束见第 5、6 节。
+前三条是不同的逻辑 CPU 目标，MVP 各有一个普通 Executor，Worker 集合动态领取；多个 Worker 可并行，一个或零 Worker 也能正确推进。专属 EventLoop scheduler 用于宿主轻量服务；gfx/render 仍绑定各自 owner。不同普通 token 不自动获得串行、优先级或硬隔离保证。
 
 ### 9.2 expected 资源任务流水线
 
@@ -835,10 +841,10 @@ thread-bound 完成必须在 owner 有效期间排空。若 scheduler 已关闭�
 | --- | --- |
 | V01 分层 | core/queue 与 scheduling 并列且依赖单向，具体算法头和聚合头可独立包含，具体 Queue 不加载 execution provider；Core 调度层可依赖标准 execution 协议，基础 executor/worker 头可独立使用；Core 不调用组合算法或 provider 私有类型；_c 概念转发保持原约束，CPO 重导出保持 provider 身份 |
 | V02 操作存活 | 同步完成、发布后立即消费、完成中销毁、拒收、取消和关闭均恰好完成；operation/node 不早释放、不重复回收 |
-| V03 入口与唤醒 | 单 producer/多 consumer 与默认多 producer 队列正确；宿主和 Worker 可共同消费；空闲再投递、入睡、stop/close 不丢唤醒；SPMC 发布缺口不自旋，close 等待在途提交并排空；多 producer 使用独立 lane |
+| V03 入口与唤醒 | 多普通队列和独立 owner 队列不丢唤醒；Worker-only 不消费专属域；零 Worker 由 owner 推进全部；SPMC 发布、close 与 producer 契约正确 |
 | V04 驱动预算 | Context 的 pollOne/poll 实际驱动 execution 并完成 receiver；SPMC producer 固定次数原子操作且不获取 consumer mutex；consumer poll 可能等待其他 consumer；poll 遵守数量/软时间预算；维护和长 callback 遵守软预算声明 |
 | V05 Timer/取消 | fake clock 验证注册、取消、到期竞争和 burst 维护；registration 析构与 callback 竞争安全 |
-| V06 映射与并行 | 1/2/N Worker、逻辑调度目标多于 Worker 均正确；CPU token 不绑定 Worker，gate 证明共享 Executor 可并行；后续 QueuePolicy 验证 serial 不重叠、thread-bound 命中 owner、硬隔离不足则失败 |
+| V06 映射与并行 | N Executor/M Worker 独立；gate 证明不同普通域可并行；专属任务只在 owner 执行；单 consumer LoopExecutor 可用 |
 | V07 组合与关闭 | 纯外部 executor、自有 Workers、混合配置均能 drain；关闭覆盖在途 CPU/跨域/回收/mailbox，不 join 自身、不接管外部线程 |
 | V08 Scheduler | concept 及资源相等、跨线程构造/connect/start、并发 schedule/start、非阻塞析构、各完成通道及真实 completion scheduler |
 | V09 Environment/资源 | 空环境、缺失能力诊断、覆盖/forwarding、不混淆 sender 属性；普通 allocator/PMR 与 hook 统计；无异常资源失败注入、能力负例、构造回滚、跨线程释放和失败回收 |
@@ -867,7 +873,7 @@ shader_toy 的 sender 迁移需要 V01–V10、V12–V13；使用 co_await 后�
 
 ## 11. 实施边界与待决选择
 
-目标架构区分逻辑目标、Executor 和 Worker。MVP 的统一 addScheduler 注册多个逻辑身份，共享一个 Executor，由宿主 poll/run 与 N 个同类 Workers 驱动。默认 Context 使用 queue::intrusive::mpmc::Queue<>；单 producer 示例显式选择 queue::intrusive::spmc::Queue<>，caller 返回域独立驱动。先通过 poll 验收 execution，再验证并行合流、三种完成通道、关闭与 drain，建立 verify/benchmark 基线。可选 QueueConfig、多 producer lanes、timer 和专有入口后续迭代。实施顺序见 [CORE_MVP_DEVELOPMENT_PLAN.md](.mvp/CORE_MVP_DEVELOPMENT_PLAN.md)。
+目标架构区分逻辑目标、Executor、Worker 和 EventLoop。MVP 组合 N 个 Executor/M 个 Worker，支持显式 startWorkers 和 run，独立 owner 执行域，零 Worker 时由 run/poll 推进全部。先完成 execution 的多域驱动、唤醒、停止、关闭、启动回滚和内存验证，再用 verify/benchmark 推进 QueueConfig、原生事件源、timer 与专有入口。实施顺序见 [CORE_MVP_DEVELOPMENT_PLAN.md](.mvp/CORE_MVP_DEVELOPMENT_PLAN.md)。
 
 | 已确定的边界 | 后续用实现和数据选择 |
 | --- | --- |

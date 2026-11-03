@@ -115,13 +115,18 @@ int main()
     const auto left_token = info.addScheduler();
     const auto right_token = info.addScheduler();
 
-    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count);
+    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count, 2);
+    alignas(k_storage.m_executors.m_alignment)
+        std::array<std::byte, k_storage.m_executors.m_bytes> executor_bytes;
     alignas(k_storage.m_workers.m_alignment)
         std::array<std::byte, k_storage.m_workers.m_bytes> worker_bytes;
     std::pmr::monotonic_buffer_resource worker_arena{
         worker_bytes.data(), worker_bytes.size(), std::pmr::null_memory_resource()};
+    std::pmr::monotonic_buffer_resource executor_arena{
+        executor_bytes.data(), executor_bytes.size(), std::pmr::null_memory_resource()};
 
     ExampleContext context{std::move(info), async::ContextAllocators{
+        std::pmr::polymorphic_allocator<std::byte>{&executor_arena},
         std::pmr::polymorphic_allocator<std::byte>{&worker_arena}}};
 
     auto left_scheduler = context.getSchedulerHandle(left_token);
@@ -158,6 +163,10 @@ int main()
                         lhs.m_worker_thread,
                         rhs.m_worker_thread,
                         std::this_thread::get_id()};
+                }) | ex::continues_on(context.getEventLoopSchedulerHandle())
+                | ex::then([main_thread](GraphResult result) noexcept {
+                    if (std::this_thread::get_id() != main_thread) { std::terminate(); }
+                    return result;
                 }) | ex::continues_on(caller_scheduler);
 
             bool caller_completed = false;
