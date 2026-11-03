@@ -7,11 +7,14 @@ Independent C++20 library. Target: LCFAsync::async.
 ## Build
 
     cmake --preset clang
-    cmake --build build/clang --config Debug
-    cmake --build build/clang --config Debug --target async_verify_run
+    cmake --build --preset clang-debug
+    cmake --build --preset clang-debug --target async_verify_run
     ctest --test-dir build/clang -C Debug --output-on-failure
 
-Presets also provide msvc and gcc. MSVC requires its developer environment.
+    cmake --build --preset clang-release
+    ctest --test-dir build/clang -C Release --output-on-failure
+
+Configure presets select the compiler and header or module mode; matching build presets select Debug or Release. Presets also provide msvc and gcc. MSVC requires its developer environment.
 
 For compiled libraries, the caller selects -DBUILD_SHARED_LIBS=ON or OFF at configure time. Header-only targets ignore that choice. A prebuilt package retains its producer's type.
 

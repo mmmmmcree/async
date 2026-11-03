@@ -73,5 +73,95 @@
                 "use-modules"
             ]
         }
+    ],
+    "buildPresets": [
+        {
+            "name": "debug",
+            "hidden": true,
+            "configuration": "Debug"
+        },
+        {
+            "name": "release",
+            "hidden": true,
+            "configuration": "Release"
+        },
+        {
+            "name": "clang",
+            "hidden": true,
+            "configurePreset": "clang"
+        },
+        {
+            "name": "clang-modules",
+            "hidden": true,
+            "configurePreset": "clang-modules"
+        },
+        {
+            "name": "gcc",
+            "hidden": true,
+            "configurePreset": "gcc"
+        },
+        {
+            "name": "gcc-modules",
+            "hidden": true,
+            "configurePreset": "gcc-modules"
+        },
+        {
+            "name": "msvc",
+            "hidden": true,
+            "configurePreset": "msvc"
+        },
+        {
+            "name": "msvc-modules",
+            "hidden": true,
+            "configurePreset": "msvc-modules"
+        },
+        {
+            "name": "clang-debug",
+            "inherits": ["clang", "debug"]
+        },
+        {
+            "name": "clang-release",
+            "inherits": ["clang", "release"]
+        },
+        {
+            "name": "clang-modules-debug",
+            "inherits": ["clang-modules", "debug"]
+        },
+        {
+            "name": "clang-modules-release",
+            "inherits": ["clang-modules", "release"]
+        },
+        {
+            "name": "gcc-debug",
+            "inherits": ["gcc", "debug"]
+        },
+        {
+            "name": "gcc-release",
+            "inherits": ["gcc", "release"]
+        },
+        {
+            "name": "gcc-modules-debug",
+            "inherits": ["gcc-modules", "debug"]
+        },
+        {
+            "name": "gcc-modules-release",
+            "inherits": ["gcc-modules", "release"]
+        },
+        {
+            "name": "msvc-debug",
+            "inherits": ["msvc", "debug"]
+        },
+        {
+            "name": "msvc-release",
+            "inherits": ["msvc", "release"]
+        },
+        {
+            "name": "msvc-modules-debug",
+            "inherits": ["msvc-modules", "debug"]
+        },
+        {
+            "name": "msvc-modules-release",
+            "inherits": ["msvc-modules", "release"]
+        }
     ]
 }

@@ -10,6 +10,7 @@
 #include <thread>
 #include <utility>
 
+
 namespace async = lcf::async;
 namespace ex = async::exec;
 namespace proto = async::protocols;
@@ -174,8 +175,10 @@ int main()
             ex::start(operation);
 
             std::size_t heartbeat_count = 0;
+            auto time = std::chrono::steady_clock::now();
             while (not caller_completed) {
-                std::cout << "caller heartbeat: " << ++heartbeat_count << '\n';
+                auto elapsed = std::chrono::steady_clock::now() - time;
+                std::cout << "heartbeat: " << heartbeat_count++ << " elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
                 caller_executor.executeOne();
                 if (not caller_completed) {
                     std::this_thread::sleep_for(100ms);

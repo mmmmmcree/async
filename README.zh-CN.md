@@ -7,11 +7,14 @@
 ## 构建
 
     cmake --preset clang
-    cmake --build build/clang --config Debug
-    cmake --build build/clang --config Debug --target async_verify_run
+    cmake --build --preset clang-debug
+    cmake --build --preset clang-debug --target async_verify_run
     ctest --test-dir build/clang -C Debug --output-on-failure
 
-预设还提供 msvc 和 gcc。MSVC 需要开发者环境。
+    cmake --build --preset clang-release
+    ctest --test-dir build/clang -C Release --output-on-failure
+
+配置预设选择编译器和 header 或 module 模式；对应的构建预设选择 Debug 或 Release。预设还提供 msvc 和 gcc。MSVC 需要开发者环境。
 
 编译型库由调用者在配置时通过 -DBUILD_SHARED_LIBS=ON 或 OFF 选择类型。纯头文件目标忽略此选项。预编译包保留构建该包时选定的类型。
 
