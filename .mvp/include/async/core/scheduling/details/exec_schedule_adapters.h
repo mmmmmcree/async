@@ -19,27 +19,6 @@ class ScheduleOperation
 {
 public:
     using operation_state_concept = protocols::operation_state_t;
-public:
-    ~ScheduleOperation() noexcept = default;
-    ScheduleOperation() = delete;
-    ScheduleOperation(Handle handle, Receiver receiver)
-        noexcept(std::is_nothrow_copy_constructible_v<Handle>
-            && std::is_nothrow_move_constructible_v<Receiver>)
-        : m_handle(handle), m_receiver(std::move(receiver)), m_node(this, &execute) {}
-    ScheduleOperation(const ScheduleOperation &) = delete;
-    ScheduleOperation & operator=(const ScheduleOperation &) = delete;
-    ScheduleOperation(ScheduleOperation &&) = delete;
-    ScheduleOperation & operator=(ScheduleOperation &&) = delete;
-public:
-    queue::intrusive::ExecutionNode & getExecutable() noexcept { return m_node; }
-    void start() & noexcept
-        requires record_submitter_c<Handle, ScheduleOperation>
-    {
-        if (m_handle.tryEnqueue(*this) == EnqueueResult::eAccepted) {
-            return;
-        }
-        exec::set_stopped(std::move(m_receiver));
-    }
 private:
     static void execute(void * state_p) noexcept
     {
@@ -50,6 +29,24 @@ private:
             return;
         }
         exec::set_value(std::move(operation.m_receiver));
+    }
+public:
+    ~ScheduleOperation() noexcept = default;
+    ScheduleOperation() = delete;
+    ScheduleOperation(Handle handle, Receiver receiver) noexcept(
+        std::is_nothrow_copy_constructible_v<Handle> and std::is_nothrow_move_constructible_v<Receiver>) :
+        m_handle(handle), m_receiver(std::move(receiver)), m_node(this, &execute) {}
+    ScheduleOperation(const ScheduleOperation &) = delete;
+    ScheduleOperation & operator=(const ScheduleOperation &) = delete;
+    ScheduleOperation(ScheduleOperation &&) = delete;
+    ScheduleOperation & operator=(ScheduleOperation &&) = delete;
+public:
+    queue::intrusive::ExecutionNode & getExecutable() noexcept { return m_node; }
+    void start() & noexcept
+    requires record_submitter_c<Handle, ScheduleOperation>
+    {
+        if (m_handle.tryEnqueue(*this) == EnqueueResult::eAccepted) { return; }
+        exec::set_stopped(std::move(m_receiver));
     }
 private:
     Handle m_handle;
@@ -62,7 +59,6 @@ struct ScheduleSender
 {
     using sender_concept = protocols::sender_t;
     using completion_signatures = ScheduleCompletions;
-
     struct Environment
     {
         ~Environment() noexcept = default;
@@ -73,19 +69,19 @@ struct ScheduleSender
         Environment(Environment &&) = default;
         Environment & operator=(const Environment &) = default;
         Environment & operator=(Environment &&) = default;
-    public:
+
         Handle query(exec::get_completion_scheduler_t<exec::set_value_t>) const noexcept
         {
             return m_scheduler;
         }
-    private:
+
         Handle m_scheduler;
     };
 public:
     ~ScheduleSender() noexcept = default;
     ScheduleSender() = delete;
-    explicit ScheduleSender(Handle scheduler) noexcept(std::is_nothrow_move_constructible_v<Handle>)
-        : m_scheduler(std::move(scheduler)) {}
+    explicit ScheduleSender(Handle scheduler) noexcept(std::is_nothrow_move_constructible_v<Handle>) :
+        m_scheduler(std::move(scheduler)) {}
     ScheduleSender(const ScheduleSender &) = default;
     ScheduleSender(ScheduleSender &&) = default;
     ScheduleSender & operator=(const ScheduleSender &) = default;
@@ -94,11 +90,7 @@ public:
     Environment get_env() const noexcept { return Environment{m_scheduler}; }
     template <receiver_of_c<ScheduleCompletions> Receiver>
     requires record_submitter_c<Handle, ScheduleOperation<Handle, Receiver>>
-    auto connect(Receiver receiver) const
-    {
-        return ScheduleOperation<Handle, Receiver>{m_scheduler, std::move(receiver)};
-    }
-
+    auto connect(Receiver receiver) const { return ScheduleOperation<Handle, Receiver>{m_scheduler, std::move(receiver)}; }
 private:
     Handle m_scheduler;
 };

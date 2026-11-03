@@ -20,7 +20,7 @@ struct ThreadLauncher
     ThreadLauncher & operator=(ThreadLauncher &&) noexcept = default;
 public:
     ThreadHandle operator()(ThreadEntry entry_f, void * state_p) const
-        requires std::constructible_from<ThreadHandle, ThreadEntry, void *>
+    requires std::constructible_from<ThreadHandle, ThreadEntry, void *>
     {
         return ThreadHandle{entry_f, state_p};
     }
@@ -45,10 +45,7 @@ public:
 public:
     void join() noexcept
     {
-        // Calling from this worker violates the backend's join precondition.
-        if (m_thread_handle.joinable()) {
-            m_thread_handle.join();
-        }
+        if (m_thread_handle.joinable()) { m_thread_handle.join(); }
     }
 private:
     static void run_executor(void * state_p) noexcept

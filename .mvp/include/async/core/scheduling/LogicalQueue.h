@@ -18,15 +18,13 @@ public:
     LogicalQueueToken(LogicalQueueToken &&) noexcept = default;
     LogicalQueueToken & operator=(const LogicalQueueToken &) noexcept = default;
     LogicalQueueToken & operator=(LogicalQueueToken &&) noexcept = default;
+private:
+    LogicalQueueToken(std::uint32_t domain_id, std::uint32_t index) noexcept :
+        m_domain_id(domain_id), m_index(index) {}
 public:
-
     std::uint32_t getDomainId() const noexcept { return m_domain_id; }
     std::uint32_t getIndex() const noexcept { return m_index; }
     bool operator==(const LogicalQueueToken &) const noexcept = default;
-
-private:
-    LogicalQueueToken(std::uint32_t domain_id, std::uint32_t index) noexcept
-        : m_domain_id(domain_id), m_index(index) {}
 private:
     std::uint32_t m_domain_id;
     std::uint32_t m_index;

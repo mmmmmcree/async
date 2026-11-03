@@ -19,10 +19,8 @@ public:
     ~BasicExecutor() noexcept { assert(m_queue.empty()); }
     BasicExecutor() requires std::default_initializable<Queue> = default;
     template <typename... QueueArgs>
-        requires (sizeof...(QueueArgs) > 0) and std::constructible_from<Queue, QueueArgs...>
-    explicit BasicExecutor(QueueArgs &&... queue_args)
-        : m_queue(std::forward<QueueArgs>(queue_args)...) {}
-
+    requires (sizeof...(QueueArgs) > 0) and std::constructible_from<Queue, QueueArgs...>
+    explicit BasicExecutor(QueueArgs &&... queue_args) : m_queue(std::forward<QueueArgs>(queue_args)...) {}
     BasicExecutor(const BasicExecutor &) = delete;
     BasicExecutor(BasicExecutor &&) = delete;
     BasicExecutor & operator=(const BasicExecutor &) = delete;
@@ -32,10 +30,7 @@ public:
     requires requires(Queue & queue, Record & record) {
         { queue.tryEnqueue(record.getExecutable()) } noexcept -> std::same_as<EnqueueResult>;
     }
-    EnqueueResult tryEnqueue(Record & record) noexcept
-    {
-        return m_queue.tryEnqueue(record.getExecutable());
-    }
+    EnqueueResult tryEnqueue(Record & record) noexcept { return m_queue.tryEnqueue(record.getExecutable()); }
     bool executeOne() noexcept
     {
         if (auto * executable_p = m_queue.tryPop()) {
@@ -54,7 +49,7 @@ public:
         return false;
     }
     void requestStop() noexcept
-        requires stoppable_work_queue_c<Queue>
+    requires stoppable_work_queue_c<Queue>
     {
         m_queue.requestStop();
     }

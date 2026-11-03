@@ -11,8 +11,8 @@ public:
 public:
     ~ExecutionNode() noexcept = default;
     ExecutionNode() = delete;
-    ExecutionNode(void * state_p, ExecuteFunction execute_f) noexcept
-        : m_state_p(state_p), m_execute_f(execute_f) {}
+    ExecutionNode(void * state_p, ExecuteFunction execute_f) noexcept :
+        m_state_p(state_p), m_execute_f(execute_f) {}
     ExecutionNode(const ExecutionNode &) = delete;
     ExecutionNode & operator=(const ExecutionNode &) = delete;
     ExecutionNode(ExecutionNode &&) = delete;
@@ -31,7 +31,6 @@ public:
     {
         auto * state_p = m_state_p;
         auto execute_f = m_execute_f;
-        // Completion may destroy this node. Do not access members after dispatch.
         execute_f(state_p);
     }
 private:
