@@ -16,6 +16,10 @@ namespace ex = async::exec;
 namespace proto = async::protocols;
 using namespace std::chrono_literals;
 
+// Only the caller thread starts CPU operations in this example.
+using ExampleContext = async::BasicContext<async::BasicExecutor<>,
+    async::BasicExecutor<async::FastProducerSpmcInbox>>;
+
 struct BranchResult
 {
     int m_value;
@@ -66,7 +70,7 @@ struct Receiver
         this->finish(Completion::eStopped);
     }
 
-    async::Context * m_context_p;
+    ExampleContext * m_context_p;
     Outcome * m_outcome_p;
     bool * m_caller_completed_p;
     std::thread::id m_caller_thread;
@@ -102,7 +106,7 @@ int main()
     const auto left_token = info.addCpuQueue();
     const auto right_token = info.addCpuQueue();
 
-    constexpr auto k_storage = async::Context::storageRequirements(k_worker_count, k_queue_count);
+    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count, k_queue_count);
     alignas(k_storage.m_workers.m_alignment)
         std::array<std::byte, k_storage.m_workers.m_bytes> worker_bytes;
     alignas(k_storage.m_routes.m_alignment)
@@ -112,7 +116,7 @@ int main()
     std::pmr::monotonic_buffer_resource route_arena{
         route_bytes.data(), route_bytes.size(), std::pmr::null_memory_resource()};
 
-    async::Context context{std::move(info), async::ContextAllocators{
+    ExampleContext context{std::move(info), async::ContextAllocators{
         std::pmr::polymorphic_allocator<std::byte>{&worker_arena},
         std::pmr::polymorphic_allocator<std::byte>{&route_arena}}};
 

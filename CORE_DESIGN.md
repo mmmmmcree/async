@@ -412,9 +412,9 @@ Queue 的节点布局、生产者/消费者并发模型与进展属性由队列�
 | exchange intrusive SPMC | 单 producer 固定次数原子发布 | consumer 侧串行处理发布缺口；producer 不获取 consumer mutex | MVP 的 CPU 提交路径 |
 | 固定 producer 的预分配 SPSC ring | 无 producer 间共享入队锁，满时立即返回 | 必须指定唯一 consumer，或由 owner 汇入多 consumer Executor | 专有线程低延迟候选 |
 
-MVP 的 CPU 执行域使用 `BasicExecutor<FastProducerSpmcInbox>`，由一个专有 producer 提交工作、N 个 Worker 并发消费。队列是侵入式 mailbox，record 节点由稳定 operation 提供；提交不分配内存，也不获取 consumer mutex。producer 通过固定次数的原子操作交换 head 并发布前驱链接；consumer 侧以 mutex 串行 pop，因此 Worker 之间可能等待，但 producer 不会等待 Worker 持有的队列锁。若 producer 暂停在 exchange/link 之间，consumer 立即返回空；发布后通过 atomic wait 序号唤醒 Worker，不在 poll 路径自旋。`close` 阻止新提交，并等待已经进入提交区间的 producer 完成，之后 Worker 可排空已接纳节点。一个 SPMC inbox 只允许一个并发 producer；需要多个独立 producer 时，应为其提供独立 lane，再由 Executor 汇合消费，不能复用同一条 SPMC inbox。
+MVP 提供可显式选择的 `BasicExecutor<FastProducerSpmcInbox>`，由一个专有 producer 提交工作、N 个 Worker 并发消费。默认 `Context` 的 control/CPU 执行域仍使用 MutexInbox；示例为单 producer CPU 提交路径选择 SPMC。队列是侵入式 mailbox，record 节点由稳定 operation 提供；提交不分配内存，也不获取 consumer mutex。producer 通过固定次数的原子操作交换 head 并发布前驱链接；consumer 侧以 mutex 串行 pop，因此 Worker 之间可能等待，但 producer 不会等待 Worker 持有的队列锁。若 producer 暂停在 exchange/link 之间，consumer 获取自身 mutex 后检查缺口并返回空，不在 poll 路径自旋；发布后通过 atomic wait 序号唤醒 Worker。`close` 阻止新提交，并等待已经进入提交区间的 producer 完成；Worker 只有在已关闭、producer 不再发布且队列为空时才能退出。一个 SPMC inbox 只允许单 producer；多个独立 producer 应使用独立 lane 再由 Executor 汇合，不能复用同一条 SPMC inbox。
 
-该模式提供的是 poll 队列路径步骤数的上界，不是通用硬实时墙钟保证。`std::atomic` 实现、平台调度/中断、cache miss，以及被执行 record 的用户代码都可能影响时间；故 benchmark 将空 poll、取出 no-op record 与执行 receiver 分开。严格平台可以要求指针原子 `is_always_lock_free`，并在固定 CPU/编译器/频率和无分页配置下测量或做平台级 WCET 分析。队列本身不承诺任务交付期限或硬实时调度。
+该模式限制的是 producer 发布路径的队列操作量：不获取 consumer mutex、不扫描 backlog、不进行 CAS 重试循环。consumer 的 poll 仍可能等待其他 consumer 持锁。atomic notification 的库实现、平台调度/中断和 cache miss 都影响实际时间，因此不能由源码操作数量推出完整 enqueue 的硬实时墙钟上界。benchmark 分别测量发布、通知、consumer 争用及 receiver 执行；严格平台仍需单独分析 WCET。
 
 参考资料提供的是可借鉴构件而非端到端实时保证：Boost `spsc_queue` 展示单 producer 的预分配发布模型；1024cores 的 intrusive MPSC 展示 exchange/link 原子发布方式及 consumer 如何处理发布缺口。本设计将其方向用于单 producer/多 consumer，并在 consumer 侧互斥领取；仍须独立验证多 consumer 安全、close 与提交竞争、通知不丢失和节点存活契约。
 
@@ -422,17 +422,17 @@ MVP 的 CPU 执行域使用 `BasicExecutor<FastProducerSpmcInbox>`，由一个�
 
 ### 5.3 专有 producer 的低延迟契约
 
-render/gfx 的逻辑队列应能选择独立的低延迟 ingress，避免在 TaskSystem 通用入口的锁竞争上等待；CPU 工作仍由共享 Executor 的任意可用 Worker 执行。producer 选择的是逻辑队列及其入口策略，不是物理 Worker。若使用 SPSC lane，必须说明唯一 consumer 如何将工作汇入共享 CPU 执行域；不能把单 consumer ring 直接交给 N 个 Worker 并发 pop。
+render/gfx 的逻辑队列应能选择独立的低延迟 ingress，避免在 TaskSystem 通用入口的锁竞争上等待；CPU 工作仍由共享 Executor 的任意可用 Worker 执行。producer 选择的是逻辑队列及其入口策略，不是物理 Worker。MVP 的 FastProducerSpmcInbox 是一个单 producer lane，由 N 个 Worker 共同消费；它不是可供多个系统任意并发提交的通用 CPU scheduler。后续多个 producer 各自使用独立 lane，再由 Executor 汇合消费。
 
 ```text
-render producer --> render logical queue / fast ingress --+
-gfx producer ----> gfx logical queue / fast ingress ------+--> CPU Executor --> any eligible Worker
-other producers -> general ingress ------------------------+
+render producer --> render SPMC lane --+
+gfx producer ----> gfx SPMC lane -------+--> CPU Executor --> any eligible Worker
+other producers -> general ingress -----+
 ```
 
 注册、扩容、operation 构造与输入准备不放在提交快路径。`try_enqueue(endpoint, record)` 满时立即返回 eFull，关闭时返回 eClosed；不循环等待，不隐式转入带锁队列或堆分配 fallback。未提交业务可留到下一帧重试；已接纳操作不能覆盖或静默合并。
 
-有限容量、始终接纳、producer 永不等待和 consumer 无限落后不能同时保证。宿主明确容量与积压处理；多个 ingress 的优先级、合批和公平性由 Executor 声明。SPSC lane 的 FIFO 不推导跨 lane 全局 FIFO，lane 也不是逻辑队列身份。
+有限容量、始终接纳、producer 永不等待和 consumer 无限落后不能同时保证。宿主明确容量与积压处理；多个 ingress 的优先级、合批和公平性由 Executor 声明。每条 SPMC lane 的 FIFO 不推导跨 lane 全局 FIFO，lane 也不是逻辑队列身份。MVP lane 复用 operation 内嵌节点，enqueue 不分配；它不提供固定容量或队列满拒收，容量受仍存活且未完成的 operation 数量约束。
 
 完整提交还包含通知和拒收清理。通知可以合并，但周期检查须声明最大检查间隔；立即唤醒则需单独测量同步与系统调用成本。不能仅凭队列没有 mutex 宣称完整 post 路径 wait-free。
 
@@ -476,7 +476,7 @@ LogicalQueue 是用户可选择的稳定目标；SchedulerHandle 指向 LogicalQ
 
 这些是 LogicalQueue/QueuePolicy 的契约，由 Executor 的后端选择和 Worker 协作兑现；它们不代表具体线程 ID。强制 thread affinity 是单独的显式要求，不能从 LogicalQueue 身份或优先级推导出来。
 
-MVP 的 `LogicalQueue<Executor>` 只保留稳定 route identity 和 control/CPU executor route。control routes 进入 MutexInbox；CPU routes 共用 FastProducerSpmcInbox，且所有 CPU 提交必须由同一个 producer 串行发起。它没有独立优先级、公平性、每 route 容量或 serial concurrency gate。多个 Worker 可并发领取，但 FIFO 只约束领取顺序，不约束任务开始或完成顺序。后续多 producer 需求通过每 producer 独立 lane 和 Executor 汇合实现；不能让多个 producer 直接并发提交到当前 SPMC inbox。
+MVP 的 `LogicalQueue<Executor>` 只保留稳定 route identity 和 control/CPU executor route。默认 Context 的两类 route 都使用 MutexInbox，允许多 producer；示例用独立的 ExampleContext 类型让 CPU routes 共用 FastProducerSpmcInbox，并由 caller 子线程作为唯一 producer。独立 lane 尚未落地前，选择 SPMC 的 CPU handle 不能作为多个系统并发提交的通用入口。LogicalQueue 没有独立优先级、公平性、每 route 容量或 serial concurrency gate；FIFO 只约束领取顺序，不约束多个 Worker 上的任务开始或完成顺序。
 
 调用方返回 executor 是独立执行域，只负责在 caller owner 上执行最终 Receiver；示例使用默认 `BasicExecutor<MutexInbox>`。低延迟队列放在反方向的 CPU 提交路径：单一 producer 快速发布，多个 Worker 在 consumer 侧领取。它保证 producer 路径不获取 Worker 持有的 mutex，操作步骤固定且不在 enqueue 分配；原子通知、线程调度、抢占和用户 record 仍影响实际墙钟时间，因此不宣称通用硬实时上界。
 
@@ -845,7 +845,7 @@ shader_toy 的 sender 迁移需要 V01–V10、V12–V13；使用 co_await 后�
 
 ## 11. 实施边界与待决选择
 
-目标架构区分逻辑目标、control Executor、CPU Executor 与 Worker：control 由宿主 owner 驱动，CPU 工作由单 producer SPMC inbox 交给 N 个 Worker。MVP 的 control 执行域使用 MutexInbox，CPU 执行域使用 FastProducerSpmcInbox，caller 返回执行域使用 MutexInbox；后续扩展多 producer lanes、逻辑队列策略、ready/timer 和专有低延迟入口。调用方启动两条 CPU 分支并合流，主线程消费结果，最终 Receiver 返回调用方线程；通过 gate、三种完成通道、关闭与 drain 验证骨架，再建立 verify/benchmark 基线。具体实施顺序见 [CORE_MVP_DEVELOPMENT_PLAN.md](.mvp/CORE_MVP_DEVELOPMENT_PLAN.md)。
+目标架构区分逻辑目标、control Executor、CPU Executor 与 Worker。MVP 支持按执行域选择 Queue：默认 Context 使用 MutexInbox；单 producer 的示例显式选择 FastProducerSpmcInbox 向 N 个 Worker 投递 CPU 工作，control 与 caller 返回域使用 MutexInbox。后续扩展多 producer lanes、逻辑队列策略、ready/timer 和专有低延迟入口。调用方启动两条 CPU 分支并合流，主线程消费结果，最终 Receiver 返回调用方线程；通过 gate、三种完成通道、关闭与 drain 验证骨架，再建立 verify/benchmark 基线。具体实施顺序见 [CORE_MVP_DEVELOPMENT_PLAN.md](.mvp/CORE_MVP_DEVELOPMENT_PLAN.md)。
 
 | 已确定的边界 | 后续用实现和数据选择 |
 | --- | --- |

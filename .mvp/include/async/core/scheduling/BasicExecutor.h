@@ -13,6 +13,14 @@ template <schedule_queue_c Queue = MutexInbox>
 class BasicExecutor
 {
 public:
+    static constexpr bool supports_multiple_producers = [] {
+        if constexpr (requires { Queue::supports_multiple_producers; }) {
+            return Queue::supports_multiple_producers;
+        } else {
+            return false;
+        }
+    }();
+
     static constexpr bool supports_multiple_workers = [] {
         if constexpr (requires { Queue::supports_multiple_consumers; }) {
             return Queue::supports_multiple_consumers;
