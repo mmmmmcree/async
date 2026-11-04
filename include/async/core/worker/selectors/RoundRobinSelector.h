@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <span>
+#include <type_traits>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
@@ -27,13 +28,16 @@ public:
     RoundRobinSelector & operator=(RoundRobinSelector &&) noexcept = default;
 public:
     void beginSelection() noexcept { m_remaining = m_executors.size(); }
-    Executor * selectNext() noexcept
+    template <typename Visitor>
+    requires std::is_nothrow_invocable_r_v<void, Visitor &, Executor &>
+    bool visitNext(Visitor && visitor) noexcept
     {
-        if (m_remaining == 0) { return nullptr; }
+        if (m_remaining == 0) { return false; }
         --m_remaining;
         auto * executor_p = &m_executors[m_next_index];
         if (++m_next_index == m_executors.size()) { m_next_index = 0; }
-        return executor_p;
+        visitor(*executor_p);
+        return true;
     }
     bool isEmpty() const noexcept { return std::ranges::all_of(m_executors, &Executor::isEmpty); }
 private:

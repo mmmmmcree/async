@@ -1,7 +1,7 @@
 #pragma once
 
 #include "BasicWorker.h"
-#include "RoundRobinSelector.h"
+#include <async/core/worker/selectors/RoundRobinSelector.h>
 #include "WorkerDriver.h"
 #include <async/core/worker/details/WorkerControl.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
@@ -52,7 +52,6 @@ public:
         m_started = false;
         m_running = false;
     }
-    void bindDriver(Driver & driver) noexcept { driver.create(Selector{m_executors}, m_control); }
     template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
     void start(Launcher thread_launcher = {})
     {
@@ -67,7 +66,7 @@ public:
             this->join();
             throw;
         }
-        m_running = not m_workers.empty();
+        m_running = std::ranges::any_of(m_workers, &Worker::isJoinable);
     }
     void requestStop() noexcept { m_control.requestStop(); }
     void close() noexcept

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/core/worker/declarations/concepts.h>
+#include <async/core/worker/selectors/declarations/concepts.h>
 
 #include <atomic>
 #include <concepts>
@@ -34,9 +35,12 @@ public:
     {
         m_state.store(WorkerState::eSearching, std::memory_order_relaxed);
         m_selector.beginSelection();
-        while (auto * executor_p = m_selector.selectNext()) {
+        bool executed = false;
+        while (m_selector.visitNext([&](work_executor_c auto & executor) noexcept {
             m_state.store(WorkerState::eExecuting, std::memory_order_relaxed);
-            if (executor_p->executeOne()) {
+            executed = executor.executeOne();
+        })) {
+            if (executed) {
                 m_state.store(WorkerState::eIdle, std::memory_order_relaxed);
                 return true;
             }

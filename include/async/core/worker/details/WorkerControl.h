@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/details/WorkSignal.h>
+#include "WorkSignal.h"
 
 #include <atomic>
 #include <cstdint>
