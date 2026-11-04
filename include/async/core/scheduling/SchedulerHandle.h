@@ -53,7 +53,7 @@ public:
     bool operator==(const SchedulerHandle &) const noexcept = default;
 public:
     auto schedule() const noexcept;
-    template <work_record_c Record>
+    template <typename Record>
     requires record_submitter_c<Submitter, Record> or indexed_record_submitter_c<Submitter, Record>
     EnqueueResult tryEnqueue(Record & record) const noexcept
     {

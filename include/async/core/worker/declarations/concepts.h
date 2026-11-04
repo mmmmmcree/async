@@ -1,6 +1,5 @@
 #pragma once
 
-#include "enums.h"
 #include <async/core/scheduling/declarations/concepts.h>
 
 #include <concepts>
@@ -25,12 +24,5 @@ concept worker_waiter_c = requires {
         { const_waiter.isStopRequested() } noexcept -> std::same_as<bool>;
         { const_waiter.isClosed() } noexcept -> std::same_as<bool>;
     };
-
-template <typename Driver>
-concept worker_driver_c = requires(Driver & driver, const Driver & const_driver) {
-    { driver.executeOne() } noexcept -> std::same_as<bool>;
-    { driver.run() } noexcept -> std::same_as<void>;
-    { const_driver.getState() } noexcept -> std::same_as<WorkerState>;
-};
 
 } // namespace lcf::async

@@ -16,7 +16,7 @@ class ContextSelector
     using Selector = RoundRobinSelector<Executor>;
 public:
     ~ContextSelector() noexcept = default;
-    ContextSelector() noexcept = default;
+    ContextSelector() = delete;
     ContextSelector(LoopExecutor & owner_executor, Pool & worker_pool, std::span<Executor> executors) noexcept :
         m_owner_executor_p(&owner_executor), m_worker_pool_p(&worker_pool), m_shared_selector(executors) {}
     ContextSelector(const ContextSelector &) noexcept = default;
@@ -50,8 +50,8 @@ public:
             and (m_worker_pool_p->isRunning() or m_shared_selector.isEmpty());
     }
 private:
-    LoopExecutor * m_owner_executor_p = nullptr;
-    Pool * m_worker_pool_p = nullptr;
+    LoopExecutor * m_owner_executor_p;
+    Pool * m_worker_pool_p;
     Selector m_shared_selector;
     bool m_include_shared = false;
     bool m_shared_first = false;

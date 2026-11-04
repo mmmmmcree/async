@@ -16,11 +16,11 @@ class RoundRobinSelector
 public:
     using Executor = SelectedExecutor;
 private:
-    using ExecutorView = std::span<Executor>;
+    using ExecutorSpan = std::span<Executor>;
 public:
     ~RoundRobinSelector() noexcept = default;
     RoundRobinSelector() noexcept = default;
-    explicit RoundRobinSelector(ExecutorView executors, std::size_t start_index = 0) noexcept :
+    explicit RoundRobinSelector(ExecutorSpan executors, std::size_t start_index = 0) noexcept :
         m_executors(executors), m_next_index(executors.empty() ? 0 : start_index % executors.size()) {}
     RoundRobinSelector(const RoundRobinSelector &) noexcept = default;
     RoundRobinSelector(RoundRobinSelector &&) noexcept = default;
@@ -41,7 +41,7 @@ public:
     }
     bool isEmpty() const noexcept { return std::ranges::all_of(m_executors, &Executor::isEmpty); }
 private:
-    ExecutorView m_executors;
+    ExecutorSpan m_executors;
     std::size_t m_next_index = 0;
     std::size_t m_remaining = 0;
 };

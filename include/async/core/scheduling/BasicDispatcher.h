@@ -13,31 +13,20 @@ namespace lcf::async {
 template <work_executor_c Executor, work_executor_c OwnerExecutor, work_notifier_c Notifier>
 class BasicDispatcher
 {
-    using ExecutorView = std::span<Executor>;
+    using ExecutorSpan = std::span<Executor>;
 public:
     ~BasicDispatcher() noexcept = default;
-    BasicDispatcher() noexcept = default;
+    BasicDispatcher() = delete;
+    BasicDispatcher(ExecutorSpan executors, OwnerExecutor & owner_executor,
+        Notifier & worker_notifier, Notifier & owner_notifier) noexcept :
+        m_executors(executors), m_owner_executor_p(&owner_executor),
+        m_worker_notifier_p(&worker_notifier), m_owner_notifier_p(&owner_notifier) {}
     BasicDispatcher(const BasicDispatcher &) = delete;
-    BasicDispatcher(BasicDispatcher &&) = delete;
+    BasicDispatcher(BasicDispatcher &&) noexcept = default;
     BasicDispatcher & operator=(const BasicDispatcher &) = delete;
-    BasicDispatcher & operator=(BasicDispatcher &&) = delete;
+    BasicDispatcher & operator=(BasicDispatcher &&) noexcept = default;
 public:
-    void create(ExecutorView executors, OwnerExecutor & owner_executor,
-        Notifier & worker_notifier, Notifier & owner_notifier) noexcept
-    {
-        m_executors = executors;
-        m_owner_executor_p = &owner_executor;
-        m_worker_notifier_p = &worker_notifier;
-        m_owner_notifier_p = &owner_notifier;
-    }
-    void reset() noexcept
-    {
-        m_executors = {};
-        m_owner_executor_p = nullptr;
-        m_worker_notifier_p = nullptr;
-        m_owner_notifier_p = nullptr;
-    }
-    template <work_record_c Record>
+    template <typename Record>
     requires record_submitter_c<Executor, Record> and record_submitter_c<OwnerExecutor, Record>
     EnqueueResult tryEnqueue(std::uint32_t target_index, Record & record) noexcept
     {
@@ -55,10 +44,10 @@ public:
         return result;
     }
 private:
-    ExecutorView m_executors;
-    OwnerExecutor * m_owner_executor_p = nullptr;
-    Notifier * m_worker_notifier_p = nullptr;
-    Notifier * m_owner_notifier_p = nullptr;
+    ExecutorSpan m_executors;
+    OwnerExecutor * m_owner_executor_p;
+    Notifier * m_worker_notifier_p;
+    Notifier * m_owner_notifier_p;
 };
 
 } // namespace lcf::async

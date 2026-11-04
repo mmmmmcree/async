@@ -1,6 +1,6 @@
 # Async Core 设计
 
-本文规定 async 的目标架构、协议边界和运行时契约。当前 `include/async/core.h` 已接入 Context、Dispatcher、Executor 与统一的 Worker/WorkerDriver/WorkerPool 组合，Context 的 owner 使用默认 NullThreadHandle 的 Worker；execution 提供 provider 选择、协议及组合算法重导出，`exec::ext` 尚未实现。当前代码按 C++23 构建；文中另行标明后续目标接口，当前运行示例位于 `tests/sandbox/sandbox.cpp`。
+本文规定 async 的目标架构、协议边界和运行时契约。当前 `include/async/core.h` 已接入 Context、Dispatcher、Executor 与统一的 BasicWorker/WorkerPool 组合，Context 的 owner 使用默认 NullThreadHandle 的 Worker；execution 提供 provider 选择、协议及组合算法重导出，`exec::ext` 尚未实现。当前代码按 C++23 构建；文中另行标明后续目标接口，当前运行示例位于 `tests/sandbox/sandbox.cpp`。
 
 设计按使用者看到的组合关系自顶向下展开；后续能力顺序见本文第 12 节。修改协议或行为时，应同步更新类型关系、资源与完成契约及验收条件。
 
@@ -30,7 +30,7 @@ Core 应可嵌入、可由调用方驱动，独立支持 record、timer 和 coro
 
 CPO 对象使用操作名的 snake_case，不加 k_ 或 _cpo；实现类型使用 PascalCase，标准 execution 的协议定制名保留标准形式。Core 当前直接使用满足 concept 的成员接口，不增加只有转发作用的 CPO。普通类文件与类名一致，集合文件使用 snake_case。模块内以 declarations/ 集中组织基础声明，按 concepts.h、enums.h、structs.h、aliases.h 分别存放概念、枚举、值结构体和模块级类型别名，内容较多时可按语义分组为 poll_structs.h 等；这些头包含使用所需的完整定义。declarations/ 只表示文件组织，不增加命名空间。类自身的类型别名保留在类内；独立的 AlgorithmTag 等类型仍可使用同名文件。不为分类创建空文件，也不用泛化的 types.h 混装不同职责。
 
-core/declarations/concepts.h 仅保留跨模块的 executable 和 record 约束。EnqueueResult 描述 Queue 的接纳结果，归 queue/declarations/enums.h；Executor、Dispatcher 和调度适配沿用该结果，复用不改变其归属。Queue 约束归 queue/declarations/concepts.h；submitter、Executor、目标路由约束与标准 execution 概念转发统一归 scheduling/declarations/concepts.h。Worker 的状态、等待与驱动协议归 worker/declarations/；线程入口别名、join/launch 协议及实现归 worker/thread/；通用选择器与选择协议归 worker/selectors/。Context 专属域的选择规则归 context/details/ContextSelector.h。同级头可用相对文件名，跨目录引用统一使用 <async/...>。
+core/declarations/concepts.h 仅保留跨模块的 executable 和 record 约束。EnqueueResult 描述 Queue 的接纳结果，归 queue/declarations/enums.h；Executor、Dispatcher 和调度适配沿用该结果，复用不改变其归属。Queue 约束归 queue/declarations/concepts.h；submitter、Executor、目标路由约束与标准 execution 概念转发统一归 scheduling/declarations/concepts.h。Worker 的状态、等待协议与多 Worker 能力归 worker/declarations/；线程入口别名、join/launch 协议及实现归 worker/thread/；通用选择器与选择协议归 worker/selectors/。Context 专属域的选择规则归 context/details/ContextSelector.h。同级头可用相对文件名，跨目录引用统一使用 <async/...>。
 
 `core/` 是目录和依赖边界，不是 C++ 命名空间。Context、Executor、Worker、SchedulerToken、SchedulerHandle 与 Core concepts 位于 lcf::async。队列设施位于 core/queue，与 scheduling 并列；公开命名空间按 queue::intrusive/non_intrusive、mpmc/spmc/mpsc/spsc 分层，拓扑下的类名统一为 Queue，算法目录仅组织具体特化。标准角色词汇位于 protocols，标准操作、查询和算法位于 exec；实现细节使用各组件的 details。
 
@@ -47,10 +47,10 @@ flowchart BT
     P["core/declarations/concepts.h<br/>executable / record"]
     B["core/queue/declarations/enums.h<br/>接纳结果"]
     Q["core/queue<br/>工作接纳 / 存储 / 领取"]
-    T["core/worker/declarations/<br/>状态 / 多 Worker 能力 / 等待与驱动"]
+    T["core/worker/declarations/<br/>状态 / 多 Worker 能力 / 等待"]
     TH["core/worker/thread/<br/>NullThreadHandle / ThreadLauncher / join / launch"]
     SL["core/worker/selectors/<br/>选择协议 / RoundRobinSelector"]
-    W["core/worker<br/>WorkerDriver / WorkerPool / BasicWorker"]
+    W["core/worker<br/>WorkerPool / BasicWorker"]
     CS["core/context/details/ContextSelector.h<br/>owner 与普通域选择规则"]
     M["core/memory · cancellation"]
     K["core/details/containers<br/>FixedCapacityVector 等容器"]
@@ -103,7 +103,7 @@ flowchart BT
 | `core/queue/declarations/enums.h` | EnqueueResult，队列接纳结果 | 只需公共宏；不包含 Queue 或 Executor 实现 |
 | `core/queue/declarations/concepts.h` | work_queue_c、waiting_work_queue_c、stoppable_work_queue_c | 依赖基础工作协议与同目录 enums.h；不依赖 scheduling 或 provider |
 | `core/scheduling/declarations/concepts.h` | work_notifier_c、record_submitter_c、indexed_record_submitter_c、work_executor_c、可选等待/停止能力及标准 sender/receiver/scheduler/operation_state 概念的 _c 转发 | 依赖基础工作协议、queue/declarations/enums.h 和 protocol.h，统一加载 provider |
-| `core/worker/declarations/` | WorkerState、多 Worker 能力与等待/驱动协议 | enums.h 只需公共宏；concepts.h 依赖 scheduling/declarations/concepts.h |
+| `core/worker/declarations/` | WorkerState、多 Worker 能力与等待协议 | enums.h 只需公共宏；concepts.h 依赖 scheduling/declarations/concepts.h |
 | `core/worker/thread/` | NullThreadHandle、ThreadLauncher、ThreadEntry、join/launch 协议及 owner 线程绑定 | 独立线程词汇不依赖 execution provider；不包含选择器或 Context |
 | `core/worker/selectors/` | executor_selector_c 与通用选择策略；当前提供 RoundRobinSelector | 依赖调度概念，不依赖线程句柄或 Context；具体 Context 策略留在 context/details/ |
 | `core/worker/details/` | WorkSignal 的版本通知与 WorkerControl 的停止/关闭等待状态 | 不依赖 Dispatcher；Dispatcher 只通过 work_notifier_c 消费通知能力，不包含这些内部实现 |
@@ -114,11 +114,11 @@ flowchart BT
 | `core/details/containers` | 容器的元素生命周期、容量、布局与访问；内部 FixedCapacityVector 的容量在运行期确定，之后不扩容 | 使用显式 allocator；不依赖 Context、execution 或具体 queue；memory 负责资源策略，容器负责管理元素 |
 | `core/queue` | 工作接纳、存储、领取及并发/存活契约；按存储结构、拓扑和算法组织 | 与 scheduling 并列；当前实现只依赖本模块 declarations/enums.h、具体节点和标准同步设施，不包含 concepts.h、Executor、Worker、Context 或 execution provider |
 | `core/scheduling` | Executor、Dispatcher 与标准 scheduler 句柄 | Dispatcher 路由提交，Executor 消费 Queue；不包含 Worker、Context 或事件源管理 |
-| `core/worker` | 统一执行驱动、消费选择与等待策略、Worker 及后台池的生命周期 | WorkerDriver 驱动选中的 Executor；BasicWorker 默认使用 NullThreadHandle 在调用线程运行，显式 launcher 可启动后台线程；不包含 Context |
+| `core/worker` | 统一执行驱动、消费选择与等待策略、Worker 及后台池的生命周期 | BasicWorker 驱动选中的 Executor，默认使用 NullThreadHandle 在调用线程运行，显式 launcher 可启动后台线程；不包含 Context |
 | `core/context/details/ContextSelector.h` | 组合 owner Executor 与普通消费选择，判断宿主可消费的域 | 借用普通 WorkerPool 与 owner Executor；不执行工作或等待 |
 | 后续 `core/timer`、原生事件后端 | deadline 索引、计时操作与事件就绪 | 事件循环通过 owner Worker 的 Selector/Waiter 组合，不再另写一套驱动循环 |
 | `core/coroutine` | Task、promise、awaiter、frame 与 continuation policy | Core 能力及语言协程协议 |
-| `core/context` | 拥有并组装 N 个 Executor、Dispatcher、后台 WorkerPool 与一个本线程 owner Worker | Context 提供创建、启动及 run/poll 预算入口；owner 与后台 Worker 共用 WorkerDriver，不拥有业务 root scope |
+| `core/context` | 拥有并组装 N 个 Executor、Dispatcher、后台 WorkerPool 与一个本线程 owner Worker | Context 提供创建、启动及 run/poll 预算入口；owner 与后台 Worker 共用 BasicWorker 的执行循环，不拥有业务 root scope |
 | `execution.h`、后续扩展算法 | 聚合标准词汇、操作/查询接口、标准算法和扩展算法 | 复用统一协议；不依赖 Core |
 | `core/scheduling/details/` | 内部 sender/operation 的接纳、执行与完成适配 | 使用 Core 提交接口、概念别名和标准 operations/queries；不建立公开 adapters API，不被基础 queue/executor 反向包含 |
 
@@ -139,7 +139,6 @@ core/
 │     └─ exec_schedule_adapters.h
 ├─ worker/
 │  ├─ BasicWorker.h
-│  ├─ WorkerDriver.h
 │  ├─ WorkerPool.h
 │  ├─ declarations/
 │  │  ├─ concepts.h
@@ -181,8 +180,8 @@ flowchart TB
     D["L2 BasicDispatcher<br/>投递路由与成功提交通知"]
     E["L2 BasicExecutor&lt;Queue&gt;<br/>从 Queue 领取并执行工作"]
     W["L2 WorkerPool / BasicWorker<br/>M 个线程及共享生命周期"]
-    WD["L2 WorkerDriver / Selector / Waiter<br/>选择、驱动与等待策略"]
-    H["L2 owner BasicWorker&lt;OwnerDriver&gt;<br/>NullThreadHandle，在宿主线程 run/poll"]
+    SW["L2 Selector / Waiter<br/>选择与等待策略"]
+    H["L2 owner BasicWorker&lt;OwnerSelector, WorkerControl&gt;<br/>NullThreadHandle，在宿主线程 run/poll"]
     CS["L2 details::ContextSelector<br/>owner 与普通域的候选选择"]
     P["L3 队列后端、ready/timer、wake 与资源策略"]
     O["L4 ScheduleSender / Operation / Record"]
@@ -191,13 +190,14 @@ flowchart TB
     C --> W
     C --> D
     C --> H
-    H --> WD
+    H --> SW
+    H --> E
     H --> CS
     C -.->|"token 获取句柄"| S
     S --> D
     D --> E
-    W --> WD
-    WD --> E
+    W --> SW
+    W --> E
     CS -->|"owner 域，及无后台消费时的普通域"| E
     E --> P
     P --> O
@@ -213,9 +213,8 @@ flowchart TB
 | L1 | `ProducerEndpoint` | 固定 producer 预登记的低延迟提交入口 | 借用专用 lane，遵守 producer 限制 |
 | L2 | `BasicExecutor<Queue>` | 接纳 Record，从 Queue 取出可执行对象并调用 execute；不创建线程 | 持有 Queue，可由多个 Worker 和宿主并发驱动 |
 | L2 | `BasicDispatcher<Executor, OwnerExecutor, Notifier>` | 逻辑目标到普通/owner Queue 的投递路由，成功后通知相应驱动者 | 借用稳定 Executor 数组、owner Executor 和两个满足 work_notifier_c 的通知对象；不执行工作或依赖具体 Worker 类型 |
-| L2 | `WorkerDriver<Selector, Waiter>` | 无线程的单步执行及等待循环，维护运行状态 | 持有消费选择策略，借用等待策略；不拥有线程 |
-| L2 | `RoundRobinSelector<Executor>` | 通过 visitNext 提供有限个候选 Executor，每次成功后从下一项继续 | 位于 worker/selectors/，借用 Executor span；游标属于每个 driver，不使用共享原子游标 |
-| L2 | `BasicWorker<Driver, ThreadHandle = NullThreadHandle>` | 提供本线程 run/executeOne；显式 launcher 构造可启动后台执行 | 拥有 driver 与 join 句柄，析构自动 join；Null 句柄的构造/join 均为空操作，不关闭借用执行域 |
+| L2 | `RoundRobinSelector<Executor>` | 通过 visitNext 提供有限个候选 Executor，每次成功后从下一项继续 | 位于 worker/selectors/，借用 Executor span；游标属于每个 Worker，不使用共享原子游标 |
+| L2 | `BasicWorker<Selector, Waiter, ThreadHandle = NullThreadHandle>` | 组合选择、单步执行及等待循环，维护运行状态；显式 launcher 构造可启动后台执行 | 拥有 Selector、状态与 join 句柄，借用 Waiter，析构自动 join；Null 句柄的构造/join 均为空操作，不关闭借用执行域 |
 | L2 | `WorkerPool<Executor, ThreadHandle>` | 创建 Worker 存储、启动与 join，管理共享停止/关闭状态 | 拥有 Worker 数组和 WorkerControl，借用普通 Executor span 与通知信号 |
 | L2 | `details::ContextSelector` | 为 owner Worker 提供普通/专属 Executor 候选，并保持两类工作的轮转 | 借用 owner Executor、WorkerPool 和普通 Executor span；后台线程运行期间只选择 owner 域 |
 | L2 | `NullThreadHandle`、`ThreadLauncher<ThreadHandle>` | 统一无线程句柄与真实线程句柄的构造、观察和 join | 位于 worker/thread/；Null launcher 不启动 entry，真实后端按契约在独立线程执行 entry |
@@ -307,7 +306,7 @@ ready queue 和 timer index 不执行 receiver，也不在内部锁下调用用�
 
 `using lcf::async::record_submitter_c;` 可把同一 concept 引入其他命名空间；需要改名时，可定义带完整参数的转发 concept `runtime_submitter_c = record_submitter_c<Submitter, Record>`。concept 不是类型，不能用类型别名语法替代；通常不新增同义公共名字。
 
-约束放在实际消费能力的位置。BasicContext<Executor, ThreadHandle, LoopExecutor> 只对普通 Executor 要求 multi_worker_executor_c；专属 LoopExecutor 使用 work_executor_c。BasicWorker 消费 worker_driver_c，WorkerDriver 分别约束 executor_selector_c 与 worker_waiter_c；驱动/等待约束位于 core/worker/declarations/concepts.h，选择约束位于 core/worker/selectors/declarations/concepts.h，线程约束位于 core/worker/thread/declarations/concepts.h。当前两种具体 Executor 均须可默认构造：专属对象随 Context 构造，普通对象在 create 中构造；启动阶段检查 thread_launcher_c，不增加单独的工厂类型或工厂概念。SchedulerHandle 在实际 tryEnqueue 成员上按 Record 检查 record_submitter_c 或 indexed_record_submitter_c，不人为选择 probe record；内部 receiver_of_c 复用标准完成签名。
+约束放在实际消费能力的位置。BasicContext<Executor, ThreadHandle, LoopExecutor> 只对普通 Executor 要求 multi_worker_executor_c；专属 LoopExecutor 使用 work_executor_c。BasicWorker 分别约束 executor_selector_c、worker_waiter_c 与 join_handle_c；等待约束位于 core/worker/declarations/concepts.h，选择约束位于 core/worker/selectors/declarations/concepts.h，线程约束位于 core/worker/thread/declarations/concepts.h。当前两种具体 Executor 均须可默认构造：专属对象随 Context 构造，普通对象在 create 中构造；启动阶段检查 thread_launcher_c，不增加单独的工厂类型或工厂概念。SchedulerHandle 在实际 tryEnqueue 成员上按 Record 检查 record_submitter_c 或 indexed_record_submitter_c，不人为选择 probe record；内部 receiver_of_c 复用标准完成签名。
 
 indexed_record_submitter_c 定义在 scheduling/declarations/concepts.h，描述 tryEnqueue(uint32_t target_index, Record &) noexcept -> EnqueueResult。Context 的 Dispatcher 实现该路由接口；独立 Executor 保留不带目标下标的提交接口。SchedulerHandle 对具备索引提交能力的对象传递逻辑目标，下标只表示执行域，不是 Worker 编号。该能力不要求 submitter 具备 executeOne、等待或线程接口。
 
@@ -423,7 +422,7 @@ concept allocation_resource_c = requires(
 
 资源策略的扩展落在实际存储 owner 上：Queue、timer、operation 和 FramePolicy 各自消费所需能力。ContextAllocators 只覆盖对象数组；当前普通与专属 Executor 均默认构造，后续确有 Queue 参数时由对应创建配置承载。默认 intrusive Queue 没有动态 backing storage，不接收无用 allocator。PMR 装饰器支持统计，无需增加只有转发作用的 ResourcePolicy。
 
-线程资源独立于容器。`std::thread` 的启动状态、栈和系统句柄没有标准 PMR 注入接口；MVP 用 `BasicWorker<Driver, ThreadHandle>`、`join_handle_c` 和 `thread_launcher_c<Launcher, ThreadHandle>` 暴露后端，线程词汇定义在 core/worker/thread/。真实线程后端由 launcher 在独立线程恰好调用一次 entry，返回句柄代表该执行；join 等待该执行结束并与其完成同步。NullThreadHandle 也满足 join_handle_c，提供空的 `(ThreadEntry, void *)` 构造、恒为 false 的 joinable 和空 join；ThreadLauncher 统一构造所选句柄，Null 构造不调用 entry。通用代码不对 Null 类型特化，也不把空启动误作同步执行；本线程执行由 worker.run/executeOne 显式发起。检查表达式不能证明实际线程行为，语义须由实现及集成测试兑现。ThreadLauncher<std::thread> 的线程资源不受 allocator 控制；严格路径用受控后端或本线程 Worker 推进 Executor。mutex/CV 的平台资源、provider 算法、异常对象和用户值同样单独审查。
+线程资源独立于容器。`std::thread` 的启动状态、栈和系统句柄没有标准 PMR 注入接口；MVP 用 `BasicWorker<Selector, Waiter, ThreadHandle>`、`join_handle_c` 和 `thread_launcher_c<Launcher, ThreadHandle>` 暴露后端，线程词汇定义在 core/worker/thread/。真实线程后端由 launcher 在独立线程恰好调用一次 entry，返回句柄代表该执行；join 等待该执行结束并与其完成同步。NullThreadHandle 也满足 join_handle_c，提供空的 `(ThreadEntry, void *)` 构造、恒为 false 的 joinable 和空 join；ThreadLauncher 统一构造所选句柄，Null 构造不调用 entry。通用代码不对 Null 类型特化，也不把空启动误作同步执行；本线程执行由 worker.run/executeOne 显式发起。检查表达式不能证明实际线程行为，语义须由实现及集成测试兑现。ThreadLauncher<std::thread> 的线程资源不受 allocator 控制；严格路径用受控后端或本线程 Worker 推进 Executor。mutex/CV 的平台资源、provider 算法、异常对象和用户值同样单独审查。
 
 `allocation_resource_c` 是供无异常存储 helper/FramePolicy 消费的另一种能力；它不能直接替换标准 PMR allocator。当前 Context::create 提供 noexcept 错误码边界，内部仍捕获标准 PMR 与系统资源构造异常；这不等于禁用异常的实现。全无异常创建还需要实际不抛异常的分配与线程后端。新增存储策略必须覆盖原资源释放、构造回滚、容量失败和跨线程回收；具体结构及默认策略仍由 benchmark 决定。
 
@@ -441,19 +440,19 @@ registration 处理注册与 request_stop 的竞争，以及析构期间 callbac
 
 ### 5.1 投递、消费选择与执行驱动
 
-`BasicExecutor<Queue>` 负责接纳和单步执行，不选择物理 Worker、不创建线程。独立使用时可通过 waitAndExecuteOne 等待自己的 Queue。Context 中的投递由 Dispatcher 路由，消费选择由 Selector 决定，WorkerDriver 调用候选 Executor 的 executeOne；不能逐个阻塞等待某个 Queue。Queue 的发布、关闭和节点存活契约保持独立。
+`BasicExecutor<Queue>` 负责接纳和单步执行，不选择物理 Worker、不创建线程。独立使用时可通过 waitAndExecuteOne 等待自己的 Queue。Context 中的投递由 Dispatcher 路由，消费选择由 Selector 决定，BasicWorker 调用候选 Executor 的 executeOne；不能逐个阻塞等待某个 Queue。Queue 的发布、关闭和节点存活契约保持独立。
 
 Context 中的普通 Executor 由 M 个同类后台 Worker 共享。BasicDispatcher 依据稳定目标下标直接投递普通或 owner Queue：普通工作通知后台等待者与 owner Worker，owner 工作只通知 owner Worker。Dispatcher 通过 work_notifier_c 仅要求 notifyOne() noexcept，不包含 Worker 内部实现；Context 注入两个 WorkSignal。投递不扫描 Worker 状态、不新增全局队列锁，投递后不再访问 record。当前映射是一目标一 Executor，后续路由策略可改变映射而保留句柄身份。
 
-每个 WorkerDriver 持有自己的 Selector。后台 Worker 使用 RoundRobinSelector，owner Worker 使用 ContextSelector；选择过程有限，不通过全局原子游标竞争。选择器通过 visitNext(visitor) 访问一个候选，返回 false 表示本轮耗尽；WorkerDriver 提供 visitor 并调用候选的 executeOne。该接口允许不同具体类型的 Executor 共用一轮选择，不要求共同基类或类型擦除。选择器不提前领取或预留工作；实际领取与执行仍属于 Executor。WorkerControl 提供停止/关闭状态与版本等待，后台集合与 owner 分别使用实例。WorkerDriver 在扫描前 observe，扫描无工作后按相同版本 wait，避免发布与入睡竞争丢唤醒。后台信号与 owner 信号分离，后台 Worker 不会抢走 owner 工作的唤醒。
+每个 BasicWorker 持有自己的 Selector。后台 Worker 使用 RoundRobinSelector，owner Worker 使用 ContextSelector；选择过程有限，不通过全局原子游标竞争。选择器通过 visitNext(visitor) 访问一个候选，返回 false 表示本轮耗尽；BasicWorker 提供 visitor 并调用候选的 executeOne。该接口允许不同具体类型的 Executor 共用一轮选择，不要求共同基类或类型擦除，也不为每次扫描创建 generator 协程帧。选择器不提前领取或预留工作；实际领取与执行仍属于 Executor。WorkerControl 提供停止/关闭状态与版本等待，后台集合与 owner 分别使用实例。BasicWorker 在扫描前 observe，扫描无工作后按相同版本 wait，避免发布与入睡竞争丢唤醒。后台信号与 owner 信号分离，后台 Worker 不会抢走 owner 工作的唤醒。
 
 WorkSignal 位于 worker/details/WorkSignal.h，服务于后台和本线程 Worker。其序号表示通知版本，wait(observed) 等待版本变化；通知不代表可领取的任务数，也不提供等待计数达到指定目标的接口。因此保留 WorkSignal 命名；TimelineSemaphore 通常表达等待单调计数达到目标值的协议，与当前版本通知语义不同。Notifier 的概念只检查通知接口；实际等待后端仍须兑现发布与休眠之间不丢唤醒的语义。
 
-Context 的 owner Worker 使用默认 NullThreadHandle，与后台 Worker 共用同一 WorkerDriver。ContextSelector 决定消费范围：没有可 join 的后台句柄时，宿主轮转推进 owner 与普通 Executor；后台集合运行期间只选择 owner 域。WorkerPool 按实际句柄的 joinable 状态建立运行标记，空句柄的 Worker 数量不会阻止宿主参与普通工作。首次 run/poll/pollOne 的线程由 worker/thread/details/OwnerThreadBinding 建立 owner，后续驱动保持同一线程，禁止重入或并发驱动。后台 Selector 不包含 owner Executor。只有普通共享 Executor 要求 multi_worker_executor_c；专属 LoopExecutor 只要求 work_executor_c。
+Context 的 owner Worker 使用默认 NullThreadHandle，与后台 Worker 共用 BasicWorker 的执行循环。ContextSelector 决定消费范围：没有可 join 的后台句柄时，宿主轮转推进 owner 与普通 Executor；后台集合运行期间只选择 owner 域。WorkerPool 按实际句柄的 joinable 状态建立运行标记，空句柄的 Worker 数量不会阻止宿主参与普通工作。首次 run/poll/pollOne 的线程由 worker/thread/details/OwnerThreadBinding 建立 owner，后续驱动保持同一线程，禁止重入或并发驱动。后台 Selector 不包含 owner Executor。只有普通共享 Executor 要求 multi_worker_executor_c；专属 LoopExecutor 只要求 work_executor_c。
 
-BasicWorker 的默认构造或只接收 Driver 参数的构造不启动线程，可通过 create 延迟绑定 Driver，然后在本线程 run/executeOne。接收 launcher 的构造先构造 Driver，再调用 launcher；默认句柄为空时启动无效果，真实句柄则持有后台执行。所有句柄共用相同代码路径，析构统一 join；重新配置和本线程驱动前应先 join 已启动的后台执行，Driver 不得并发驱动。
+BasicWorker 在构造时直接保存 Selector、绑定 Waiter 并初始化运行状态；只接收 Selector/Waiter 的构造不启动线程，随后在本线程 run/executeOne/waitAndExecuteOne。RoundRobinSelector 的默认状态为空候选范围；WorkerControl 在构造时绑定通知信号。BasicWorker 需要有效的 Waiter，不提供未绑定的默认状态或 create；Context 随自身构造就绑定空 Pool、owner Worker 与相应控制对象。接收 launcher 的构造在初始化选择器、等待对象与状态后才调用 launcher；后台入口直接使用这些已初始化成员，不读取尚在构造中的线程句柄。默认句柄为空时启动无效果，真实句柄则持有后台执行。所有句柄共用相同代码路径，析构统一 join；本线程驱动前应先 join 已启动的后台执行，同一个 Worker 不得并发驱动。
 
-事件循环表示 owner Worker 与事件源、ready 域和等待后端的组合。当前只有工作通知，直接复用 WorkerControl；不保留重复的 ContextDriver/EventLoop 轮询包装。原生事件后端后续实现所需的 Waiter 与就绪能力：等待时处理事件到达并发布 ready work，WorkerDriver 仍负责统一的执行循环。Context 自身保留 poll 的预算和 owner 入口约束。
+事件循环表示 owner Worker 与事件源、ready 域和等待后端的组合。当前只有工作通知，直接复用 WorkerControl；不保留重复的 ContextDriver/EventLoop 轮询包装。原生事件后端后续实现所需的 Waiter 与就绪能力：等待时处理事件到达并发布 ready work，BasicWorker 仍负责统一的执行循环。Context 自身保留 poll 的预算和 owner 入口约束。
 
 WorkerState 的 eIdle、eSearching、eExecuting、eWaiting、eStopped 是运行状态快照，不是任务优先级或执行资格。当前执行是非抢占式，多个 Worker 竞争领取不表示抢占 callback。Selector 与 Waiter 分别是消费选择和等待策略的扩展点；优先级、公平性、窃取、主动轮询及容量预留后续独立实现，不把这些属性固化成不同 Worker 类。状态只能辅助决策，不能替代领取和休眠唤醒的同步协议。
 
@@ -465,14 +464,14 @@ WorkerState 的 eIdle、eSearching、eExecuting、eWaiting、eStopped 是运行�
 | `Context::run(launcher)` | 启动尚未启动的后台 Workers，在当前线程运行 owner Worker，直到停止或可消费的域关闭且排空 |
 | `Context::pollOne()` | 不启动线程；在 owner 线程至多执行一项；无运行中的 Workers 时也推进普通域 |
 | `Context::poll(PollBudget = {})` | 同一驱动范围，按 record 数和软时间预算推进；不等待新工作 |
-| `WorkerDriver::executeOne()` | 根据选择策略尝试 Executor，不等待新工作；不创建线程 |
-| `WorkerDriver::waitAndExecuteOne()/run()` | 组合选择策略与等待策略，在工作边界响应停止/关闭 |
+| `BasicWorker::executeOne()` | 根据选择策略尝试 Executor，不等待新工作；不创建线程 |
+| `BasicWorker::waitAndExecuteOne()/run()` | 组合选择策略与等待策略，在工作边界响应停止/关闭 |
 | `Worker::run()/executeOne()` | 显式驱动当前线程上的 Driver；要求不存在未 join 的后台句柄 |
 | `Worker::join()/isJoinable()` | 统一访问所选线程句柄；Null 句柄的 join 为空操作且不可 join |
 
 executeOne/pollOne 限制 record 数量，不限制函数链长度；预算不能抢占一个 record。空查询与无工作返回不证明业务 root 已完成。requestStop 唤醒两种驱动者并在 record 边界退出；close 先关闭准入，再发布集合关闭状态并唤醒，允许未停止的驱动者排空。标准单队列等待与 Context 集合等待是两种组合方式，不应叠加阻塞等待。
 
-scheduling/declarations/concepts.h 的 work_executor_c 描述 executeOne/close/isEmpty，waiting_work_executor_c 独立描述单 Executor 的 waitAndExecuteOne；Queue 的领取/等待/停止约束归 queue/declarations/concepts.h。worker/declarations/concepts.h 的 multi_worker_executor_c 增加多 Worker 能力声明，worker_waiter_c 描述 observe/wait 和停止/关闭，worker_driver_c 描述 executeOne/run 与状态观察能力。worker/selectors/declarations/concepts.h 的 executor_selector_c 描述有限候选访问，具体选择策略位于同模块；线程协议则位于 worker/thread/declarations/。概念检查不能证明线程安全、恰好一次或生命周期语义，仍需实现及测试验证。
+scheduling/declarations/concepts.h 的 work_executor_c 描述 executeOne/close/isEmpty，waiting_work_executor_c 独立描述单 Executor 的 waitAndExecuteOne；Queue 的领取/等待/停止约束归 queue/declarations/concepts.h。worker/declarations/concepts.h 的 multi_worker_executor_c 增加多 Worker 能力声明，worker_waiter_c 描述 observe/wait 和停止/关闭。worker/selectors/declarations/concepts.h 的 executor_selector_c 描述有限候选访问，具体选择策略位于同模块；线程协议则位于 worker/thread/declarations/。BasicWorker 直接组合这些协议，实现执行、等待与状态观察。概念检查不能证明线程安全、恰好一次或生命周期语义，仍需实现及测试验证。
 
 `PollBudget` 和 `PollReport` 属于 `Context::poll()`，位于 `core/context/declarations/poll_structs.h`。protocols/execution 不依赖这些 Core 值类型。timer、文件监听等事件源后续接入 owner Worker 的等待后端，不加入 Queue 或 BasicExecutor 的基础协议。
 
@@ -612,9 +611,9 @@ MVP 每个普通 token 对应独立 Executor/Queue，所有普通域共享 Worke
 
 ContextInfo 的写法参考 LCFEngine 仓库 <https://github.com/mmmmmcree/LCFEngine.git> 的 `libs/vk_core/include/vk_core/context/info_structs.h`：默认构造、链式 setter、私有配置成员与 getter；Context::create(const ContextInfo &) noexcept 借用配置并返回 std::error_code。Worker 数直接使用 uint32_t。getSchedulerCount 返回普通目标数，getExecutorCount 返回总数，包含专属 Executor。addScheduler noexcept 只签发计数 token，数组分配发生在 create。token 和 handle 定义在 SchedulerHandle.h；token 的 domain/index 仍为两个 uint32_t，不默认构造、不允许数值伪造，不保活 Context。
 
-getSchedulerHandle 检查配置域，将 token 身份与 Dispatcher 引用组合为句柄；Dispatcher 在实际投递时按目标下标选择稳定 Executor。Context 不可移动，数组创建后不扩容；专属 Executor 内嵌。ContextInfo::storageRequirements<Executor, ThreadHandle>() 按普通 Executor 和 WorkerPool::Worker 的实际类型报告两块固定数组的字节数和对齐，setAllocators 分别绑定资源；不覆盖 Queue 内部 backing storage、线程栈或 OS 资源。普通数组直接保存 Executor，Worker 数组由 WorkerPool 管理，Driver 和线程句柄内嵌于各 Worker。没有可选 Storage、通知 Executor 包装或额外目标对象数组。
+getSchedulerHandle 检查配置域，将 token 身份与 Dispatcher 引用组合为句柄；Dispatcher 在实际投递时按目标下标选择稳定 Executor。Context 不可移动，数组创建后不扩容；专属 Executor 内嵌。ContextInfo::storageRequirements<Executor, ThreadHandle>() 按普通 Executor 和 WorkerPool::Worker 的实际类型报告两块固定数组的字节数和对齐，setAllocators 分别绑定资源；不覆盖 Queue 内部 backing storage、线程栈或 OS 资源。普通数组直接保存 Executor，Worker 数组由 WorkerPool 管理，Selector、运行状态和线程句柄内嵌于各 Worker。没有可选 Storage、通知 Executor 包装或额外目标对象数组。
 
-Dispatcher、WorkerPool 与 owner Worker 的 create 建立借用或初始化所属资源；ContextSelector 保存候选范围，两个 WorkerControl 分别绑定后台/owner 信号，固定容器通过构造与移动赋值替换存储。create 内的分配和普通 Executor 构造异常转换为错误码，失败重试不重建专属 Executor。自定义专属 Executor 随 Context 构造，其异常向调用方传播，Context 默认构造采用条件 noexcept。
+Dispatcher、WorkerPool 与 owner Worker 在构造时建立借用或初始化所属资源；ContextSelector 保存候选范围，两个 WorkerControl 分别在构造时绑定后台/owner 信号。Context 随自身构造绑定这些成员，初始使用空数组和空 Worker 存储，保留有效的空状态。create 先在局部固定容器中分配两块数组并构造普通 Executor；准备阶段的异常转换为错误码，局部容器自动释放，不修改原有成员。准备完成后通过无异常的移动赋值转移数组存储，原地替换 WorkerPool、owner 控制与 owner Worker，并赋值替换 Dispatcher；不移动已被 Worker 借用的控制对象，也不引入 optional 占位。失败重试不重建专属 Executor。自定义专属 Executor 随 Context 构造，其异常向调用方传播，Context 默认构造采用条件 noexcept。
 
 配置域由普通 uint32_t 计数器签发，ContextInfo 的构造由宿主串行进行；运行时提交不依赖该计数器。create 不消费配置，布局不变的配置可用于创建多个 Context，token 在各实例中指向同一配置下标；具体 SchedulerHandle 因 Dispatcher 地址不同而不相等。配置移动转移域和计数，移出对象不能用于创建或登记目标。
 
@@ -624,7 +623,7 @@ startWorkers/run 启动线程失败时，持久停止整个 Context，join 已�
 
 requestStop 停止后台集合及 owner Worker 的等待循环，不关闭准入、不取消 root。joinWorkers 等待后台访问结束后，poll 可排空普通域和专属域，且仍遵守 owner。close 关闭全部域并唤醒等待者；仅后台 Workers 模式不会执行专属任务，run 关闭退出也不替代 joinWorkers。isEmpty 只观察各队列，不证明没有执行中的 callback、挂起 root 或后续 producer。
 
-BasicContext 析构自动 requestStop 并 joinWorkers，在释放 Executor、等待信号和线程存储之前结束自有 Worker 的访问；正常离开作用域及异常展开均不要求重复手动 join。WorkerPool 自身也先停止并 join 其 Worker。BasicWorker 析构自动 join 自己拥有的线程，但不停止或关闭 driver 借用的执行域；共享执行域的 owner 负责先发出停止或关闭并唤醒全部等待者。单独销毁 Worker 不能替其他消费者关闭共享执行域。显式 join 接口保留，用于确定业务所需的同步边界；已 join 的线程在析构中不重复 join。
+BasicContext 析构自动 requestStop 并 joinWorkers，在释放 Executor、等待信号和线程存储之前结束自有 Worker 的访问；正常离开作用域及异常展开均不要求重复手动 join。WorkerPool 自身也先停止并 join 其 Worker。BasicWorker 析构自动 join 自己拥有的线程，但不停止或关闭其借用的执行域；共享执行域的 owner 负责先发出停止或关闭并唤醒全部等待者。单独销毁 Worker 不能替其他消费者关闭共享执行域。显式 join 接口保留，用于确定业务所需的同步边界；已 join 的线程在析构中不重复 join。
 
 自动 join 只保证线程退出，不保证全部操作完成。Context 和 BasicExecutor 保留队列非空的析构诊断，不在析构线程领取并执行剩余 record；业务 root、operation 存储和跨域完成必须由宿主或后续拥有操作的 Scope 在析构前追踪并排空。operation 常在 Context 后构造、先于它销毁，不能等到 Context 析构才访问借用节点；owner 任务也不能在另一析构线程恢复。析构可能等待正在运行的 callback 返回，不提供耗时上界；销毁不得与 Context 驱动或外部提交并发，也不得在其自有 Worker 上销毁 Context 或 join 自身。
 

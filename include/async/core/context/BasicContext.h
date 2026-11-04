@@ -16,6 +16,7 @@
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <memory_resource>
 #include <new>
 #include <span>
@@ -36,8 +37,7 @@ class BasicContext
     using Pool = WorkerPool<Executor, ThreadHandle>;
     using Worker = typename Pool::Worker;
     using OwnerSelector = details::ContextSelector<Executor, ThreadHandle, LoopExecutor>;
-    using OwnerDriver = WorkerDriver<OwnerSelector, details::WorkerControl>;
-    using OwnerWorker = BasicWorker<OwnerDriver>;
+    using OwnerWorker = BasicWorker<OwnerSelector, details::WorkerControl>;
     using ExecutorList = details::FixedCapacityVector<Executor>;
 public:
     ~BasicContext() noexcept
@@ -58,11 +58,39 @@ public:
     {
         if (m_domain_id != 0) { return std::make_error_code(std::errc::operation_in_progress); }
         if (context_info.getDomainId() == 0) { return std::make_error_code(std::errc::invalid_argument); }
-        if (auto error = this->createResources(context_info)) {
-            m_dispatcher.reset();
-            m_worker_pool.reset();
-            m_executors = ExecutorList{};
-            return error;
+        try {
+            const auto allocators = context_info.getAllocators();
+            ExecutorList executors{context_info.getSchedulerCount(),
+                std::pmr::polymorphic_allocator<Executor>{allocators.m_executors}};
+            for (std::size_t index = 0; index < context_info.getSchedulerCount(); ++index) {
+                executors.emplace_back();
+            }
+            typename Pool::WorkerList workers{context_info.getWorkerCount(),
+                std::pmr::polymorphic_allocator<Worker>{allocators.m_workers}};
+
+            // Finish all throwing preparation before replacing the bound objects.
+            static_assert(std::is_nothrow_constructible_v<Pool, std::span<Executor>,
+                details::WorkSignal &, typename Pool::WorkerList>);
+            static_assert(std::is_nothrow_constructible_v<OwnerWorker, OwnerSelector, details::WorkerControl &>);
+            m_executors = std::move(executors);
+            std::destroy_at(&m_worker_pool);
+            std::construct_at(&m_worker_pool, std::span{m_executors}, m_worker_signal, std::move(workers));
+            m_dispatcher = Dispatcher{std::span{m_executors}, m_loop_executor, m_worker_signal, m_loop_signal};
+            std::destroy_at(&m_owner_worker);
+            std::destroy_at(&m_owner_control);
+            std::construct_at(&m_owner_control, m_loop_signal);
+            std::construct_at(&m_owner_worker,
+                OwnerSelector{m_loop_executor, m_worker_pool, std::span{m_executors}}, m_owner_control);
+        } catch (const std::bad_array_new_length &) {
+            return std::make_error_code(std::errc::value_too_large);
+        } catch (const std::bad_alloc &) {
+            return std::make_error_code(std::errc::not_enough_memory);
+        } catch (const std::length_error &) {
+            return std::make_error_code(std::errc::value_too_large);
+        } catch (const std::system_error & error) {
+            return error.code();
+        } catch (...) {
+            return std::make_error_code(std::errc::io_error);
         }
         m_domain_id = context_info.getDomainId();
         return {};
@@ -136,43 +164,14 @@ public:
         return m_loop_executor.isEmpty() and m_worker_pool.isEmpty();
     }
 private:
-    std::error_code createResources(const ContextInfo & context_info) noexcept
-    requires std::default_initializable<Executor> and std::default_initializable<LoopExecutor>
-    {
-        try {
-            const auto allocators = context_info.getAllocators();
-            m_executors = ExecutorList{context_info.getSchedulerCount(),
-                std::pmr::polymorphic_allocator<Executor>{allocators.m_executors}};
-            for (std::size_t index = 0; index < context_info.getSchedulerCount(); ++index) {
-                m_executors.emplace_back();
-            }
-            m_worker_pool.create(std::span{m_executors}, m_worker_signal, context_info.getWorkerCount(),
-                std::pmr::polymorphic_allocator<Worker>{allocators.m_workers});
-            m_owner_control.create(m_loop_signal);
-            m_dispatcher.create(std::span{m_executors}, m_loop_executor, m_worker_signal, m_loop_signal);
-            m_owner_worker.create(OwnerSelector{m_loop_executor, m_worker_pool, std::span{m_executors}}, m_owner_control);
-            return {};
-        } catch (const std::bad_array_new_length &) {
-            return std::make_error_code(std::errc::value_too_large);
-        } catch (const std::bad_alloc &) {
-            return std::make_error_code(std::errc::not_enough_memory);
-        } catch (const std::length_error &) {
-            return std::make_error_code(std::errc::value_too_large);
-        } catch (const std::system_error & error) {
-            return error.code();
-        } catch (...) {
-            return std::make_error_code(std::errc::io_error);
-        }
-    }
-private:
     details::WorkSignal m_worker_signal;
     details::WorkSignal m_loop_signal;
     ExecutorList m_executors;
     LoopExecutor m_loop_executor;
-    mutable Dispatcher m_dispatcher;
-    details::WorkerControl m_owner_control;
-    Pool m_worker_pool;
-    OwnerWorker m_owner_worker;
+    mutable Dispatcher m_dispatcher{std::span<Executor>{}, m_loop_executor, m_worker_signal, m_loop_signal};
+    details::WorkerControl m_owner_control{m_loop_signal};
+    Pool m_worker_pool{m_worker_signal};
+    OwnerWorker m_owner_worker{OwnerSelector{m_loop_executor, m_worker_pool, std::span<Executor>{}}, m_owner_control};
     details::OwnerThreadBinding m_owner_binding;
     std::uint32_t m_domain_id = 0;
 };

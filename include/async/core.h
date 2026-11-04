@@ -11,7 +11,6 @@
 #include <async/core/scheduling/BasicDispatcher.h>
 #include <async/core/worker/BasicWorker.h>
 #include <async/core/worker/thread/NullThreadHandle.h>
-#include <async/core/worker/WorkerDriver.h>
 #include <async/core/worker/WorkerPool.h>
 #include <async/core/worker/selectors/RoundRobinSelector.h>
 #include <async/core/worker/selectors/declarations/concepts.h>
