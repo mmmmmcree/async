@@ -18,7 +18,6 @@
 #include <async/core/worker/declarations/enums.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/core/queue/declarations/concepts.h>
-#include <async/core/event_loop/BasicEventLoop.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/queue/intrusive/spmc/Queue.h>

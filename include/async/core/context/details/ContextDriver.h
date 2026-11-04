@@ -1,7 +1,7 @@
 #pragma once
 
+#include "EventLoop.h"
 #include <async/core/context/declarations/poll_structs.h>
-#include <async/core/event_loop/BasicEventLoop.h>
 #include <async/core/worker/WorkerPool.h>
 #include <async/core/worker/details/OwnerThreadBinding.h>
 
@@ -13,7 +13,7 @@ template <multi_worker_executor_c Executor, join_handle_c ThreadHandle, work_exe
 class ContextDriver
 {
     using Pool = WorkerPool<Executor, ThreadHandle>;
-    using EventLoop = BasicEventLoop<LoopExecutor>;
+    using OwnerLoop = EventLoop<LoopExecutor>;
     using HostDriver = typename Pool::Driver;
 public:
     ~ContextDriver() noexcept = default;
@@ -23,7 +23,7 @@ public:
     ContextDriver & operator=(const ContextDriver &) = delete;
     ContextDriver & operator=(ContextDriver &&) = delete;
 public:
-    void create(EventLoop & event_loop, Pool & worker_pool) noexcept
+    void create(OwnerLoop & event_loop, Pool & worker_pool) noexcept
     {
         m_event_loop_p = &event_loop;
         m_worker_pool_p = &worker_pool;
@@ -78,7 +78,7 @@ private:
         return include_shared and not shared_first and m_host_driver.executeOne();
     }
 private:
-    EventLoop * m_event_loop_p = nullptr;
+    OwnerLoop * m_event_loop_p = nullptr;
     Pool * m_worker_pool_p = nullptr;
     HostDriver m_host_driver;
     OwnerThreadBinding m_owner_binding;

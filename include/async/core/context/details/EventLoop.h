@@ -6,23 +6,22 @@
 #include <atomic>
 #include <cstdint>
 
-LCF_ASYNC_EXPORT
-namespace lcf::async {
+namespace lcf::async::details {
 
 template <work_executor_c Executor>
-class BasicEventLoop
+class EventLoop
 {
 public:
     using Observation = std::uint64_t;
 public:
-    ~BasicEventLoop() noexcept = default;
-    BasicEventLoop() noexcept = default;
-    BasicEventLoop(const BasicEventLoop &) = delete;
-    BasicEventLoop(BasicEventLoop &&) = delete;
-    BasicEventLoop & operator=(const BasicEventLoop &) = delete;
-    BasicEventLoop & operator=(BasicEventLoop &&) = delete;
+    ~EventLoop() noexcept = default;
+    EventLoop() noexcept = default;
+    EventLoop(const EventLoop &) = delete;
+    EventLoop(EventLoop &&) = delete;
+    EventLoop & operator=(const EventLoop &) = delete;
+    EventLoop & operator=(EventLoop &&) = delete;
 public:
-    void create(Executor & executor, details::WorkSignal & signal) noexcept
+    void create(Executor & executor, WorkSignal & signal) noexcept
     {
         m_executor_p = &executor;
         m_signal_p = &signal;
@@ -53,9 +52,9 @@ public:
     }
 private:
     Executor * m_executor_p = nullptr;
-    details::WorkSignal * m_signal_p = nullptr;
+    WorkSignal * m_signal_p = nullptr;
     std::atomic<bool> m_stop_requested{false};
     std::atomic<bool> m_closed{false};
 };
 
-} // namespace lcf::async
+} // namespace lcf::async::details

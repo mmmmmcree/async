@@ -3,6 +3,7 @@
 #include "ContextInfo.h"
 #include <async/core/context/declarations/poll_structs.h>
 #include <async/core/context/details/ContextDriver.h>
+#include <async/core/context/details/EventLoop.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/scheduling/BasicExecutor.h>
 #include <async/core/scheduling/BasicDispatcher.h>
@@ -31,7 +32,7 @@ class BasicContext
     using Dispatcher = BasicDispatcher<Executor, LoopExecutor>;
     using Pool = WorkerPool<Executor, ThreadHandle>;
     using Worker = typename Pool::Worker;
-    using EventLoop = BasicEventLoop<LoopExecutor>;
+    using EventLoop = details::EventLoop<LoopExecutor>;
     using Driver = details::ContextDriver<Executor, ThreadHandle, LoopExecutor>;
     using ExecutorList = details::FixedCapacityVector<Executor>;
 public:

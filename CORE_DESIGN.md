@@ -49,7 +49,7 @@ flowchart BT
     Q["core/queue<br/>工作接纳 / 存储 / 领取"]
     T["core/worker/declarations/<br/>线程入口 / 状态 / join / launch / 选择与等待"]
     W["core/worker<br/>WorkerDriver / WorkerPool / BasicWorker"]
-    L["core/event_loop<br/>owner 就绪工作与事件等待入口"]
+    L["core/context/details/EventLoop.h<br/>owner 就绪工作与事件等待入口"]
     M["core/memory · cancellation"]
     K["core/details/containers<br/>FixedCapacityVector 等容器"]
     R["core/scheduling 及 declarations/concepts.h<br/>Executor / Dispatcher / 调度约束与标准概念转发"]
@@ -107,7 +107,8 @@ flowchart BT
 | `core/queue` | 工作接纳、存储、领取及并发/存活契约；按存储结构、拓扑和算法组织 | 与 scheduling 并列；当前实现只依赖本模块 declarations/enums.h、具体节点和标准同步设施，不包含 concepts.h、Executor、Worker、Context 或 execution provider |
 | `core/scheduling` | Executor、Dispatcher 与标准 scheduler 句柄 | Dispatcher 路由提交，Executor 消费 Queue；不包含 Worker、Context 或事件源管理 |
 | `core/worker` | 独立执行驱动、消费选择与等待策略、Worker 线程及池的生命周期 | WorkerDriver 驱动选中的 Executor；BasicWorker 只启动 driver 并持有 join 句柄，不包含 Context 或 EventLoop |
-| `core/event_loop`、后续 `core/timer` | owner 就绪工作、事件等待入口及 deadline 索引 | 不读取 Worker 数量或线程句柄；后续事件源注册、I/O backend 和 timer 在此接入 |
+| `core/context/details/EventLoop.h` | Context 内部的 owner 就绪工作、事件等待与停止/关闭状态 | 借用专属 Executor 和信号，不依赖 WorkerPool 或线程句柄；后续事件源和 timer 后端在此组合 |
+| 后续 `core/timer` | deadline 索引与计时操作 | 提供计时能力，具体等待与事件就绪交付由 Context 内部 EventLoop 组合 |
 | `core/coroutine` | Task、promise、awaiter、frame 与 continuation policy | Core 能力及语言协程协议 |
 | `core/context` | 拥有并组装 N 个 Executor、Dispatcher、WorkerPool、EventLoop 和 ContextDriver | ContextDriver 实现 run/poll 和宿主参与普通工作；Context 本身提供创建、启动和关闭入口，不拥有业务 root scope |
 | `execution.h`、后续扩展算法 | 聚合标准词汇、操作/查询接口、标准算法和扩展算法 | 复用统一协议；不依赖 Core |
@@ -141,12 +142,13 @@ core/
 │  └─ details/
 │     ├─ WorkerControl.h
 │     └─ OwnerThreadBinding.h
-├─ event_loop/BasicEventLoop.h
 ├─ context/
 │  ├─ BasicContext.h
 │  ├─ ContextInfo.h
 │  ├─ declarations/poll_structs.h
-│  └─ details/ContextDriver.h
+│  └─ details/
+│     ├─ ContextDriver.h
+│     └─ EventLoop.h
 ├─ details/
 │  ├─ WorkSignal.h
 │  └─ containers/FixedCapacityVector.h
@@ -177,7 +179,7 @@ flowchart TB
     C --> W
     C --> D
     C --> H
-    L["L2 BasicEventLoop<br/>owner 就绪工作与事件等待入口"]
+    L["L2 details::EventLoop<br/>Context 内部的 owner 工作与事件等待入口"]
     H --> L
     H -.->|"无后台消费时参与普通工作"| WD
     C -.->|"token 获取句柄"| S
@@ -204,7 +206,7 @@ flowchart TB
 | L2 | `RoundRobinSelector<Executor>` | 一次选择有限个候选 Executor，每次成功后从下一项继续 | 借用 Executor span；游标属于每个 driver，不使用共享原子游标 |
 | L2 | `BasicWorker<Driver, ThreadHandle>` | 启动 driver 并管理 join | 拥有 driver 与 join 句柄，析构自动 join，不关闭借用执行域 |
 | L2 | `WorkerPool<Executor, ThreadHandle>` | 创建 Worker 存储、启动与 join，管理共享停止/关闭状态 | 拥有 Worker 数组和 WorkerControl，借用普通 Executor span 与通知信号 |
-| L2 | `BasicEventLoop<Executor>` | 驱动 owner 就绪工作，提供事件等待与停止/关闭入口；后续接入原生事件源 | 借用 owner Executor 和循环信号，不依赖 WorkerPool 或线程句柄 |
+| L2 | `details::EventLoop<Executor>` | Context 内部驱动 owner 就绪工作，提供事件等待与停止/关闭入口；后续接入原生事件源 | 借用 owner Executor 和循环信号，不依赖 WorkerPool 或线程句柄；不公开导出 |
 | L2 | `details::ContextDriver` | 组合 EventLoop 和宿主 WorkerDriver，提供 run/poll 及预算 | 借用 EventLoop、WorkerPool；拥有宿主 driver 和 worker/details 的 owner 线程绑定 |
 | L3 | `details::WorkSignal` | 版本通知及等待握手，防止丢唤醒 | 两个信号由 Context 保活 |
 | L3 | `queue::intrusive::mpmc::Queue<>`、`queue::intrusive::spmc::Queue<>`、后续 non_intrusive 后端、`BoundedProducerLane`、`InboxSet` | 实现 producer 入口、多 consumer 消费及公平/优先级选择 | node 借用；实际策略兑现并发与进展契约 |
@@ -436,7 +438,7 @@ Context 中的普通 Executor 由 M 个同类 Worker 共享。BasicDispatcher �
 
 WorkSignal 的序号表示通知版本，wait(observed) 等待版本变化；通知不代表可领取的任务数，也不提供等待计数达到指定目标的接口。因此保留 WorkSignal 命名；TimelineSemaphore 通常表达等待单调计数达到目标值的协议，与当前版本通知语义不同。
 
-BasicEventLoop 只驱动 owner 就绪工作和等待事件通知，不依赖 WorkerPool，也不判断 Worker 数量。ContextDriver 组合它与一个宿主 WorkerDriver：未启动 Workers、Worker 数为零或 joinWorkers 完成后，宿主驱动也轮转推进普通 Executor；Workers 运行期间只处理 owner 域。首次 run/poll/pollOne 的线程由 worker/details/OwnerThreadBinding 建立 owner，后续驱动保持同一线程，禁止重入或并发驱动。后台 Worker 的 Selector 不包含 owner Executor。只有普通共享 Executor 要求 multi_worker_executor_c；专属 LoopExecutor 只要求 work_executor_c。
+details::EventLoop 位于 context/details/EventLoop.h，仅供 Context 与 ContextDriver 组合，不作为公共组件导出。它只驱动 owner 就绪工作和等待事件通知，不依赖 WorkerPool，也不判断 Worker 数量。ContextDriver 组合它与一个宿主 WorkerDriver：未启动 Workers、Worker 数为零或 joinWorkers 完成后，宿主驱动也轮转推进普通 Executor；Workers 运行期间只处理 owner 域。首次 run/poll/pollOne 的线程由 worker/details/OwnerThreadBinding 建立 owner，后续驱动保持同一线程，禁止重入或并发驱动。后台 Worker 的 Selector 不包含 owner Executor。只有普通共享 Executor 要求 multi_worker_executor_c；专属 LoopExecutor 只要求 work_executor_c。
 
 WorkerState 的 eIdle、eSearching、eExecuting、eWaiting、eStopped 是运行状态快照，不是任务优先级或执行资格。当前执行是非抢占式，多个 Worker 竞争领取不表示抢占 callback。Selector 与 Waiter 分别是消费选择和等待策略的扩展点；优先级、公平性、窃取、主动轮询及容量预留后续独立实现，不把这些属性固化成不同 Worker 类。状态只能辅助决策，不能替代领取和休眠唤醒的同步协议。
 
@@ -610,7 +612,7 @@ BasicContext 析构自动 requestStop 并 joinWorkers，在释放 Executor、等
 
 自动 join 只保证线程退出，不保证全部操作完成。Context 和 BasicExecutor 保留队列非空的析构诊断，不在析构线程领取并执行剩余 record；业务 root、operation 存储和跨域完成必须由宿主或后续拥有操作的 Scope 在析构前追踪并排空。operation 常在 Context 后构造、先于它销毁，不能等到 Context 析构才访问借用节点；EventLoop 也不能在另一析构线程恢复。析构可能等待正在运行的 callback 返回，不提供耗时上界；销毁不得与 Context 驱动或外部提交并发，也不得在其自有 Worker 上销毁 Context 或 join 自身。
 
-文件监听等轻量服务的注册、注销和状态处理应归 EventLoop owner，后端通知经专属 scheduler 交付短任务；读取、解析、编译交给普通 scheduler，完成后 continues_on(loop_scheduler) 返回 owner。MVP 已提供工作通知与专属执行域；原生文件监听、timer 与可等待事件源注册仍是后续 EventLoop 后端能力，不能通过阻塞文件读取占住 owner 来模拟异步监听。
+文件监听等轻量服务的注册、注销和状态处理应归 EventLoop owner，后端通知经专属 scheduler 交付短任务；读取、解析、编译交给普通 scheduler，完成后 continues_on(loop_scheduler) 返回 owner。公共服务接口通过 Context 或操作所需的能力句柄提供，不要求用户直接构造内部 EventLoop。MVP 已提供工作通知与专属执行域；原生文件监听、timer 与可等待事件源注册仍是后续 EventLoop 后端能力，不能通过阻塞文件读取占住 owner 来模拟异步监听。
 
 后续 EventCommandQueue 接收注册、取消和修改命令，服务注册表持有持续状态，事件后端处理 I/O 通知，TimerQueue/index 管理尚未就绪的 deadline。它们和 Ready Queue 分开表达；事件就绪后按显式目标经 Dispatcher 发布，不能自动猜测某个 callback 应被搬到 CPU Worker。Timer 控制何时就绪，优先级控制就绪后的选择；确有隔离需求时再配置 WorkerGroup 或预留容量，不默认创建 TimerWorker。
 
