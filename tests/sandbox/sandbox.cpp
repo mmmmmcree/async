@@ -1,14 +1,16 @@
 #include <async/async.h>
-#include <array>
 #include <chrono>
 #include <cstddef>
+#include <cstdint>
 #include <exception>
 #include <iostream>
+#include <memory>
 #include <memory_resource>
 #include <optional>
 #include <stdexcept>
 #include <thread>
 #include <utility>
+#include <vector>
 
 
 namespace async = lcf::async;
@@ -19,6 +21,13 @@ using namespace std::chrono_literals;
 // Only the caller thread submits operations to this Context.
 using WorkQueue = async::queue::intrusive::spmc::Queue<>;
 using ExampleContext = async::BasicContext<async::BasicExecutor<WorkQueue>>;
+
+void * aligned_storage(std::vector<std::byte> & bytes, async::StorageRequirement requirement) noexcept
+{
+    void * storage_p = bytes.data();
+    auto space = bytes.size();
+    return std::align(requirement.m_alignment, requirement.m_bytes, storage_p, space);
+}
 
 struct BranchResult
 {
@@ -107,30 +116,36 @@ private:
 
 int main()
 {
-    constexpr async::WorkerCount k_worker_count = 2;
+    constexpr std::uint32_t k_worker_count = 2;
     const auto main_thread = std::this_thread::get_id();
 
-    async::ContextInfo info{k_worker_count};
+    async::ContextInfo context_info;
+    context_info.setWorkerCount(k_worker_count);
 
-    const auto left_token = info.addScheduler();
-    const auto right_token = info.addScheduler();
+    const auto left_token = context_info.addScheduler();
+    const auto right_token = context_info.addScheduler();
 
-    constexpr auto k_storage = ExampleContext::storageRequirements(k_worker_count, 2);
-    alignas(k_storage.m_executors.m_alignment)
-        std::array<std::byte, k_storage.m_executors.m_bytes> executor_bytes;
-    alignas(k_storage.m_workers.m_alignment)
-        std::array<std::byte, k_storage.m_workers.m_bytes> worker_bytes;
+    const auto storage = context_info.storageRequirements<async::BasicExecutor<WorkQueue>>();
+    std::vector<std::byte> worker_bytes(storage.m_workers.m_bytes + storage.m_workers.m_alignment - 1);
+    std::vector<std::byte> executor_bytes(storage.m_executors.m_bytes + storage.m_executors.m_alignment - 1);
     std::pmr::monotonic_buffer_resource worker_arena{
-        worker_bytes.data(), worker_bytes.size(), std::pmr::null_memory_resource()};
+        aligned_storage(worker_bytes, storage.m_workers), storage.m_workers.m_bytes, std::pmr::null_memory_resource()};
     std::pmr::monotonic_buffer_resource executor_arena{
-        executor_bytes.data(), executor_bytes.size(), std::pmr::null_memory_resource()};
+        aligned_storage(executor_bytes, storage.m_executors), storage.m_executors.m_bytes, std::pmr::null_memory_resource()};
 
-    ExampleContext context{std::move(info), async::ContextAllocators{
+    context_info.setAllocators(async::ContextAllocators{
         std::pmr::polymorphic_allocator<std::byte>{&executor_arena},
-        std::pmr::polymorphic_allocator<std::byte>{&worker_arena}}};
+        std::pmr::polymorphic_allocator<std::byte>{&worker_arena}});
+    ExampleContext context;
+    if (const auto error = context.create(context_info)) {
+        std::cerr << "Context creation failed: " << error.message() << '\n';
+        return 1;
+    }
 
-    auto left_scheduler = context.getSchedulerHandle(left_token);
-    auto right_scheduler = context.getSchedulerHandle(right_token);
+    // Logical targets are routed by Context's Dispatcher, independently of Workers.
+    const auto left_scheduler = context.getSchedulerHandle(left_token);
+    const auto right_scheduler = context.getSchedulerHandle(right_token);
+    const auto owner_scheduler = context.getEventLoopSchedulerHandle();
 
     Outcome outcome;
 
@@ -140,9 +155,9 @@ int main()
             const auto caller_thread = std::this_thread::get_id();
             outcome.m_caller_thread = caller_thread;
 
-            // The caller owns and drives this return executor independently of Context.
+            // This Queue/Executor pair is a standalone return target; Context does not drive it.
             async::BasicExecutor<> caller_executor;
-            auto caller_scheduler = async::SchedulerHandle{caller_executor};
+            const auto caller_scheduler = async::SchedulerHandle{caller_executor};
             auto left = ex::schedule(left_scheduler) |
                 ex::then([] {
                     std::this_thread::sleep_for(1s);
@@ -163,7 +178,7 @@ int main()
                         lhs.m_worker_thread,
                         rhs.m_worker_thread,
                         std::this_thread::get_id()};
-                }) | ex::continues_on(context.getEventLoopSchedulerHandle())
+                }) | ex::continues_on(owner_scheduler)
                 | ex::then([main_thread](GraphResult result) noexcept {
                     if (std::this_thread::get_id() != main_thread) { std::terminate(); }
                     return result;
@@ -172,6 +187,7 @@ int main()
             bool caller_completed = false;
             auto operation = ex::connect(std::move(graph), Receiver{&context, &outcome, &caller_completed, caller_thread});
 
+            // Start the graph; its schedule operations submit to the Dispatcher.
             ex::start(operation);
 
             std::size_t heartbeat_count = 0;

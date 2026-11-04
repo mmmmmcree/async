@@ -2,6 +2,7 @@
 
 #include "AlgorithmTag.h"
 
+LCF_ASYNC_EXPORT
 namespace lcf::async::queue::intrusive::spmc {
 
 template <AlgorithmTag Algorithm = AlgorithmTag::eExchangeLinked>

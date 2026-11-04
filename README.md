@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Independent C++20 library. Target: LCFAsync::async.
+Independent C++23 library. Target: LCFAsync::async.
 
 ## Build
 

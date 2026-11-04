@@ -1,12 +1,14 @@
 #pragma once
 
-#include <async/core/concepts.h>
+#include <async/core/scheduling/declarations/concepts.h>
+#include <async/core/queue/declarations/concepts.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 
 #include <cassert>
 #include <concepts>
 #include <utility>
 
+LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <work_queue_c Queue = queue::intrusive::mpmc::Queue<>>
@@ -16,7 +18,10 @@ public:
     static constexpr bool k_supports_multiple_producers = Queue::k_supports_multiple_producers;
     static constexpr bool k_supports_multiple_workers = Queue::k_supports_multiple_consumers;
 public:
-    ~BasicExecutor() noexcept { assert(m_queue.isEmpty()); }
+    ~BasicExecutor() noexcept
+    {
+        assert(m_queue.isEmpty() and "Borrowed records must complete before Executor destruction");
+    }
     BasicExecutor() requires std::default_initializable<Queue> = default;
     template <typename... QueueArgs>
     requires (sizeof...(QueueArgs) > 0) and std::constructible_from<Queue, QueueArgs...>
@@ -57,22 +62,6 @@ public:
     bool isEmpty() const noexcept { return m_queue.isEmpty(); }
 private:
     Queue m_queue;
-};
-
-template <work_executor_c Executor>
-struct DefaultContextExecutorFactory
-{
-    ~DefaultContextExecutorFactory() noexcept = default;
-    DefaultContextExecutorFactory() noexcept = default;
-    DefaultContextExecutorFactory(const DefaultContextExecutorFactory &) noexcept = default;
-    DefaultContextExecutorFactory(DefaultContextExecutorFactory &&) noexcept = default;
-    DefaultContextExecutorFactory & operator=(const DefaultContextExecutorFactory &) noexcept = default;
-    DefaultContextExecutorFactory & operator=(DefaultContextExecutorFactory &&) noexcept = default;
-public:
-    Executor makeExecutor() const requires std::default_initializable<Executor>
-    {
-        return Executor{};
-    }
 };
 
 } // namespace lcf::async

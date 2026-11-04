@@ -1,178 +1,149 @@
 #pragma once
 
 #include "ContextInfo.h"
-#include "poll_structs.h"
-#include <async/core/context/details/ContextEventLoop.h>
-#include <async/core/context/details/ExecutorSet.h>
+#include <async/core/context/declarations/poll_structs.h>
+#include <async/core/context/details/ContextDriver.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/scheduling/BasicExecutor.h>
-#include <async/core/scheduling/BasicWorker.h>
+#include <async/core/scheduling/BasicDispatcher.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 
 #include <cassert>
-#include <chrono>
 #include <concepts>
 #include <cstddef>
 #include <cstdint>
-#include <exception>
-#include <limits>
 #include <memory_resource>
+#include <new>
+#include <span>
+#include <stdexcept>
+#include <system_error>
 #include <thread>
+#include <type_traits>
 #include <utility>
 
+LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <multi_worker_executor_c Executor = BasicExecutor<>,
     join_handle_c ThreadHandle = std::thread, work_executor_c LoopExecutor = BasicExecutor<>>
 class BasicContext
 {
-    using SharedExecutor = details::NotifiedExecutor<Executor>;
-    using SharedExecutors = details::ExecutorSet<Executor>;
-    using EventLoop = details::ContextEventLoop<LoopExecutor, SharedExecutors>;
-    using Worker = BasicWorker<SharedExecutors, ThreadHandle>;
-    using ExecutorList = details::FixedCapacityVector<SharedExecutor>;
-    using WorkerList = details::FixedCapacityVector<Worker>;
+    using Dispatcher = BasicDispatcher<Executor, LoopExecutor>;
+    using Pool = WorkerPool<Executor, ThreadHandle>;
+    using Worker = typename Pool::Worker;
+    using EventLoop = BasicEventLoop<LoopExecutor>;
+    using Driver = details::ContextDriver<Executor, ThreadHandle, LoopExecutor>;
+    using ExecutorList = details::FixedCapacityVector<Executor>;
 public:
     ~BasicContext() noexcept
     {
-        assert(not m_workers_running and "Context workers must be joined before destruction");
-        assert(this->isEmpty() and "Context must be drained before destruction");
+        if (m_domain_id == 0) { return; }
+        this->requestStop();
+        this->joinWorkers();
+        assert(this->isEmpty() and "Pending records must complete before Context destruction");
     }
-    BasicContext() = delete;
-    template <typename ExecutorFactory = DefaultContextExecutorFactory<Executor>,
-        typename LoopExecutorFactory = DefaultContextExecutorFactory<LoopExecutor>>
-        requires context_executor_factory_c<ExecutorFactory, Executor>
-            and context_executor_factory_c<LoopExecutorFactory, LoopExecutor>
-    explicit BasicContext(ContextInfo context_info, ContextAllocators allocators,
-        ExecutorFactory executor_factory = {}, LoopExecutorFactory loop_executor_factory = {}) :
-        m_domain_id(validate_info(context_info)), m_worker_count(context_info.getWorkerCount()),
-        m_executors(make_executors(context_info.getSchedulerCount(), allocators.m_executors,
-            executor_factory, m_worker_signal, m_loop_signal)),
-        m_shared_executors(m_executors.values(), m_worker_signal),
-        m_event_loop(loop_executor_factory, m_shared_executors, m_loop_signal),
-        m_workers(m_worker_count, std::pmr::polymorphic_allocator<Worker>{allocators.m_workers}) {}
+    BasicContext() noexcept(std::is_nothrow_default_constructible_v<LoopExecutor>) = default;
     BasicContext(const BasicContext &) = delete;
     BasicContext(BasicContext &&) = delete;
     BasicContext & operator=(const BasicContext &) = delete;
     BasicContext & operator=(BasicContext &&) = delete;
 public:
-    static constexpr ContextStorageRequirements storageRequirements(
-        WorkerCount worker_count, std::size_t scheduler_count) noexcept
+    [[nodiscard]] std::error_code create(const ContextInfo & context_info) noexcept
+    requires std::default_initializable<Executor> and std::default_initializable<LoopExecutor>
     {
-        return {storage_requirement<SharedExecutor>(scheduler_count), storage_requirement<Worker>(worker_count)};
+        if (m_domain_id != 0) { return std::make_error_code(std::errc::operation_in_progress); }
+        if (context_info.getDomainId() == 0) { return std::make_error_code(std::errc::invalid_argument); }
+        if (auto error = this->createResources(context_info)) {
+            m_event_loop.reset();
+            m_dispatcher.reset();
+            m_worker_pool.reset();
+            m_executors = ExecutorList{};
+            return error;
+        }
+        m_domain_id = context_info.getDomainId();
+        return {};
     }
-    static ContextStorageRequirements storageRequirements(const ContextInfo & info) noexcept
+    SchedulerHandle<Dispatcher> getSchedulerHandle(SchedulerToken token) const noexcept
     {
-        return storageRequirements(info.getWorkerCount(), info.getSchedulerCount());
-    }
-public:
-    SchedulerHandle<SharedExecutor> getSchedulerHandle(SchedulerToken token) const noexcept
-    {
-        assert(token.getDomainId() == m_domain_id and "Scheduler token belongs to a different Context");
-        return SchedulerHandle<SharedExecutor>{m_executors[token.getIndex()], token};
+        assert(token.getDomainId() == m_domain_id and "Scheduler token belongs to a different configuration");
+        return SchedulerHandle<Dispatcher>{m_dispatcher, token};
     }
     auto getEventLoopSchedulerHandle() const noexcept
     {
-        return SchedulerHandle{m_event_loop.getExecutor()};
+        return SchedulerHandle{m_dispatcher};
     }
     template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
     void startWorkers(Launcher thread_launcher = {})
     {
-        if (m_workers_started) { return; }
-        m_workers_started = true;
         try {
-            for (WorkerCount index = 0; index < m_worker_count; ++index) {
-                m_workers.emplaceBack(m_shared_executors, thread_launcher);
-            }
+            m_worker_pool.start(std::move(thread_launcher));
         } catch (...) {
-            this->requestStop();
-            this->joinWorkers();
+            m_event_loop.requestStop();
             throw;
         }
-        m_workers_running = m_worker_count != 0;
     }
     template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
     void run(Launcher thread_launcher = {})
     {
         this->startWorkers(std::move(thread_launcher));
-        m_event_loop.enter();
-        while (m_event_loop.waitAndExecuteOne(not m_workers_running)) {}
-        m_event_loop.leave();
+        m_driver.run();
     }
-    bool pollOne() noexcept
-    {
-        m_event_loop.enter();
-        const bool executed = m_event_loop.executeOne(not m_workers_running);
-        m_event_loop.leave();
-        return executed;
-    }
-    PollReport poll(PollBudget budget = {}) noexcept
-    {
-        using Clock = std::chrono::steady_clock;
-        m_event_loop.enter();
-        const auto started = Clock::now();
-        const bool finite_time = budget.m_max_duration != Clock::duration::max();
-        PollReport report;
-        while (report.m_records < budget.m_max_records) {
-            if (finite_time and Clock::now() - started >= budget.m_max_duration) { break; }
-            if (not m_event_loop.executeOne(not m_workers_running)) { break; }
-            ++report.m_records;
-        }
-        report.m_elapsed = Clock::now() - started;
-        report.m_count_limit_reached = report.m_records == budget.m_max_records;
-        report.m_time_limit_reached = finite_time and report.m_elapsed >= budget.m_max_duration;
-        m_event_loop.leave();
-        return report;
-    }
+    bool pollOne() noexcept { return m_driver.pollOne(); }
+    PollReport poll(PollBudget budget = {}) noexcept { return m_driver.poll(budget); }
     void requestStop() noexcept
     {
-        m_shared_executors.requestStop();
+        m_worker_pool.requestStop();
         m_event_loop.requestStop();
     }
     void close() noexcept
     {
-        m_shared_executors.close();
+        m_worker_pool.close();
         m_event_loop.close();
     }
-    void joinWorkers() noexcept
+    void joinWorkers() noexcept { m_worker_pool.join(); }
+    bool isEmpty() const noexcept
     {
-        for (auto & worker : m_workers.values()) { worker.join(); }
-        m_workers_running = false;
+        return m_event_loop.isEmpty() and m_worker_pool.isEmpty();
     }
-    bool isEmpty() const noexcept { return m_event_loop.isEmpty() and m_shared_executors.isEmpty(); }
 private:
-    static std::uint32_t validate_info(const ContextInfo & info) noexcept
+    std::error_code createResources(const ContextInfo & context_info) noexcept
+    requires std::default_initializable<Executor> and std::default_initializable<LoopExecutor>
     {
-        assert(info.getDomainId() != 0 and "ContextInfo was already consumed");
-        return info.getDomainId();
-    }
-    template <context_executor_factory_c<Executor> Factory>
-    static ExecutorList make_executors(std::size_t count, ContextAllocators::Allocator allocator,
-        Factory & factory, details::WorkSignal & worker_signal, details::WorkSignal & loop_signal)
-    {
-        ExecutorList executors{count, std::pmr::polymorphic_allocator<SharedExecutor>{allocator}};
-        for (std::size_t index = 0; index < count; ++index) {
-            executors.emplaceBack(factory, worker_signal, loop_signal);
+        try {
+            const auto allocators = context_info.getAllocators();
+            m_executors = ExecutorList{context_info.getSchedulerCount(),
+                std::pmr::polymorphic_allocator<Executor>{allocators.m_executors}};
+            for (std::size_t index = 0; index < context_info.getSchedulerCount(); ++index) {
+                m_executors.emplace_back();
+            }
+            m_worker_pool.create(std::span{m_executors}, m_worker_signal, context_info.getWorkerCount(),
+                std::pmr::polymorphic_allocator<Worker>{allocators.m_workers});
+            m_event_loop.create(m_loop_executor, m_loop_signal);
+            m_dispatcher.create(std::span{m_executors}, m_loop_executor, m_worker_signal, m_loop_signal);
+            m_driver.create(m_event_loop, m_worker_pool);
+            return {};
+        } catch (const std::bad_array_new_length &) {
+            return std::make_error_code(std::errc::value_too_large);
+        } catch (const std::bad_alloc &) {
+            return std::make_error_code(std::errc::not_enough_memory);
+        } catch (const std::length_error &) {
+            return std::make_error_code(std::errc::value_too_large);
+        } catch (const std::system_error & error) {
+            return error.code();
+        } catch (...) {
+            return std::make_error_code(std::errc::io_error);
         }
-        return executors;
-    }
-    template <std::destructible Value>
-    static constexpr StorageRequirement storage_requirement(std::size_t count) noexcept
-    {
-        if (count > std::numeric_limits<std::size_t>::max() / sizeof(Value)) { std::terminate(); }
-        return {count * sizeof(Value), alignof(Value)};
     }
 private:
-    std::uint32_t m_domain_id;
-    WorkerCount m_worker_count;
     details::WorkSignal m_worker_signal;
     details::WorkSignal m_loop_signal;
-    mutable ExecutorList m_executors;
-    SharedExecutors m_shared_executors;
-    mutable EventLoop m_event_loop;
-    WorkerList m_workers;
-    bool m_workers_started = false;
-    bool m_workers_running = false;
+    ExecutorList m_executors;
+    LoopExecutor m_loop_executor;
+    mutable Dispatcher m_dispatcher;
+    EventLoop m_event_loop;
+    Pool m_worker_pool;
+    Driver m_driver;
+    std::uint32_t m_domain_id = 0;
 };
 
 using Context = BasicContext<>;

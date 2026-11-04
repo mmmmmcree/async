@@ -2,7 +2,7 @@
 set(lib_name async)
 set(lib_package LCFAsync)
 set(lib_version 0.1.0)
-set(lib_cxx_standard 20)
+set(lib_cxx_standard 23)
 set(lib_header_only ON)
 set(lib_namespace "")
 set(lib_option_prefix "")

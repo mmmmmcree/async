@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/enums.h>
+#include <async/core/queue/declarations/enums.h>
 #include <async/core/queue/intrusive/ExecutionNode.h>
 #include <async/core/queue/intrusive/mpmc/queue_declarations.h>
 
@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <mutex>
 
+LCF_ASYNC_EXPORT
 namespace lcf::async::queue::intrusive::mpmc {
 
 template <>

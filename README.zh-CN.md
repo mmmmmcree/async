@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-独立的 C++20 库。目标：LCFAsync::async。
+独立的 C++23 库。目标：LCFAsync::async。
 
 ## 构建
 

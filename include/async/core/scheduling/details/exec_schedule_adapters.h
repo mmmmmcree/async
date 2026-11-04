@@ -1,7 +1,7 @@
 #pragma once
 
 #include <async/core/queue/intrusive/ExecutionNode.h>
-#include <async/core/concepts.h>
+#include <async/core/scheduling/declarations/concepts.h>
 #include <async/execution/operations.h>
 #include <async/execution/queries.h>
 

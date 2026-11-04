@@ -1,7 +1,10 @@
 #pragma once
 
+#include <async/config/macros.h>
+
 #include <atomic>
 
+LCF_ASYNC_EXPORT
 namespace lcf::async::queue::intrusive {
 
 class ExecutionNode

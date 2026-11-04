@@ -1,6 +1,15 @@
 module;
 
+#include <algorithm>
 #include <cstdint>
+#include <chrono>
+#include <condition_variable>
+#include <memory_resource>
+#include <mutex>
+#include <optional>
+#include <span>
+#include <stdexcept>
+#include <system_error>
 #include <thread>
 
 #include <async/config/execution_provider.h>

@@ -1,9 +1,12 @@
 #pragma once
 
+#include <async/config/macros.h>
+
 #include <chrono>
 #include <cstddef>
 #include <limits>
 
+LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 struct PollBudget

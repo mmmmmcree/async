@@ -3,13 +3,11 @@
 #include <cassert>
 #include <concepts>
 #include <cstddef>
-#include <functional>
+#include <iterator>
 #include <limits>
 #include <memory>
 #include <memory_resource>
-#include <new>
 #include <span>
-#include <stdexcept>
 #include <type_traits>
 #include <utility>
 
@@ -19,92 +17,122 @@ template <std::destructible Value>
 class FixedCapacityVector
 {
 public:
-    using Allocator = std::pmr::polymorphic_allocator<Value>;
+    using value_type = Value;
+    using allocator_type = std::pmr::polymorphic_allocator<Value>;
+    using size_type = std::size_t;
+    using difference_type = std::ptrdiff_t;
+    using reference = Value &;
+    using const_reference = const Value &;
+    using pointer = Value *;
+    using const_pointer = const Value *;
+    using iterator = typename std::span<Value>::iterator;
+    using const_iterator = typename std::span<const Value>::iterator;
+    using reverse_iterator = std::reverse_iterator<iterator>;
+    using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 public:
-    FixedCapacityVector() = delete;
-    FixedCapacityVector(std::size_t capacity, Allocator allocator)
-        : m_allocator(allocator), m_capacity(capacity)
+    ~FixedCapacityVector() noexcept { this->release_storage(); }
+    FixedCapacityVector() noexcept = default;
+    FixedCapacityVector(size_type capacity, allocator_type allocator) :
+        m_resource_p(allocator.resource()), m_capacity(capacity)
     {
-        if (capacity > std::numeric_limits<std::size_t>::max() / sizeof(Value)) {
-            throw std::bad_array_new_length{};
-        }
-        if (capacity != 0) {
-            m_data_p = m_allocator.allocate(capacity);
-        }
+        assert(capacity <= this->max_size());
+        if (capacity != 0) { m_elements = {allocator.allocate(capacity), size_type{0}}; }
     }
-
     FixedCapacityVector(const FixedCapacityVector &) = delete;
     FixedCapacityVector & operator=(const FixedCapacityVector &) = delete;
-    FixedCapacityVector(FixedCapacityVector && other) noexcept
-        : m_allocator(other.m_allocator),
-          m_data_p(std::exchange(other.m_data_p, nullptr)),
-          m_capacity(std::exchange(other.m_capacity, 0)),
-          m_size(std::exchange(other.m_size, 0)) {}
-    FixedCapacityVector & operator=(FixedCapacityVector &&) = delete;
-
-    ~FixedCapacityVector() noexcept
+    FixedCapacityVector(FixedCapacityVector && other) noexcept :
+        m_resource_p(other.m_resource_p),
+        m_elements(std::exchange(other.m_elements, {})),
+        m_capacity(std::exchange(other.m_capacity, 0)) {}
+    FixedCapacityVector & operator=(FixedCapacityVector && other) noexcept
     {
-        while (m_size != 0) {
-            std::destroy_at(m_data_p + --m_size);
-        }
-        if (m_data_p) {
-            m_allocator.deallocate(m_data_p, m_capacity);
-        }
+        if (this == &other) { return *this; }
+        this->release_storage();
+        m_resource_p = other.m_resource_p;
+        m_elements = std::exchange(other.m_elements, {});
+        m_capacity = std::exchange(other.m_capacity, 0);
+        return *this;
     }
-
+public:
+    reference operator[](size_type index) noexcept
+    {
+        assert(index < this->size());
+        return m_elements[index];
+    }
+    const_reference operator[](size_type index) const noexcept
+    {
+        assert(index < this->size());
+        return m_elements[index];
+    }
+    reference front() noexcept { return (*this)[0]; }
+    const_reference front() const noexcept { return (*this)[0]; }
+    reference back() noexcept { return (*this)[this->size() - 1]; }
+    const_reference back() const noexcept { return (*this)[this->size() - 1]; }
+    pointer data() noexcept { return m_elements.data(); }
+    const_pointer data() const noexcept { return m_elements.data(); }
+public:
+    iterator begin() noexcept { return m_elements.begin(); }
+    const_iterator begin() const noexcept { return std::span<const Value>{m_elements}.begin(); }
+    const_iterator cbegin() const noexcept { return this->begin(); }
+    iterator end() noexcept { return m_elements.end(); }
+    const_iterator end() const noexcept { return std::span<const Value>{m_elements}.end(); }
+    const_iterator cend() const noexcept { return this->end(); }
+    reverse_iterator rbegin() noexcept { return reverse_iterator{this->end()}; }
+    const_reverse_iterator rbegin() const noexcept { return const_reverse_iterator{this->end()}; }
+    const_reverse_iterator crbegin() const noexcept { return this->rbegin(); }
+    reverse_iterator rend() noexcept { return reverse_iterator{this->begin()}; }
+    const_reverse_iterator rend() const noexcept { return const_reverse_iterator{this->begin()}; }
+    const_reverse_iterator crend() const noexcept { return this->rend(); }
+public:
+    bool empty() const noexcept { return m_elements.empty(); }
+    size_type size() const noexcept { return m_elements.size(); }
+    size_type capacity() const noexcept { return m_capacity; }
+    size_type max_size() const noexcept { return std::numeric_limits<size_type>::max() / sizeof(Value); }
+    allocator_type get_allocator() const noexcept { return allocator_type{m_resource_p}; }
+public:
     template <typename... Args>
-        requires std::constructible_from<Value, Args...>
-    Value & emplaceBack(Args &&... args)
+    requires std::constructible_from<Value, Args...>
+    reference emplace_back(Args &&... args) noexcept(std::is_nothrow_constructible_v<Value, Args...>)
     {
-        this->checkCapacity();
-        auto * value_p = std::construct_at(m_data_p + m_size, std::forward<Args>(args)...);
-        ++m_size;
+        assert(this->size() < m_capacity);
+        auto * value_p = std::construct_at(this->data() + this->size(), std::forward<Args>(args)...);
+        m_elements = {this->data(), this->size() + 1};
         return *value_p;
     }
-
-    template <typename Factory, typename... Args>
-        requires std::invocable<Factory, Args...>
-            && std::same_as<std::invoke_result_t<Factory, Args...>, Value>
-    Value & emplaceWith(Factory && factory, Args &&... args)
+    void pop_back() noexcept
     {
-        this->checkCapacity();
-        // Placement new constructs in already allocated storage. Guaranteed
-        // copy elision allows a factory to return a nonmovable Executor.
-        auto * value_p = ::new (static_cast<void *>(m_data_p + m_size)) Value(
-            std::invoke(std::forward<Factory>(factory), std::forward<Args>(args)...));
-        ++m_size;
-        return *value_p;
-    }
-
-    Value & operator[](std::size_t index) noexcept
-    {
-        assert(index < m_size);
-        return m_data_p[index];
-    }
-
-    const Value & operator[](std::size_t index) const noexcept
-    {
-        assert(index < m_size);
-        return m_data_p[index];
-    }
-
-    std::span<Value> values() noexcept { return {m_data_p, m_size}; }
-    std::span<const Value> values() const noexcept { return {m_data_p, m_size}; }
-    std::size_t size() const noexcept { return m_size; }
-    std::size_t capacity() const noexcept { return m_capacity; }
-
-private:
-    void checkCapacity() const
-    {
-        if (m_size == m_capacity) {
-            throw std::length_error{"FixedCapacityVector capacity exceeded"};
+        assert(not this->empty());
+        const auto new_size = this->size() - 1;
+        m_elements = m_elements.first(new_size);
+        if constexpr (not std::is_trivially_destructible_v<Value>) {
+            std::destroy_at(this->data() + new_size);
         }
     }
-
-    Allocator m_allocator;
-    Value * m_data_p = nullptr;
-    std::size_t m_capacity;
-    std::size_t m_size = 0;
+    void clear() noexcept
+    {
+        if constexpr (std::is_trivially_destructible_v<Value>) {
+            m_elements = m_elements.first(0);
+        } else {
+            while (not this->empty()) { this->pop_back(); }
+        }
+    }
+    void swap(FixedCapacityVector & other) noexcept
+    {
+        std::swap(m_resource_p, other.m_resource_p);
+        std::swap(m_elements, other.m_elements);
+        std::swap(m_capacity, other.m_capacity);
+    }
+    friend void swap(FixedCapacityVector & lhs, FixedCapacityVector & rhs) noexcept { lhs.swap(rhs); }
+private:
+    void release_storage() noexcept
+    {
+        this->clear();
+        if (this->data()) { this->get_allocator().deallocate(this->data(), m_capacity); }
+    }
+private:
+    std::pmr::memory_resource * m_resource_p = std::pmr::null_memory_resource();
+    std::span<Value> m_elements;
+    std::size_t m_capacity = 0;
 };
 
 } // namespace lcf::async::details
