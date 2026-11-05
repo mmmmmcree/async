@@ -1,18 +1,15 @@
 #pragma once
 
-#include <async/core/scheduling/declarations/concepts.h>
+#include <async/config/macros.h>
 
 #include <concepts>
+#include <type_traits>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <typename Executor>
-concept multi_worker_executor_c = work_executor_c<Executor> and
-    requires {
-        requires std::same_as<decltype(Executor::k_supports_multiple_workers), const bool>;
-        requires Executor::k_supports_multiple_workers;
-    };
+template <typename Progress>
+concept worker_progress_c = std::is_nothrow_invocable_r_v<bool, Progress &>;
 
 template <typename Waiter>
 concept worker_waiter_c = requires {

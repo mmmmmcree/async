@@ -1,11 +1,12 @@
 #pragma once
 
 #include <async/core/declarations/concepts.h>
-#include <async/core/queue/declarations/enums.h>
+#include <async/core/scheduling/declarations/dispatch_structs.h>
 #include <async/protocol.h>
 
 #include <concepts>
 #include <cstdint>
+#include <system_error>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
@@ -33,19 +34,23 @@ concept work_notifier_c = requires(Notifier & notifier) {
 template <typename Submitter, typename Record>
 concept record_submitter_c = work_record_c<Record> and
     requires(Submitter & submitter, Record & record) {
-        { submitter.tryEnqueue(record) } noexcept -> std::same_as<EnqueueResult>;
+        { submitter.tryEnqueue(record) } noexcept -> std::same_as<std::error_code>;
     };
+
+template <typename Record>
+concept dispatch_record_c = work_record_c<Record> and requires(Record & record) {
+    { record.getDispatchRequest() } noexcept -> std::same_as<DispatchRequest &>;
+};
 
 template <typename Submitter, typename Record>
 concept indexed_record_submitter_c = work_record_c<Record> and
     requires(Submitter & submitter, std::uint32_t target_index, Record & record) {
-        { submitter.tryEnqueue(target_index, record) } noexcept -> std::same_as<EnqueueResult>;
+        { submitter.tryEnqueue(target_index, record) } noexcept -> std::same_as<std::error_code>;
     };
 
 template <typename Executor>
 concept work_executor_c = requires(Executor & executor, const Executor & const_executor) {
     { executor.executeOne() } noexcept -> std::same_as<bool>;
-    { executor.close() } noexcept -> std::same_as<void>;
     { const_executor.isEmpty() } noexcept -> std::same_as<bool>;
 };
 
@@ -53,12 +58,6 @@ template <typename Executor>
 concept waiting_work_executor_c = work_executor_c<Executor> and
     requires(Executor & executor) {
         { executor.waitAndExecuteOne() } noexcept -> std::same_as<bool>;
-    };
-
-template <typename Executor>
-concept stoppable_work_executor_c = waiting_work_executor_c<Executor> and
-    requires(Executor & executor) {
-        { executor.requestStop() } noexcept -> std::same_as<void>;
     };
 
 } // namespace lcf::async

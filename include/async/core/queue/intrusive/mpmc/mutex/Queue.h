@@ -1,21 +1,21 @@
 #pragma once
 
-#include <async/core/queue/declarations/enums.h>
 #include <async/core/queue/intrusive/ExecutionNode.h>
 #include <async/core/queue/intrusive/mpmc/queue_declarations.h>
 
-#include <cassert>
 #include <condition_variable>
 #include <mutex>
+#include <system_error>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async::queue::intrusive::mpmc {
 
-template <>
-class Queue<AlgorithmTag::eMutex>
+template <typename Node>
+class Queue<AlgorithmTag::eMutex, Node>
 {
 public:
-    using Executable = ExecutionNode;
+    using Value = Node;
+    using Executable = Node;
     static constexpr bool k_supports_multiple_producers = true;
     static constexpr bool k_supports_multiple_consumers = true;
 public:
@@ -26,29 +26,29 @@ public:
     Queue & operator=(const Queue &) = delete;
     Queue & operator=(Queue &&) = delete;
 public:
-    EnqueueResult tryEnqueue(ExecutionNode & node) noexcept
+    std::error_code tryEnqueue(Node & node) noexcept
     {
         {
             std::lock_guard lock{m_mutex};
-            if (m_closed) { return EnqueueResult::eClosed; }
+            if (m_closed) { return std::make_error_code(std::errc::operation_canceled); }
             node.markQueued();
             if (m_tail_p) { m_tail_p->setNext(&node); }
             else { m_head_p = &node; }
             m_tail_p = &node;
         }
         m_condition.notify_one();
-        return EnqueueResult::eAccepted;
+        return {};
     }
-    ExecutionNode * tryPop() noexcept
+    Node * tryPop() noexcept
     {
         std::lock_guard lock{m_mutex};
         return this->popFront();
     }
-    ExecutionNode * waitPop() noexcept
+    Node * waitPop() noexcept
     {
         std::unique_lock lock{m_mutex};
         m_condition.wait(lock, [this] {
-            return m_stop_requested || m_closed || m_head_p != nullptr;
+            return m_stop_requested || m_closed || m_head_p;
         });
         if (m_stop_requested) { return nullptr; }
         return this->popFront();
@@ -73,10 +73,10 @@ public:
     bool isEmpty() const noexcept
     {
         std::lock_guard lock{m_mutex};
-        return m_head_p == nullptr;
+        return not m_head_p;
     }
 private:
-    ExecutionNode * popFront() noexcept
+    Node * popFront() noexcept
     {
         auto * node_p = m_head_p;
         if (not node_p) { return nullptr; }
@@ -88,8 +88,8 @@ private:
 private:
     mutable std::mutex m_mutex;
     std::condition_variable m_condition;
-    ExecutionNode * m_head_p = nullptr;
-    ExecutionNode * m_tail_p = nullptr;
+    Node * m_head_p = nullptr;
+    Node * m_tail_p = nullptr;
     bool m_closed = false;
     bool m_stop_requested = false;
 };

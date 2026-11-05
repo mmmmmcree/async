@@ -46,6 +46,8 @@ public:
     SchedulerHandle(Submitter & submitter, SchedulerToken token) noexcept :
         m_submitter_p(&submitter), m_domain_id(token.getDomainId()),
         m_scheduler_index(token.getIndex()) {}
+    SchedulerHandle(Submitter & submitter, std::uint32_t domain_id, std::uint32_t target_index) noexcept :
+        m_submitter_p(&submitter), m_domain_id(domain_id), m_scheduler_index(target_index) {}
     SchedulerHandle(const SchedulerHandle &) noexcept = default;
     SchedulerHandle(SchedulerHandle &&) noexcept = default;
     SchedulerHandle & operator=(const SchedulerHandle &) noexcept = default;
@@ -55,7 +57,7 @@ public:
     auto schedule() const noexcept;
     template <typename Record>
     requires record_submitter_c<Submitter, Record> or indexed_record_submitter_c<Submitter, Record>
-    EnqueueResult tryEnqueue(Record & record) const noexcept
+    std::error_code tryEnqueue(Record & record) const noexcept
     {
         if constexpr (indexed_record_submitter_c<Submitter, Record>) {
             return m_submitter_p->tryEnqueue(m_scheduler_index, record);

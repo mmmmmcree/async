@@ -1,6 +1,5 @@
 #pragma once
 
-#include <async/core/queue/declarations/enums.h>
 #include <async/core/queue/intrusive/ExecutionNode.h>
 #include <async/core/queue/intrusive/spmc/queue_declarations.h>
 
@@ -9,6 +8,7 @@
 #include <cstdint>
 #include <exception>
 #include <mutex>
+#include <system_error>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async::queue::intrusive::spmc {
@@ -17,6 +17,7 @@ template <>
 class Queue<AlgorithmTag::eExchangeLinked>
 {
 public:
+    using Value = ExecutionNode;
     using Executable = ExecutionNode;
     static constexpr bool k_supports_multiple_producers = false;
     static constexpr bool k_supports_multiple_consumers = true;
@@ -42,15 +43,15 @@ public:
     Queue & operator=(const Queue &) = delete;
     Queue & operator=(Queue &&) = delete;
 public:
-    EnqueueResult tryEnqueue(ExecutionNode & node) noexcept
+    std::error_code tryEnqueue(ExecutionNode & node) noexcept
     {
         auto state = m_lifecycle.load(std::memory_order_acquire);
-        if ((state & k_closed_bit) != 0) { return EnqueueResult::eClosed; }
+        if ((state & k_closed_bit) != 0) { return std::make_error_code(std::errc::operation_canceled); }
         if ((state & k_producer_active_bit) != 0) { std::terminate(); }
         if (not m_lifecycle.compare_exchange_strong(
                 state, state | k_producer_active_bit,
                 std::memory_order_acq_rel, std::memory_order_acquire)) {
-            if ((state & k_closed_bit) != 0) { return EnqueueResult::eClosed; }
+            if ((state & k_closed_bit) != 0) { return std::make_error_code(std::errc::operation_canceled); }
             std::terminate();
         }
 #if defined(LCF_ASYNC_ENABLE_TEST_HOOKS)
@@ -67,7 +68,7 @@ public:
         m_wake_sequence.notify_one();
         m_lifecycle.fetch_and(~k_producer_active_bit, std::memory_order_release);
         m_lifecycle.notify_all();
-        return EnqueueResult::eAccepted;
+        return {};
     }
     ExecutionNode * tryPop() noexcept
     {

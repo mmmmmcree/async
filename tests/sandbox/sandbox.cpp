@@ -18,9 +18,7 @@ namespace ex = async::exec;
 namespace proto = async::protocols;
 using namespace std::chrono_literals;
 
-// Only the caller thread submits operations to this Context.
-using WorkQueue = async::queue::intrusive::spmc::Queue<>;
-using ExampleContext = async::BasicContext<async::BasicExecutor<WorkQueue>>;
+using ExampleContext = async::Context;
 
 void * aligned_storage(std::vector<std::byte> & bytes, async::StorageRequirement requirement) noexcept
 {
@@ -100,7 +98,6 @@ private:
         Completion completion,
         std::optional<GraphResult> result = std::nullopt) noexcept
     {
-        // All three completion channels must run on the caller thread.
         if (std::this_thread::get_id() != m_caller_thread) {
             std::terminate();
         }
@@ -120,21 +117,22 @@ int main()
     const auto main_thread = std::this_thread::get_id();
 
     async::ContextInfo context_info;
-    context_info.setWorkerCount(k_worker_count);
+    context_info.setWorkerCount(k_worker_count).setDispatcherCount(2);
+    const auto caller_port = context_info.addSubmissionPort();
 
     const auto left_token = context_info.addScheduler();
     const auto right_token = context_info.addScheduler();
 
-    const auto storage = context_info.storageRequirements<async::BasicExecutor<WorkQueue>>();
+    const auto storage = context_info.storageRequirements<>();
     std::vector<std::byte> worker_bytes(storage.m_workers.m_bytes + storage.m_workers.m_alignment - 1);
-    std::vector<std::byte> executor_bytes(storage.m_executors.m_bytes + storage.m_executors.m_alignment - 1);
+    std::vector<std::byte> runtime_bytes(storage.m_runtime.m_bytes + storage.m_runtime.m_alignment - 1);
     std::pmr::monotonic_buffer_resource worker_arena{
         aligned_storage(worker_bytes, storage.m_workers), storage.m_workers.m_bytes, std::pmr::null_memory_resource()};
-    std::pmr::monotonic_buffer_resource executor_arena{
-        aligned_storage(executor_bytes, storage.m_executors), storage.m_executors.m_bytes, std::pmr::null_memory_resource()};
+    std::pmr::monotonic_buffer_resource runtime_arena{
+        aligned_storage(runtime_bytes, storage.m_runtime), storage.m_runtime.m_bytes, std::pmr::null_memory_resource()};
 
     context_info.setAllocators(async::ContextAllocators{
-        std::pmr::polymorphic_allocator<std::byte>{&executor_arena},
+        std::pmr::polymorphic_allocator<std::byte>{&runtime_arena},
         std::pmr::polymorphic_allocator<std::byte>{&worker_arena}});
     ExampleContext context;
     if (const auto error = context.create(context_info)) {
@@ -142,9 +140,6 @@ int main()
         return 1;
     }
 
-    // Logical targets are routed by Context's Dispatcher, independently of Workers.
-    const auto left_scheduler = context.getSchedulerHandle(left_token);
-    const auto right_scheduler = context.getSchedulerHandle(right_token);
     const auto owner_scheduler = context.getEventLoopSchedulerHandle();
 
     Outcome outcome;
@@ -155,9 +150,10 @@ int main()
             const auto caller_thread = std::this_thread::get_id();
             outcome.m_caller_thread = caller_thread;
 
-            // This Queue/Executor pair is a standalone return target; Context does not drive it.
-            async::BasicExecutor<> caller_executor;
-            const auto caller_scheduler = async::SchedulerHandle{caller_executor};
+            auto & submissions = context.getSubmissionPort(caller_port);
+            const auto left_scheduler = submissions.getSchedulerHandle(left_token);
+            const auto right_scheduler = submissions.getSchedulerHandle(right_token);
+            const auto caller_scheduler = context.getReturnSchedulerHandle(caller_port);
             auto left = ex::schedule(left_scheduler) |
                 ex::then([] {
                     std::this_thread::sleep_for(1s);
@@ -172,7 +168,6 @@ int main()
 
             auto graph = ex::when_all(std::move(left), std::move(right)) |
                 ex::then([](BranchResult lhs, BranchResult rhs) noexcept {
-                    // The completing execution agent consumes the merged values.
                     return GraphResult{
                         lhs.m_value + rhs.m_value,
                         lhs.m_worker_thread,
@@ -187,7 +182,6 @@ int main()
             bool caller_completed = false;
             auto operation = ex::connect(std::move(graph), Receiver{&context, &outcome, &caller_completed, caller_thread});
 
-            // Start the graph; its schedule operations submit to the Dispatcher.
             ex::start(operation);
 
             std::size_t heartbeat_count = 0;
@@ -195,21 +189,19 @@ int main()
             while (not caller_completed) {
                 auto elapsed = std::chrono::steady_clock::now() - time;
                 std::cout << "heartbeat: " << heartbeat_count++ << " elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
-                caller_executor.executeOne();
+                context.pollReturn(caller_port);
                 if (not caller_completed) {
                     std::this_thread::sleep_for(100ms);
                 }
             }
-            caller_executor.close();
+
         }};
     } catch (...) {
-        // No root was submitted if launching the caller thread failed.
         context.close();
         context.joinWorkers();
         throw;
     }
 
-    // Wait for work internally; the final Receiver requests this run to stop.
     context.run();
 
     caller.join();

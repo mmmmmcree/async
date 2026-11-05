@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/core/queue/intrusive/ExecutionNode.h>
+#include <async/core/scheduling/declarations/dispatch_structs.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/execution/operations.h>
 #include <async/execution/queries.h>
@@ -35,23 +36,24 @@ public:
     ScheduleOperation() = delete;
     ScheduleOperation(Handle handle, Receiver receiver) noexcept(
         std::is_nothrow_copy_constructible_v<Handle> and std::is_nothrow_move_constructible_v<Receiver>) :
-        m_handle(handle), m_receiver(std::move(receiver)), m_node(this, &execute) {}
+        m_handle(handle), m_receiver(std::move(receiver)), m_node(this, &execute), m_request{&m_node} {}
     ScheduleOperation(const ScheduleOperation &) = delete;
     ScheduleOperation & operator=(const ScheduleOperation &) = delete;
     ScheduleOperation(ScheduleOperation &&) = delete;
     ScheduleOperation & operator=(ScheduleOperation &&) = delete;
 public:
     queue::intrusive::ExecutionNode & getExecutable() noexcept { return m_node; }
+    DispatchRequest & getDispatchRequest() noexcept { return m_request; }
     void start() & noexcept
     requires record_submitter_c<Handle, ScheduleOperation>
     {
-        if (m_handle.tryEnqueue(*this) == EnqueueResult::eAccepted) { return; }
-        exec::set_stopped(std::move(m_receiver));
+        if (m_handle.tryEnqueue(*this)) { exec::set_stopped(std::move(m_receiver)); }
     }
 private:
     Handle m_handle;
     Receiver m_receiver;
     queue::intrusive::ExecutionNode m_node;
+    DispatchRequest m_request;
 };
 
 template <std::copyable Handle>

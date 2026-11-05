@@ -5,7 +5,7 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async::queue::intrusive::spmc {
 
-template <AlgorithmTag Algorithm = AlgorithmTag::eExchangeLinked>
+template <AlgorithmTag algorithm = AlgorithmTag::eExchangeLinked>
 class Queue;
 
 } // namespace lcf::async::queue::intrusive::spmc

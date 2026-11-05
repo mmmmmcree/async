@@ -1,6 +1,11 @@
 module;
 
 #include <algorithm>
+#include <array>
+#include <atomic>
+#include <limits>
+#include <memory>
+#include <utility>
 #include <cstdint>
 #include <chrono>
 #include <condition_variable>
@@ -16,11 +21,9 @@ module;
 
 export module lcf.async;
 
-// Only this interface translation unit turns public declarations into exports.
 #undef LCF_ASYNC_EXPORT
 #define LCF_ASYNC_EXPORT export
 
-// Project headers intentionally attach their public declarations to this module.
 #if defined(__clang__)
 #pragma clang diagnostic push
 #if __has_warning("-Winclude-angled-in-module-purview")

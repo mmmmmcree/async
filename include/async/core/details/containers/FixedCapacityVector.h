@@ -35,7 +35,6 @@ public:
     FixedCapacityVector(size_type capacity, allocator_type allocator) :
         m_resource_p(allocator.resource()), m_capacity(capacity)
     {
-        assert(capacity <= this->max_size());
         if (capacity != 0) { m_elements = {allocator.allocate(capacity), size_type{0}}; }
     }
     FixedCapacityVector(const FixedCapacityVector &) = delete;
@@ -54,16 +53,8 @@ public:
         return *this;
     }
 public:
-    reference operator[](size_type index) noexcept
-    {
-        assert(index < this->size());
-        return m_elements[index];
-    }
-    const_reference operator[](size_type index) const noexcept
-    {
-        assert(index < this->size());
-        return m_elements[index];
-    }
+    reference operator[](size_type index) noexcept { return m_elements[index]; }
+    const_reference operator[](size_type index) const noexcept { return m_elements[index]; }
     reference front() noexcept { return (*this)[0]; }
     const_reference front() const noexcept { return (*this)[0]; }
     reference back() noexcept { return (*this)[this->size() - 1]; }
