@@ -1,138 +1,53 @@
 #pragma once
 
+#include <async/core/context/details/ContextDispatchState.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
-#include <async/core/queue/intrusive/mpmc/Queue.h>
-#include <async/core/queue/non_intrusive/spsc/Queue.h>
-#include <async/core/queue/non_intrusive/spmc/Deque.h>
-#include <async/core/scheduling/SubmissionPort.h>
-#include <async/core/scheduling/dispatcher/BasicDispatcher.h>
-#include <async/core/scheduling/dispatcher/selectors/RoundRobinTargetSelector.h>
-#include <async/core/scheduling/executor/BasicExecutor.h>
-#include <async/core/scheduling/executor/ExecutorView.h>
-#include <async/core/scheduling/executor/WorkStealingExecutor.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
+#include <async/core/scheduling/executor/ExecutorView.h>
 #include <async/core/worker/details/WorkSignal.h>
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cstddef>
 #include <cstdint>
+#include <expected>
+#include <limits>
 #include <memory_resource>
+#include <ranges>
 #include <span>
+#include <system_error>
 #include <utility>
 
 namespace lcf::async::details {
 
-template <std::size_t queue_capacity>
+template <std::size_t queue_capacity,
+    template <typename, typename, typename, typename> class CpuExecutor = WorkStealingExecutor,
+    template <typename> class VictimSelector = RoundRobinVictimSelector,
+    typename Notifier = ContextTopologyNotifier>
 requires (queue_capacity > 0)
 class ContextTopology
 {
-    struct Notifier
-    {
-        WorkSignal * m_signal_p;
-        void operator()() const noexcept { m_signal_p->notifyAll(); }
-    };
-    using Node = queue::intrusive::ExecutionNode;
-    using Inbox = queue::intrusive::mpmc::Queue<>;
-    using ReadyQueue = queue::non_intrusive::spmc::Deque<Node, queue_capacity>;
-    using Ingress = queue::intrusive::mpmc::Queue<queue::intrusive::mpmc::AlgorithmTag::eMutex, DispatchRequest>;
-    using SubmitQueue = queue::non_intrusive::spsc::Queue<DispatchRequest, queue_capacity>;
-    using ReturnQueue = queue::non_intrusive::spsc::Queue<Node, queue_capacity>;
-    using Port = SubmissionPort<SubmitQueue, Notifier>;
-    struct CpuState
-    {
-        using Value = Node;
-        Inbox m_inbox;
-        ReadyQueue m_ready;
-        Node * trySteal() noexcept
-        {
-            if (auto * executable_p = m_ready.trySteal()) { return executable_p; }
-            return m_inbox.tryPop();
-        }
-        WorkStealingExecutor<Inbox, ReadyQueue, RoundRobinVictimSelector<CpuState>, Notifier> m_executor;
-        CpuState(std::span<CpuState> cpus, std::size_t index, Notifier notify) :
-            m_executor(m_inbox, m_ready, RoundRobinVictimSelector<CpuState>{cpus, index}, notify) {}
-        bool operator()() noexcept { return m_executor.executeOne(); }
-    };
-    struct PortState
-    {
-        SubmitQueue m_submissions;
-        ReturnQueue m_returns;
-        Port m_port;
-        BasicExecutor<ReturnQueue> m_executor;
-        PortState(std::uint32_t domain_id, std::uint32_t scheduler_count, Notifier & notify) noexcept :
-            m_port(m_submissions, domain_id, scheduler_count, notify), m_executor(m_returns) {}
-    };
-    struct Inputs
-    {
-        Ingress * m_ingress_p;
-        std::span<PortState> m_ports;
-        std::size_t m_next_index = 0;
-        DispatchRequest * tryPop() noexcept
-        {
-            const auto count = m_ports.size() + 1;
-            for (std::size_t attempt = 0; attempt < count; ++attempt) {
-                const auto index = m_next_index++ % count;
-                auto * request_p = index == 0 ? m_ingress_p->tryPop() : m_ports[index - 1].m_submissions.tryPop();
-                if (request_p) { return request_p; }
-            }
-            return nullptr;
-        }
-        bool isEmpty() const noexcept
-        {
-            if (not m_ingress_p->isEmpty()) { return false; }
-            for (const auto & port : m_ports) {
-                if (not port.m_submissions.isEmpty()) { return false; }
-            }
-            return true;
-        }
-    };
-    struct Router
-    {
-        ContextTopology * m_topology_p;
-        std::size_t m_dispatcher_index;
-        RoundRobinTargetSelector m_selector;
-        std::error_code tryEnqueue(DispatchRequest & request) noexcept
-        {
-            auto & topology = *m_topology_p;
-            const auto target = request.m_target_index;
-            if (target == k_owner_scheduler_index) {
-                return topology.m_owner_queue.tryEnqueue(*request.m_executable_p);
-            }
-            if (target < topology.m_scheduler_count) {
-                return topology.m_cpus[m_selector.select(topology.m_cpus.size())].m_inbox.tryEnqueue(
-                    *request.m_executable_p);
-            }
-            const auto port_index = target - topology.m_scheduler_count;
-            const auto home = port_index / topology.m_ports_per_dispatcher;
-            return home == m_dispatcher_index
-                ? topology.m_ports[port_index].m_returns.tryEnqueue(*request.m_executable_p)
-                : topology.m_dispatchers[home].m_ingress.tryEnqueue(request);
-        }
-    };
-    struct DispatchState
-    {
-        Ingress m_ingress;
-        BasicDispatcher<Inputs, Router> m_dispatcher;
-        DispatchState(ContextTopology & topology, std::size_t index, std::span<PortState> ports) :
-            m_dispatcher(Inputs{&m_ingress, ports}, Router{&topology, index, RoundRobinTargetSelector{index}}) {}
-        bool operator()() noexcept { return m_dispatcher.dispatch(); }
-    };
+    using CpuState = ContextCpuState<queue_capacity, CpuExecutor, VictimSelector, Notifier>;
+    using PortState = ContextPortState<queue_capacity, Notifier>;
+    using DispatchState = ::lcf::async::details::DispatchState<ContextTopology, PortState>;
+    using Inbox = ContextOwnerQueue;
 public:
+    ContextTopology() noexcept = default;
+    ~ContextTopology() noexcept = default;
     struct Progress
     {
-        template <typename Actor>
-        Progress(ContextTopology & topology, Actor & actor) noexcept :
-            m_topology_p(&topology), m_actor_p(&actor),
-            m_progress_f([](void * actor_p) noexcept { return (*static_cast<Actor *>(actor_p))(); }) {}
+        ~Progress() noexcept = default;
+        Progress() = delete;
+        Progress(ContextTopology & topology, std::size_t worker_index) noexcept :
+            m_topology_p(&topology), m_worker_index(worker_index) {}
         bool operator()() noexcept
         {
             m_topology_p->m_active.fetch_add(1, std::memory_order_acq_rel);
-            return m_topology_p->finishTurn(m_progress_f(m_actor_p));
+            return m_topology_p->finishTurn(m_topology_p->progressWorker(m_worker_index));
         }
         ContextTopology * m_topology_p;
-        void * m_actor_p;
-        bool (*m_progress_f)(void *) noexcept;
+        std::size_t m_worker_index;
     };
     struct OwnerTurn
     {
@@ -145,6 +60,7 @@ public:
         FixedCapacityVector<CpuState> cpus{std::max<std::size_t>(worker_count, 1), {resource_p}};
         FixedCapacityVector<PortState> ports{port_count, {resource_p}};
         FixedCapacityVector<DispatchState> dispatchers{dispatcher_count, {resource_p}};
+        FixedCapacityVector<ExecutorView> executor_views{cpus.capacity() + 1, {resource_p}};
         for (std::size_t index = 0; index < cpus.capacity(); ++index) {
             cpus.emplace_back(std::span{cpus.data(), cpus.capacity()}, index, m_notifier);
         }
@@ -157,85 +73,143 @@ public:
             const auto count = std::min(ports_per_dispatcher, port_count - first);
             dispatchers.emplace_back(*this, index, std::span{ports}.subspan(first, count));
         }
+        executor_views.emplace_back(m_owner_executor);
+        for (auto & cpu : cpus) { executor_views.emplace_back(cpu); }
         m_cpus = std::move(cpus);
         m_ports = std::move(ports);
         m_dispatchers = std::move(dispatchers);
+        m_executors = std::move(executor_views);
         m_scheduler_count = scheduler_count;
         m_ports_per_dispatcher = ports_per_dispatcher;
         m_accepting.store(true, std::memory_order_release);
     }
-    template <typename Append>
-    static void append_storage(std::size_t worker_count, std::size_t dispatcher_count,
-        std::size_t port_count, Append append)
+    static std::expected<std::pair<std::size_t, std::size_t>, std::error_code> calc_runtime_storage_requirements(
+        std::size_t worker_count,
+        std::size_t dispatcher_count,
+        std::size_t port_count) noexcept
     {
-        append(std::max<std::size_t>(worker_count, 1), sizeof(CpuState), alignof(CpuState));
-        append(port_count, sizeof(PortState), alignof(PortState));
-        append(dispatcher_count, sizeof(DispatchState), alignof(DispatchState));
+        struct StorageSegment
+        {
+            std::size_t m_count;
+            std::size_t m_element_size;
+            std::size_t m_alignment;
+        };
+        const auto max_size = std::numeric_limits<std::size_t>::max();
+        const auto cpu_count = std::max<std::size_t>(worker_count, 1);
+        const auto executor_view_count = cpu_count + 1;
+        bool size_overflow = cpu_count == max_size;
+        const std::array<StorageSegment, 4> segments{{
+            {cpu_count, sizeof(CpuState), alignof(CpuState)},
+            {port_count, sizeof(PortState), alignof(PortState)},
+            {dispatcher_count, sizeof(DispatchState), alignof(DispatchState)},
+            {executor_view_count, sizeof(ExecutorView), alignof(ExecutorView)}
+        }};
+        std::size_t runtime_size_in_bytes = 0;
+        std::size_t runtime_alignment = 1;
+        for (const auto & [count, element_size, alignment] : segments) {
+            const auto padding = (alignment - runtime_size_in_bytes % alignment) % alignment;
+            const auto padded_size = runtime_size_in_bytes + padding;
+            const bool padding_overflow = runtime_size_in_bytes > max_size - padding;
+            const bool segment_overflow = count > (max_size - padded_size) / element_size;
+            size_overflow |= padding_overflow | segment_overflow;
+            runtime_size_in_bytes = padded_size + count * element_size;
+            runtime_alignment = std::max(runtime_alignment, alignment);
+        }
+        if (size_overflow) { return std::unexpected{std::make_error_code(std::errc::value_too_large)}; }
+        return std::pair{runtime_size_in_bytes, runtime_alignment};
     }
     std::error_code tryEnqueue(std::uint32_t target, DispatchRequest & request) noexcept
     {
         if (not m_accepting.load(std::memory_order_acquire)) { return std::make_error_code(std::errc::operation_canceled); }
         request.m_target_index = target;
         const auto index = m_next_ingress.fetch_add(1, std::memory_order_relaxed) % m_dispatchers.size();
-        const auto error = m_dispatchers[index].m_ingress.tryEnqueue(request);
+        const auto error = m_dispatchers[index].tryEnqueue(request);
         if (not error) { m_signal.notifyAll(); }
         return error;
     }
     Progress getWorkerProgress(std::size_t index) noexcept
     {
-        if (index < m_dispatchers.size()) { return {*this, m_dispatchers[index]}; }
-        return {*this, m_cpus[index - m_dispatchers.size()]};
+        return {*this, index};
     }
     OwnerTurn pollOwner(bool drive_workers) noexcept
     {
         m_active.fetch_add(1, std::memory_order_acq_rel);
         bool dispatched = false;
         if (drive_workers) {
-            for (auto & state : m_dispatchers) { dispatched = state() or dispatched; }
+            for (auto & state : m_dispatchers) { dispatched |= state.dispatch(); }
         }
-        const bool executed = this->executeNext(drive_workers ? m_cpus.size() + 1 : 1);
+        const bool executed = this->executeNext(drive_workers);
         return {this->finishTurn(dispatched or executed), executed};
     }
     bool pollReturn(std::size_t index) noexcept
     {
         m_active.fetch_add(1, std::memory_order_acq_rel);
-        return this->finishTurn(m_ports[index].m_executor.executeOne());
+        return this->finishTurn(m_ports[index].executeReturn());
     }
-    Port & getSubmissionPort(std::size_t index) noexcept
-    {
-        return m_ports[index].m_port;
-    }
+    auto & getSubmissionPort(std::size_t index) noexcept { return m_ports[index].getPort(); }
     void close() noexcept
     {
         m_accepting.store(false, std::memory_order_release);
-        for (auto & port : m_ports) { port.m_submissions.close(); }
+        std::ranges::for_each(m_ports, &PortState::close);
         m_signal.notifyAll();
     }
     bool isEmpty() const noexcept
     {
-        if (not m_owner_queue.isEmpty()) { return false; }
-        for (const auto & cpu : m_cpus) {
-            if (not cpu.m_inbox.isEmpty() or not cpu.m_ready.isEmpty()) { return false; }
-        }
-        for (const auto & port : m_ports) { if (not port.m_returns.isEmpty()) { return false; } }
-        for (const auto & state : m_dispatchers) { if (not state.m_dispatcher.isEmpty()) { return false; } }
-        return true;
+        return m_owner_queue.isEmpty() and
+            std::ranges::all_of(m_cpus, &CpuState::isEmpty) and
+            std::ranges::all_of(m_ports, &PortState::isReturnEmpty) and
+            std::ranges::all_of(m_dispatchers, &DispatchState::isEmpty);
     }
     bool isIdle() const noexcept
     {
-        // Reject a scan crossed by an active turn or a completed queue transfer.
         const auto observed = m_signal.observe();
         return m_active.load(std::memory_order_acquire) == 0 and this->isEmpty()
             and m_active.load(std::memory_order_acquire) == 0 and m_signal.observe() == observed;
     }
     WorkSignal & getSignal() noexcept { return m_signal; }
 private:
-    bool executeNext(std::size_t executor_count) noexcept
+    template <typename> friend class ContextTopologyRouter;
+
+    std::error_code tryRoute(std::size_t dispatcher_index, RoundRobinTargetSelector & selector,
+        DispatchRequest & request) noexcept
     {
+        const auto target = request.m_target_index;
+        if (target == k_owner_scheduler_index) {
+            return m_owner_queue.tryEnqueue(*request.m_executable_p);
+        }
+        if (target < m_scheduler_count) {
+            return m_cpus[selector.select(m_cpus.size())].tryEnqueue(*request.m_executable_p);
+        }
+        const auto port_index = target - m_scheduler_count;
+        const auto home = port_index / m_ports_per_dispatcher;
+        return home == dispatcher_index
+            ? m_ports[port_index].tryEnqueueReturn(*request.m_executable_p)
+            : m_dispatchers[home].tryEnqueue(request);
+    }
+    bool progressWorker(std::size_t worker_index) noexcept
+    {
+        const auto background_worker_count = m_cpus.size();
+        const auto dispatcher_count = m_dispatchers.size();
+        const auto dispatchers_per_worker = dispatcher_count / background_worker_count;
+        const auto extra_dispatchers = dispatcher_count % background_worker_count;
+        const auto first_dispatcher = worker_index * dispatchers_per_worker + std::min(worker_index, extra_dispatchers);
+        const auto assigned_dispatcher_count = dispatchers_per_worker + (worker_index < extra_dispatchers);
+
+        bool progressed = false;
+        for (std::size_t offset = 0; offset < assigned_dispatcher_count; ++offset) {
+            progressed |= m_dispatchers[first_dispatcher + offset].dispatch();
+        }
+        return m_cpus[worker_index].executeOne() or progressed;
+    }
+    bool executeNext(bool include_cpu_executors) noexcept
+    {
+        if (m_executors.empty()) { return m_owner_executor.executeOne(); }
+        const auto executor_count = include_cpu_executors ? m_executors.size() : 1;
+        if (m_next_executor >= executor_count) { m_next_executor = 0; }
         for (std::size_t attempt = 0; attempt < executor_count; ++attempt) {
-            const auto index = m_next_executor++ % executor_count;
-            auto executor = index == 0 ? ExecutorView{m_owner_executor} : ExecutorView{m_cpus[index - 1].m_executor};
-            if (executor.executeOne()) { return true; }
+            const auto index = m_next_executor;
+            if (++m_next_executor == executor_count) { m_next_executor = 0; }
+            if (m_executors[index].executeOne()) { return true; }
         }
         return false;
     }
@@ -246,12 +220,13 @@ private:
         return progressed;
     }
     WorkSignal m_signal;
-    Notifier m_notifier{&m_signal};
+    Notifier m_notifier{m_signal};
     Inbox m_owner_queue;
     BasicExecutor<Inbox> m_owner_executor{m_owner_queue};
     FixedCapacityVector<CpuState> m_cpus;
     FixedCapacityVector<PortState> m_ports;
     FixedCapacityVector<DispatchState> m_dispatchers;
+    FixedCapacityVector<ExecutorView> m_executors;
     std::atomic<std::size_t> m_next_ingress{0};
     std::atomic<std::size_t> m_active{0};
     std::atomic<bool> m_accepting{false};
@@ -259,5 +234,11 @@ private:
     std::size_t m_ports_per_dispatcher = 1;
     std::size_t m_next_executor = 0;
 };
+
+template <typename Topology>
+std::error_code ContextTopologyRouter<Topology>::tryEnqueue(DispatchRequest & request) noexcept
+{
+    return m_topology_p->tryRoute(m_dispatcher_index, m_selector, request);
+}
 
 } // namespace lcf::async::details

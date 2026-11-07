@@ -17,11 +17,14 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <join_handle_c ThreadHandle = std::thread, std::size_t queue_capacity = 256>
+template <join_handle_c ThreadHandle = std::thread, std::size_t queue_capacity = 256,
+    template <typename, typename, typename, typename> class CpuExecutor = WorkStealingExecutor,
+    template <typename> class VictimSelector = RoundRobinVictimSelector,
+    typename Notifier = details::ContextTopologyNotifier>
 requires (queue_capacity > 0)
 class BasicContext
 {
-    using Topology = details::ContextTopology<queue_capacity>;
+    using Topology = details::ContextTopology<queue_capacity, CpuExecutor, VictimSelector, Notifier>;
     using Pool = WorkerPool<typename Topology::Progress, ThreadHandle>;
 public:
     BasicContext() = default;
@@ -43,12 +46,10 @@ public:
             return std::make_error_code(std::errc::invalid_argument);
         }
         try {
-            const auto allocators = info.getAllocators();
-            const std::size_t thread_count = info.getWorkerCount() == 0 ? 0
-                : std::size_t{info.getWorkerCount()} + info.getDispatcherCount();
-            typename Pool::WorkerList workers{thread_count, {allocators.m_workers.resource()}};
+            const std::size_t thread_count = info.getWorkerCount();
+            typename Pool::WorkerList workers{thread_count, {&info.getWorkerMemoryResource()}};
             m_topology.create(info.getDomainId(), info.getSchedulerCount(), info.getWorkerCount(), info.getDispatcherCount(),
-                info.getSubmissionPortCount(), allocators.m_runtime.resource());
+                info.getSubmissionPortCount(), &info.getRuntimeMemoryResource());
             std::destroy_at(&m_pool);
             std::construct_at(&m_pool, m_topology.getSignal(), std::move(workers));
         } catch (const std::bad_array_new_length &) {

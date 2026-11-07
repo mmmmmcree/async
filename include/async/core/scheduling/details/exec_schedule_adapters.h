@@ -12,8 +12,7 @@
 
 namespace lcf::async::details {
 
-using ScheduleCompletions = protocols::completion_signatures<
-    exec::set_value_t(), exec::set_stopped_t()>;
+using ScheduleCompletions = protocols::completion_signatures<exec::set_value_t(), exec::set_stopped_t()>;
 
 template <std::copyable Handle, receiver_of_c<ScheduleCompletions> Receiver>
 class ScheduleOperation
