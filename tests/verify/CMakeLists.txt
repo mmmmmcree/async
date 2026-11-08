@@ -1,3 +1,8 @@
+file(GLOB verify_sources CONFIGURE_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/*.cpp")
+if(NOT verify_sources)
+    return()
+endif()
+
 if(NOT TARGET GTest::gtest_main)
     find_package(GTest CONFIG QUIET)
 endif()
@@ -21,9 +26,7 @@ if(NOT TARGET GTest::gtest_main)
 endif()
 
 set(verify_target ${lib_target}_verify)
-add_executable(${verify_target}
-    execution_test.cpp
-    context_test.cpp)
+add_executable(${verify_target} ${verify_sources})
 lcf_test_target(${verify_target} GTest::gtest_main)
 
 include(GoogleTest)
