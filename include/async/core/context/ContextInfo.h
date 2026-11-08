@@ -1,9 +1,9 @@
 #pragma once
 
+#include <async/core/context/declarations/tokens.h>
 #include <async/core/context/details/ContextSchedulingRuntime.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/SignalNotifier.h>
-#include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
 #include <async/core/worker/WorkerPool.h>
 

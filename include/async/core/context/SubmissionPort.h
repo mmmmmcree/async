@@ -1,5 +1,6 @@
 #pragma once
 
+#include <async/core/context/declarations/tokens.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/declarations/concepts.h>
@@ -27,7 +28,7 @@ public:
     SchedulerHandle getSchedulerHandle(SchedulerToken token) const noexcept
     {
         assert(token.getDomainId() == m_domain_id);
-        return SchedulerHandle {*m_submitter_p, token};
+        return SchedulerHandle {*m_submitter_p, m_domain_id, token.getIndex()};
     }
     SchedulerHandle getOwnerSchedulerHandle() const noexcept
     {

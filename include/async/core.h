@@ -11,7 +11,7 @@
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
 #include <async/core/queue/non_intrusive/spmc/Deque.h>
 #include <async/core/scheduling/declarations/concepts.h>
-#include <async/core/scheduling/ExecutionNode.h>
+#include <async/core/scheduling/WorkItem.h>
 #include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>
@@ -29,6 +29,7 @@
 #include <async/core/worker/thread/ThreadLauncher.h>
 #include <async/core/worker/thread/declarations/aliases.h>
 #include <async/core/worker/thread/declarations/concepts.h>
+#include <async/core/context/declarations/tokens.h>
 #include <async/core/context/ContextInfo.h>
 #include <async/core/context/SubmissionPort.h>
 #include <async/core/context/BasicContext.h>

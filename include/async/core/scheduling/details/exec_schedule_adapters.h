@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/scheduling/ExecutionNode.h>
+#include <async/core/scheduling/WorkItem.h>
 #include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/execution/operations.h>
@@ -41,7 +41,7 @@ public:
     ScheduleOperation(Handle handle, Receiver receiver) noexcept(
         std::is_nothrow_copy_constructible_v<Handle> and std::is_nothrow_move_constructible_v<Receiver>) :
         m_handle(handle), m_receiver(std::move(receiver)),
-        m_node(this, &execute, &cancel), m_request {m_node} {}
+        m_work_item(this, &execute, &cancel), m_request {m_work_item} {}
     ScheduleOperation(const ScheduleOperation &) = delete;
     ScheduleOperation & operator=(const ScheduleOperation &) = delete;
     ScheduleOperation(ScheduleOperation &&) = delete;
@@ -55,7 +55,7 @@ public:
 private:
     Handle m_handle;
     Receiver m_receiver;
-    ExecutionNode m_node;
+    WorkItem m_work_item;
     DispatchRequest m_request;
 };
 

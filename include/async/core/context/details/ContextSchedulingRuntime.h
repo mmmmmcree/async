@@ -5,7 +5,7 @@
 #include <async/core/context/details/ContextPort.h>
 #include <async/core/context/declarations/enums.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
-#include <async/core/scheduling/ExecutionNode.h>
+#include <async/core/scheduling/WorkItem.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/core/scheduling/executor/BasicExecutor.h>
@@ -45,7 +45,7 @@ private:
     using Executor = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier>;
     using Port = ContextPort<queue_capacity, Notifier>;
     using Dispatcher = ContextDispatcher<ContextSchedulingRuntime, Port>;
-    using OwnerQueue = queue::intrusive::mpmc::Queue<ExecutionNode>;
+    using OwnerQueue = queue::intrusive::mpmc::Queue<WorkItem>;
     using StorageRequirementsResult = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
 private:
     static bool dispatch_requests(std::span<Dispatcher> dispatchers) noexcept
