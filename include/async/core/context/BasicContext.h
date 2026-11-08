@@ -23,7 +23,7 @@ LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <join_handle_c ThreadHandle = std::thread, std::size_t queue_capacity = 256,
-    template <typename, typename, typename, typename> class CpuExecutor = WorkStealingExecutor,
+    template <typename, typename, typename, typename> class Executor = WorkStealingExecutor,
     template <typename> class VictimSelector = RoundRobinVictimSelector,
     notify::signal_c Signal = notify::AtomicSequenceSignal,
     typename Notifier = notify::SignalNotifier<Signal>>
@@ -32,8 +32,8 @@ requires (queue_capacity > 0) and
     notify::signal_notifier_c<Notifier, Signal>
 class BasicContext
 {
-    using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, CpuExecutor, VictimSelector, Signal, Notifier>;
-    using WorkerPool = WorkerPool<typename SchedulingRuntime::Progress, ThreadHandle, Signal>;
+    using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, Executor, VictimSelector, Signal, Notifier>;
+    using WorkerPool = WorkerPool<typename SchedulingRuntime::WorkerProgress, ThreadHandle, Signal>;
 public:
     BasicContext() = default;
     ~BasicContext() noexcept
