@@ -17,7 +17,6 @@ class Deque
 {
 public:
     using Value = Item;
-    using Executable = Item;
     static constexpr bool k_supports_multiple_producers = false;
     static constexpr bool k_supports_multiple_consumers = true;
 public:

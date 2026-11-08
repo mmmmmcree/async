@@ -35,7 +35,7 @@ private:
 template <typename SchedulingRuntime, typename Port>
 class ContextDispatcher
 {
-    using Ingress = queue::intrusive::mpmc::Queue<queue::intrusive::mpmc::AlgorithmTag::eMutex, DispatchRequest>;
+    using Ingress = queue::intrusive::mpmc::Queue<DispatchRequest>;
     using Router = ContextTargetRouter<SchedulingRuntime>;
     using PortSpan = std::span<Port>;
     class InputSource

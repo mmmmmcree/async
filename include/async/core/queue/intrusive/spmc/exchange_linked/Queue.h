@@ -1,6 +1,5 @@
 #pragma once
 
-#include <async/core/queue/ExecutionNode.h>
 #include <async/core/queue/intrusive/spmc/queue_declarations.h>
 
 #include <atomic>
@@ -9,41 +8,47 @@
 #include <exception>
 #include <mutex>
 #include <system_error>
+#include <type_traits>
+#include <utility>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async::queue::intrusive::spmc {
 
-template <>
-class Queue<AlgorithmTag::eExchangeLinked>
+// Node links must synchronize concurrent producer and consumer access.
+template <linked_node_c Node>
+class Queue<Node, AlgorithmTag::eExchangeLinked>
 {
 public:
-    using Value = ExecutionNode;
-    using Executable = ExecutionNode;
+    using Value = Node;
     static constexpr bool k_supports_multiple_producers = false;
     static constexpr bool k_supports_multiple_consumers = true;
 
-    static_assert(std::atomic<ExecutionNode *>::is_always_lock_free,
-        "Queue<AlgorithmTag::eExchangeLinked> requires lock-free pointer atomics");
+    static_assert(std::atomic<Node *>::is_always_lock_free,
+        "Exchange-linked queue requires lock-free pointer atomics");
     static_assert(std::atomic<std::uint64_t>::is_always_lock_free,
-        "Queue<AlgorithmTag::eExchangeLinked> requires lock-free 64-bit atomics");
+        "Exchange-linked queue requires lock-free 64-bit atomics");
     static_assert(std::atomic<unsigned>::is_always_lock_free,
-        "Queue<AlgorithmTag::eExchangeLinked> requires lock-free unsigned atomics");
+        "Exchange-linked queue requires lock-free unsigned atomics");
     static_assert(std::atomic<std::size_t>::is_always_lock_free,
-        "Queue<AlgorithmTag::eExchangeLinked> requires lock-free size atomics");
+        "Exchange-linked queue requires lock-free size atomics");
 private:
     static constexpr unsigned k_closed_bit = 1u;
     static constexpr unsigned k_producer_active_bit = 2u;
-private:
-    static void execute_stub(void *) noexcept {}
 public:
     ~Queue() noexcept = default;
-    Queue() noexcept : m_stub {nullptr, &execute_stub, &execute_stub}, m_head_p {&m_stub}, m_tail_p(&m_stub) {}
+    Queue() noexcept(std::is_nothrow_default_constructible_v<Node>)
+    requires std::default_initializable<Node> :
+        m_stub {} { m_stub.setNext(nullptr); }
+    template <typename... Arguments>
+    requires std::constructible_from<Node, Arguments...>
+    explicit Queue(std::in_place_t, Arguments &&... arguments) noexcept(std::is_nothrow_constructible_v<Node, Arguments...>) :
+        m_stub(std::forward<Arguments>(arguments)...) { m_stub.setNext(nullptr); }
     Queue(const Queue &) = delete;
     Queue(Queue &&) = delete;
     Queue & operator=(const Queue &) = delete;
     Queue & operator=(Queue &&) = delete;
 public:
-    std::error_code tryEnqueue(ExecutionNode & node) noexcept
+    std::error_code tryEnqueue(Node & node) noexcept
     {
         auto state = m_lifecycle.load(std::memory_order_acquire);
         if ((state & k_closed_bit) != 0) { return std::make_error_code(std::errc::operation_canceled); }
@@ -69,7 +74,7 @@ public:
         m_lifecycle.notify_all();
         return {};
     }
-    ExecutionNode * tryPop() noexcept
+    Node * tryPop() noexcept
     {
         std::lock_guard lock{m_consumer_mutex};
 #if defined(LCF_ASYNC_ENABLE_TEST_HOOKS)
@@ -79,7 +84,7 @@ public:
 #endif
         return this->popFront();
     }
-    ExecutionNode * waitPop() noexcept
+    Node * waitPop() noexcept
     {
         for (;;) {
             if (m_stop_requested.load(std::memory_order_acquire)) { return nullptr; }
@@ -120,7 +125,7 @@ private:
     void * m_after_producer_entry_hook_state_p = nullptr;
 #endif
 private:
-    ExecutionNode * popFront() noexcept
+    Node * popFront() noexcept
     {
         auto * tail_p = m_tail_p;
         auto * next_p = tail_p->getNext();
@@ -145,7 +150,7 @@ private:
         }
         return nullptr;
     }
-    ExecutionNode * releaseNode(ExecutionNode & node) noexcept
+    Node * releaseNode(Node & node) noexcept
     {
         node.setNext(nullptr);
         m_queued_count.fetch_sub(1, std::memory_order_relaxed);
@@ -162,9 +167,9 @@ private:
     }
 private:
     mutable std::mutex m_consumer_mutex;
-    ExecutionNode m_stub;
-    std::atomic<ExecutionNode *> m_head_p;
-    ExecutionNode * m_tail_p;
+    Node m_stub;
+    std::atomic<Node *> m_head_p {&m_stub};
+    Node * m_tail_p = &m_stub;
     std::atomic<std::size_t> m_queued_count{0};
     std::atomic<std::uint64_t> m_wake_sequence{0};
     std::atomic<unsigned> m_lifecycle{0};

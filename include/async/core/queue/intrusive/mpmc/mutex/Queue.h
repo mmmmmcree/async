@@ -1,6 +1,5 @@
 #pragma once
 
-#include <async/core/queue/ExecutionNode.h>
 #include <async/core/queue/intrusive/mpmc/queue_declarations.h>
 
 #include <condition_variable>
@@ -10,12 +9,11 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async::queue::intrusive::mpmc {
 
-template <typename Node>
-class Queue<AlgorithmTag::eMutex, Node>
+template <linked_node_c Node>
+class Queue<Node, AlgorithmTag::eMutex>
 {
 public:
     using Value = Node;
-    using Executable = Node;
     static constexpr bool k_supports_multiple_producers = true;
     static constexpr bool k_supports_multiple_consumers = true;
 public:

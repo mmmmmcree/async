@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/queue/ExecutionNode.h>
+#include <async/core/scheduling/ExecutionNode.h>
 #include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/execution/operations.h>
@@ -55,7 +55,7 @@ public:
 private:
     Handle m_handle;
     Receiver m_receiver;
-    queue::ExecutionNode m_node;
+    ExecutionNode m_node;
     DispatchRequest m_request;
 };
 

@@ -5,7 +5,7 @@
 #include <atomic>
 
 LCF_ASYNC_EXPORT
-namespace lcf::async::queue {
+namespace lcf::async {
 
 class ExecutionNode
 {
@@ -44,4 +44,4 @@ private:
     CancelFunction m_cancel_f;
 };
 
-} // namespace lcf::async::queue
+} // namespace lcf::async

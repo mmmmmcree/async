@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/queue/ExecutionNode.h>
+#include <async/core/scheduling/ExecutionNode.h>
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
 #include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/executor/BasicExecutor.h>
@@ -16,7 +16,7 @@ template <std::size_t queue_capacity, typename Notifier = notify::SignalNotifier
 requires (queue_capacity > 0) and notify::notifier_c<Notifier>
 class ContextPort
 {
-    using Executable = queue::ExecutionNode;
+    using Executable = ExecutionNode;
     using SubmissionQueue = queue::non_intrusive::spsc::Queue<DispatchRequest, queue_capacity>;
     using ExecutionQueue = queue::non_intrusive::spsc::Queue<Executable, queue_capacity>;
 public:

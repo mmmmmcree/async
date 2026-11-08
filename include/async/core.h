@@ -6,12 +6,12 @@
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/notify/NoopNotifier.h>
 #include <async/core/queue/declarations/concepts.h>
-#include <async/core/queue/ExecutionNode.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/queue/intrusive/spmc/Queue.h>
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
 #include <async/core/queue/non_intrusive/spmc/Deque.h>
 #include <async/core/scheduling/declarations/concepts.h>
+#include <async/core/scheduling/ExecutionNode.h>
 #include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>

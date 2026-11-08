@@ -9,6 +9,12 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
+template <typename Node>
+concept linked_node_c = requires(Node & node, const Node & const_node, Node * next_p) {
+    { const_node.getNext() } noexcept -> std::same_as<Node *>;
+    { node.setNext(next_p) } noexcept -> std::same_as<void>;
+};
+
 template <typename Queue>
 concept value_queue_c = requires {
         typename Queue::Value;

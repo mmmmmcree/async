@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/queue/ExecutionNode.h>
+#include <async/core/scheduling/ExecutionNode.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/queue/non_intrusive/spmc/Deque.h>
 #include <async/core/scheduling/executor/WorkStealingExecutor.h>
@@ -23,14 +23,14 @@ requires (queue_capacity > 0) and notify::notifier_c<Notifier>
 class ContextExecutor
 {
 public:
-    using Value = queue::ExecutionNode;
+    using Value = ExecutionNode;
     Value * trySteal() noexcept
     {
         if (auto * executable_p = m_ready_queue.trySteal()) { return executable_p; }
         return m_inbox.tryPop();
     }
 private:
-    using Inbox = queue::intrusive::mpmc::Queue<>;
+    using Inbox = queue::intrusive::mpmc::Queue<Value>;
     using ReadyQueue = queue::non_intrusive::spmc::Deque<Value, queue_capacity>;
     using Self = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier>;
     using Selector = VictimSelector<Self>;
