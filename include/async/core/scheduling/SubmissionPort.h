@@ -15,6 +15,8 @@ template <value_queue_c Queue, notify::notifier_c Notifier>
 requires std::same_as<typename Queue::Value, DispatchRequest>
 class SubmissionPort
 {
+private:
+    using Scheduler = SchedulerHandle<SubmissionPort>;
 public:
     ~SubmissionPort() noexcept = default;
     SubmissionPort() = delete;
@@ -25,10 +27,10 @@ public:
     SubmissionPort & operator=(const SubmissionPort &) = delete;
     SubmissionPort & operator=(SubmissionPort &&) = delete;
 public:
-    auto getSchedulerHandle(SchedulerToken token) noexcept
+    Scheduler getSchedulerHandle(SchedulerToken token) noexcept
     {
         assert(token.getDomainId() == m_domain_id);
-        return SchedulerHandle{*this, token};
+        return Scheduler {*this, token};
     }
     template <dispatch_record_c Record>
     std::error_code submit(std::uint32_t target_index, Record & record) noexcept

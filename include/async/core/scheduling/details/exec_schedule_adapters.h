@@ -97,7 +97,10 @@ public:
     Environment get_env() const noexcept { return Environment{m_scheduler}; }
     template <receiver_of_c<ScheduleCompletions> Receiver>
     requires record_submitter_c<Handle, ScheduleOperation<Handle, Receiver>>
-    auto connect(Receiver receiver) const { return ScheduleOperation<Handle, Receiver>{m_scheduler, std::move(receiver)}; }
+    ScheduleOperation<Handle, Receiver> connect(Receiver receiver) const
+    {
+        return ScheduleOperation<Handle, Receiver> {m_scheduler, std::move(receiver)};
+    }
 private:
     Handle m_scheduler;
 };

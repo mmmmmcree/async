@@ -39,11 +39,14 @@ requires (queue_capacity > 0) and std::is_nothrow_default_constructible_v<Signal
     and notify::signal_notifier_c<Notifier, Signal>
 class ContextSchedulingRuntime
 {
+private:
     template <typename> friend class ContextTargetRouter;
     using Executor = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier>;
     using Port = ContextPort<queue_capacity, Notifier>;
     using Dispatcher = ContextDispatcher<ContextSchedulingRuntime, Port>;
     using OwnerQueue = queue::intrusive::mpmc::Queue<>;
+    using SubmissionPort = std::remove_reference_t<decltype(std::declval<Port &>().getSubmissionPort())>;
+    using StorageRequirementsResult = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
 private:
     static bool dispatch_requests(std::span<Dispatcher> dispatchers) noexcept
     {
@@ -52,7 +55,7 @@ private:
         return dispatched;
     }
 public:
-    static std::expected<std::pair<std::size_t, std::size_t>, std::error_code> calc_storage_requirements(
+    static StorageRequirementsResult calc_storage_requirements(
         std::size_t worker_count, std::size_t dispatcher_count, std::size_t port_count) noexcept
     {
         struct StorageSegment
@@ -183,7 +186,7 @@ public:
         this->finishPoll(executed);
         return executed ? PollResult::eExecuted : PollResult::eIdle;
     }
-    auto & getSubmissionPort(std::size_t port_index) noexcept { return m_ports[port_index].getSubmissionPort(); }
+    SubmissionPort & getSubmissionPort(std::size_t port_index) noexcept { return m_ports[port_index].getSubmissionPort(); }
     void closeSubmissions() noexcept
     {
         m_submissions_closed.store(true, std::memory_order_release);
