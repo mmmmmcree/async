@@ -24,13 +24,6 @@ public:
 public:
     ExecutionNode * getNext() const noexcept { return m_next_p.load(std::memory_order_acquire); }
     void setNext(ExecutionNode * next_p) noexcept { m_next_p.store(next_p, std::memory_order_release); }
-    bool isQueued() const noexcept { return m_queued; }
-    void markQueued() noexcept { m_queued = true; }
-    void clearQueueState() noexcept
-    {
-        m_next_p.store(nullptr, std::memory_order_relaxed);
-        m_queued = false;
-    }
     void execute() noexcept
     {
         auto * state_p = m_state_p;
@@ -49,7 +42,6 @@ private:
     void * m_state_p;
     ExecuteFunction m_execute_f;
     CancelFunction m_cancel_f;
-    bool m_queued = false;
 };
 
 } // namespace lcf::async::queue

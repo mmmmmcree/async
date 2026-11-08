@@ -31,7 +31,7 @@ public:
         {
             std::lock_guard lock{m_mutex};
             if (m_closed) { return std::make_error_code(std::errc::operation_canceled); }
-            node.markQueued();
+            node.setNext(nullptr);
             if (m_tail_p) { m_tail_p->setNext(&node); }
             else { m_head_p = &node; }
             m_tail_p = &node;
@@ -82,7 +82,7 @@ private:
         if (not node_p) { return nullptr; }
         m_head_p = node_p->getNext();
         if (not m_head_p) { m_tail_p = nullptr; }
-        node_p->clearQueueState();
+        node_p->setNext(nullptr);
         return node_p;
     }
 private:

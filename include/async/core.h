@@ -12,9 +12,8 @@
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
 #include <async/core/queue/non_intrusive/spmc/Deque.h>
 #include <async/core/scheduling/declarations/concepts.h>
-#include <async/core/scheduling/declarations/dispatch_structs.h>
+#include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/SchedulerHandle.h>
-#include <async/core/scheduling/SubmissionPort.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>
 #include <async/core/scheduling/dispatcher/declarations/concepts.h>
 #include <async/core/scheduling/dispatcher/selectors/RoundRobinTargetSelector.h>
@@ -31,6 +30,7 @@
 #include <async/core/worker/thread/declarations/aliases.h>
 #include <async/core/worker/thread/declarations/concepts.h>
 #include <async/core/context/ContextInfo.h>
+#include <async/core/context/SubmissionPort.h>
 #include <async/core/context/BasicContext.h>
 #include <async/core/context/declarations/enums.h>
 #include <async/core/context/declarations/poll_structs.h>

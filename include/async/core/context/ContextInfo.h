@@ -4,6 +4,7 @@
 #include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/scheduling/SchedulerHandle.h>
+#include <async/core/scheduling/details/dispatch_targets.h>
 #include <async/core/worker/WorkerPool.h>
 
 #include <cstddef>
@@ -35,7 +36,7 @@ struct ContextStorageRequirements
 class ContextInfo
 {
     using Self = ContextInfo;
-    inline static std::uint32_t s_next_domain_id{1};
+    inline static std::uint32_t s_next_domain_id {details::k_unbound_domain_id + 1};
     static std::uint32_t acquire_domain_id() noexcept { return s_next_domain_id++; }
 public:
     ContextInfo() noexcept = default;
@@ -44,7 +45,7 @@ public:
     ContextInfo(const ContextInfo &) = delete;
     ContextInfo & operator=(const ContextInfo &) = delete;
     ContextInfo(ContextInfo && other) noexcept :
-        m_domain_id(std::exchange(other.m_domain_id, 0)), m_worker_count(other.m_worker_count),
+        m_domain_id(std::exchange(other.m_domain_id, details::k_unbound_domain_id)), m_worker_count(other.m_worker_count),
         m_dispatcher_count(other.m_dispatcher_count), m_scheduler_count(other.m_scheduler_count),
         m_port_count(other.m_port_count), m_runtime_resource_p(other.m_runtime_resource_p),
         m_worker_resource_p(other.m_worker_resource_p) {}

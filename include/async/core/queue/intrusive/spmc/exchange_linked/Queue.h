@@ -59,7 +59,6 @@ public:
             m_after_producer_entry_hook_f(m_after_producer_entry_hook_state_p);
         }
 #endif
-        node.markQueued();
         node.setNext(nullptr);
         m_queued_count.fetch_add(1, std::memory_order_relaxed);
         auto * previous_p = m_head_p.exchange(&node, std::memory_order_acq_rel);
@@ -148,7 +147,7 @@ private:
     }
     ExecutionNode * releaseNode(ExecutionNode & node) noexcept
     {
-        node.clearQueueState();
+        node.setNext(nullptr);
         m_queued_count.fetch_sub(1, std::memory_order_relaxed);
         return &node;
     }

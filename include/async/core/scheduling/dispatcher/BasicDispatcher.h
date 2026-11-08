@@ -31,14 +31,14 @@ public:
     {
         bool progressed = false;
         for (std::size_t attempt = 0; attempt < max_requests; ++attempt) {
-            auto * pending_p = m_pending_header.getNext();
+            auto * pending_p = m_pending_head_p;
             auto * request_p = m_retry_pending and pending_p ? pending_p : m_inputs.tryPop();
             const bool received = request_p and request_p != pending_p;
             if (not request_p) { request_p = pending_p; }
             if (not request_p) { break; }
             if (request_p == pending_p) {
-                m_pending_header.setNext(request_p->getNext());
-                if (not m_pending_header.getNext()) { m_pending_tail_p = &m_pending_header; }
+                m_pending_head_p = request_p->getNext();
+                if (not m_pending_head_p) { m_pending_tail_p = nullptr; }
             }
             m_retry_pending = not m_retry_pending;
             request_p->setNext(nullptr);
@@ -47,11 +47,12 @@ public:
             progressed |= received or not error;
             if (error) {
                 assert(error == std::errc::no_buffer_space and "Close ingress before draining and closing outputs");
-                m_pending_tail_p->setNext(request_p);
+                if (m_pending_tail_p) { m_pending_tail_p->setNext(request_p); }
+                else { m_pending_head_p = request_p; }
                 m_pending_tail_p = request_p;
             }
         }
-        m_has_pending.store(m_pending_header.getNext(), std::memory_order_release);
+        m_has_pending.store(m_pending_head_p != nullptr, std::memory_order_release);
         return progressed;
     }
     bool isEmpty() const noexcept
@@ -61,22 +62,22 @@ public:
     // Producers and the dispatcher driver must be quiescent.
     void cancelPending() noexcept
     {
-        while (auto * request_p = m_pending_header.getNext()) {
-            m_pending_header.setNext(request_p->getNext());
-            if (not m_pending_header.getNext()) { m_pending_tail_p = &m_pending_header; }
-            m_has_pending.store(m_pending_header.getNext() != nullptr, std::memory_order_release);
-            request_p->clearQueueState();
-            request_p->m_executable_p->cancel();
+        while (auto * request_p = m_pending_head_p) {
+            m_pending_head_p = request_p->getNext();
+            if (not m_pending_head_p) { m_pending_tail_p = nullptr; }
+            m_has_pending.store(m_pending_head_p != nullptr, std::memory_order_release);
+            request_p->setNext(nullptr);
+            request_p->getExecutable().cancel();
         }
         while (auto * request_p = m_inputs.tryPop()) {
-            request_p->m_executable_p->cancel();
+            request_p->getExecutable().cancel();
         }
     }
 private:
     Inputs m_inputs;
     Router m_router;
-    DispatchRequest m_pending_header{};
-    DispatchRequest * m_pending_tail_p = &m_pending_header;
+    DispatchRequest * m_pending_head_p = nullptr;
+    DispatchRequest * m_pending_tail_p = nullptr;
     bool m_retry_pending = false;
     std::atomic<bool> m_has_pending{false};
 };

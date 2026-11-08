@@ -2,14 +2,12 @@
 
 #include <async/core/queue/ExecutionNode.h>
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
-#include <async/core/scheduling/declarations/dispatch_structs.h>
-#include <async/core/scheduling/SubmissionPort.h>
+#include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/executor/BasicExecutor.h>
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/notify/declarations/concepts.h>
 
 #include <cstddef>
-#include <cstdint>
 #include <system_error>
 
 namespace lcf::async::details {
@@ -21,18 +19,22 @@ class ContextPort
     using Executable = queue::ExecutionNode;
     using SubmissionQueue = queue::non_intrusive::spsc::Queue<DispatchRequest, queue_capacity>;
     using ExecutionQueue = queue::non_intrusive::spsc::Queue<Executable, queue_capacity>;
-    using Port = SubmissionPort<SubmissionQueue, Notifier>;
 public:
     ~ContextPort() noexcept = default;
     ContextPort() = delete;
-    ContextPort(std::uint32_t domain_id, Notifier & notifier) noexcept :
-        m_submission_port(m_submission_queue, domain_id, notifier), m_executor(m_execution_queue) {}
+    explicit ContextPort(Notifier & notifier) noexcept :
+        m_notifier_p(&notifier), m_executor(m_execution_queue) {}
     ContextPort(const ContextPort &) = delete;
     ContextPort(ContextPort &&) = delete;
     ContextPort & operator=(const ContextPort &) = delete;
     ContextPort & operator=(ContextPort &&) = delete;
 public:
-    Port & getSubmissionPort() noexcept { return m_submission_port; }
+    std::error_code submit(DispatchRequest & request) noexcept
+    {
+        const auto error = m_submission_queue.tryEnqueue(request);
+        if (not error) { m_notifier_p->notifyAll(); }
+        return error;
+    }
     DispatchRequest * tryPopSubmission() noexcept { return m_submission_queue.tryPop(); }
     bool areSubmissionsEmpty() const noexcept { return m_submission_queue.isEmpty(); }
     void closeSubmissions() noexcept { m_submission_queue.close(); }
@@ -46,7 +48,7 @@ public:
 private:
     SubmissionQueue m_submission_queue;
     ExecutionQueue m_execution_queue;
-    Port m_submission_port;
+    Notifier * m_notifier_p;
     BasicExecutor<ExecutionQueue> m_executor;
 };
 

@@ -1,7 +1,6 @@
 #pragma once
 
 #include <async/core/declarations/concepts.h>
-#include <async/core/scheduling/declarations/dispatch_structs.h>
 #include <async/protocol.h>
 
 #include <concepts>
@@ -32,15 +31,11 @@ concept record_submitter_c = work_record_c<Record> and
         { submitter.submit(record) } noexcept -> std::same_as<std::error_code>;
     };
 
-template <typename Submitter, typename Record>
-concept indexed_record_submitter_c = work_record_c<Record> and
-    requires(Submitter & submitter, std::uint32_t target_index, Record & record) {
-        { submitter.submit(target_index, record) } noexcept -> std::same_as<std::error_code>;
-    };
-
 template <typename Record>
-concept dispatch_record_c = work_record_c<Record> and requires(Record & record) {
-    { record.getDispatchRequest() } noexcept -> std::same_as<DispatchRequest &>;
+concept dispatch_record_c = work_record_c<Record> and requires(
+    Record & record, const Record & const_record, std::uint32_t target_index) {
+    { const_record.getTargetIndex() } noexcept -> std::same_as<std::uint32_t>;
+    { record.setTargetIndex(target_index) } noexcept -> std::same_as<void>;
 };
 
 template <typename Executor>

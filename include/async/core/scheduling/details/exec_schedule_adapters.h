@@ -1,7 +1,7 @@
 #pragma once
 
 #include <async/core/queue/ExecutionNode.h>
-#include <async/core/scheduling/declarations/dispatch_structs.h>
+#include <async/core/scheduling/DispatchRequest.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/execution/operations.h>
 #include <async/execution/queries.h>
@@ -41,18 +41,16 @@ public:
     ScheduleOperation(Handle handle, Receiver receiver) noexcept(
         std::is_nothrow_copy_constructible_v<Handle> and std::is_nothrow_move_constructible_v<Receiver>) :
         m_handle(handle), m_receiver(std::move(receiver)),
-        m_node(this, &execute, &cancel), m_request {&m_node} {}
+        m_node(this, &execute, &cancel), m_request {m_node} {}
     ScheduleOperation(const ScheduleOperation &) = delete;
     ScheduleOperation & operator=(const ScheduleOperation &) = delete;
     ScheduleOperation(ScheduleOperation &&) = delete;
     ScheduleOperation & operator=(ScheduleOperation &&) = delete;
 public:
-    queue::ExecutionNode & getExecutable() noexcept { return m_node; }
-    DispatchRequest & getDispatchRequest() noexcept { return m_request; }
     void start() & noexcept
-    requires record_submitter_c<Handle, ScheduleOperation>
+    requires record_submitter_c<Handle, DispatchRequest>
     {
-        if (m_handle.submit(*this)) { exec::set_stopped(std::move(m_receiver)); }
+        if (m_handle.submit(m_request)) { exec::set_stopped(std::move(m_receiver)); }
     }
 private:
     Handle m_handle;
@@ -96,7 +94,7 @@ public:
 public:
     Environment get_env() const noexcept { return Environment{m_scheduler}; }
     template <receiver_of_c<ScheduleCompletions> Receiver>
-    requires record_submitter_c<Handle, ScheduleOperation<Handle, Receiver>>
+    requires record_submitter_c<Handle, DispatchRequest>
     ScheduleOperation<Handle, Receiver> connect(Receiver receiver) const
     {
         return ScheduleOperation<Handle, Receiver> {m_scheduler, std::move(receiver)};

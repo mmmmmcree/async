@@ -3,7 +3,7 @@
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>
 #include <async/core/scheduling/dispatcher/selectors/RoundRobinTargetSelector.h>
-#include <async/core/scheduling/declarations/dispatch_structs.h>
+#include <async/core/scheduling/DispatchRequest.h>
 
 #include <algorithm>
 #include <cstddef>

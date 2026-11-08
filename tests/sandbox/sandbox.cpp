@@ -117,13 +117,12 @@ int main()
 
     async::ContextInfo context_info;
     context_info.setWorkerCount(k_worker_count).setDispatcherCount(2);
-    const auto caller_port = context_info.addSubmissionPort();
+    const auto caller_port_token = context_info.addSubmissionPort();
 
     const auto left_token = context_info.addScheduler();
     const auto right_token = context_info.addScheduler();
 
-    const auto [runtime_size_in_bytes, runtime_alignment, workers_size_in_bytes, workers_alignment] =
-        context_info.getStorageRequirements<>();
+    const auto [runtime_size_in_bytes, runtime_alignment, workers_size_in_bytes, workers_alignment] = context_info.getStorageRequirements<>();
     std::vector<std::byte> worker_bytes(workers_size_in_bytes + workers_alignment - 1);
     std::vector<std::byte> runtime_bytes(runtime_size_in_bytes + runtime_alignment - 1);
     std::pmr::monotonic_buffer_resource worker_arena{
@@ -138,7 +137,8 @@ int main()
         return 1;
     }
 
-    const auto owner_scheduler = context.getEventLoopSchedulerHandle();
+    const auto shared_port = context.getSubmissionPort();
+    const auto owner_scheduler = shared_port.getOwnerSchedulerHandle();
 
     Outcome outcome;
 
@@ -148,10 +148,10 @@ int main()
             const auto caller_thread = std::this_thread::get_id();
             outcome.m_caller_thread = caller_thread;
 
-            auto & submissions = context.getSubmissionPort(caller_port);
-            const auto left_scheduler = context.getSchedulerHandle(left_token);
-            const auto right_scheduler = submissions.getSchedulerHandle(right_token);
-            const auto caller_scheduler = context.getPortSchedulerHandle(caller_port);
+            const auto caller_port = context.getSubmissionPort(caller_port_token);
+            const auto left_scheduler = caller_port.getSchedulerHandle(left_token);
+            const auto right_scheduler = caller_port.getSchedulerHandle(right_token);
+            const auto caller_scheduler = shared_port.getPortSchedulerHandle(caller_port_token);
             auto left = ex::schedule(left_scheduler) |
                 ex::then([] {
                     std::this_thread::sleep_for(1s);
@@ -182,7 +182,7 @@ int main()
             while (not caller_completed) {
                 auto elapsed = std::chrono::steady_clock::now() - time;
                 std::cout << "heartbeat: " << heartbeat_count++ << " elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
-                context.pollPortOne(caller_port);
+                context.pollPortOne(caller_port_token);
                 if (not caller_completed) {
                     std::this_thread::sleep_for(100ms);
                 }

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "ContextInfo.h"
+#include "SubmissionPort.h"
 #include <async/core/context/declarations/poll_structs.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/context/details/OwnerThreadState.h>
+#include <async/core/scheduling/details/dispatch_targets.h>
 
 #include <algorithm>
 #include <cassert>
@@ -35,8 +37,9 @@ class BasicContext
 private:
     using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, Executor, VictimSelector, Signal, Notifier>;
     using WorkerPool = WorkerPool<typename SchedulingRuntime::WorkerProgress, ThreadHandle, Signal>;
-    using SchedulerHandle = SchedulerHandle<SchedulingRuntime>;
-    using SubmissionPort = std::remove_reference_t<decltype(std::declval<SchedulingRuntime &>().getSubmissionPort(0))>;
+    using SubmissionPort = ::lcf::async::SubmissionPort<SchedulingRuntime>;
+    using PortSubmitter = std::remove_reference_t<decltype(std::declval<SchedulingRuntime &>().getPort(0))>;
+    using DedicatedSubmissionPort = ::lcf::async::SubmissionPort<PortSubmitter>;
 public:
     BasicContext() = default;
     ~BasicContext() noexcept
@@ -53,13 +56,15 @@ public:
 public:
     [[nodiscard]] std::error_code create(ContextInfo && context_info) noexcept
     {
-        if (m_domain_id != 0) { return std::make_error_code(std::errc::operation_in_progress); }
+        if (m_domain_id != details::k_unbound_domain_id) { return std::make_error_code(std::errc::operation_in_progress); }
         ContextInfo info {std::move(context_info)};
-        if (info.getDomainId() == 0 or info.getDispatcherCount() == 0) { return std::make_error_code(std::errc::invalid_argument); }
+        if (info.getDomainId() == details::k_unbound_domain_id or info.getDispatcherCount() == 0) {
+            return std::make_error_code(std::errc::invalid_argument);
+        }
         try {
             const std::size_t thread_count = info.getWorkerCount();
             typename WorkerPool::WorkerList workers {thread_count, {&info.getWorkerMemoryResource()}};
-            m_scheduling_runtime.create(info.getDomainId(), info.getSchedulerCount(), info.getWorkerCount(),
+            m_scheduling_runtime.create(info.getSchedulerCount(), info.getWorkerCount(),
                 info.getDispatcherCount(), info.getSubmissionPortCount(), info.getRuntimeMemoryResource());
             std::destroy_at(&m_worker_pool);
             std::construct_at(&m_worker_pool, m_scheduling_runtime.getSignal(), std::move(workers));
@@ -78,24 +83,14 @@ public:
         m_scheduler_count = info.getSchedulerCount();
         return {};
     }
-    SchedulerHandle getSchedulerHandle(SchedulerToken token) noexcept
+    SubmissionPort getSubmissionPort() noexcept
+    {
+        return SubmissionPort {m_scheduling_runtime, m_domain_id, m_scheduler_count};
+    }
+    DedicatedSubmissionPort getSubmissionPort(PortToken token) noexcept
     {
         assert(token.getDomainId() == m_domain_id);
-        return SchedulerHandle {m_scheduling_runtime, token};
-    }
-    SchedulerHandle getEventLoopSchedulerHandle() noexcept
-    {
-        return SchedulerHandle {m_scheduling_runtime, m_domain_id, details::k_owner_scheduler_index};
-    }
-    SchedulerHandle getPortSchedulerHandle(PortToken token) noexcept
-    {
-        assert(token.getDomainId() == m_domain_id);
-        return SchedulerHandle {m_scheduling_runtime, m_domain_id, m_scheduler_count + token.getIndex()};
-    }
-    SubmissionPort & getSubmissionPort(PortToken token) noexcept
-    {
-        assert(token.getDomainId() == m_domain_id);
-        return m_scheduling_runtime.getSubmissionPort(token.getIndex());
+        return DedicatedSubmissionPort {m_scheduling_runtime.getPort(token.getIndex()), m_domain_id, m_scheduler_count};
     }
     template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
     void run(Launcher launcher = {})
@@ -162,7 +157,7 @@ private:
     SchedulingRuntime m_scheduling_runtime;
     WorkerPool m_worker_pool {m_scheduling_runtime.getSignal()};
     details::OwnerThreadState m_owner_state;
-    std::uint32_t m_domain_id = 0;
+    std::uint32_t m_domain_id = details::k_unbound_domain_id;
     std::uint32_t m_scheduler_count = 0;
 };
 

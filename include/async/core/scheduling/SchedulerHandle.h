@@ -64,12 +64,17 @@ public:
     ~SchedulerHandle() noexcept = default;
     SchedulerHandle() = delete;
     explicit SchedulerHandle(Submitter & submitter) noexcept :
-        m_submitter_p(&submitter), m_domain_id(0), m_scheduler_index(details::k_owner_scheduler_index) {}
+        m_submitter_p(&submitter),
+        m_domain_id(details::k_unbound_domain_id),
+        m_scheduler_index(details::k_owner_scheduler_index) {}
     SchedulerHandle(Submitter & submitter, SchedulerToken token) noexcept :
-        m_submitter_p(&submitter), m_domain_id(token.getDomainId()),
+        m_submitter_p(&submitter),
+        m_domain_id(token.getDomainId()),
         m_scheduler_index(token.getIndex()) {}
     SchedulerHandle(Submitter & submitter, std::uint32_t domain_id, std::uint32_t target_index) noexcept :
-        m_submitter_p(&submitter), m_domain_id(domain_id), m_scheduler_index(target_index) {}
+        m_submitter_p(&submitter),
+        m_domain_id(domain_id),
+        m_scheduler_index(target_index) {}
     SchedulerHandle(const SchedulerHandle &) noexcept = default;
     SchedulerHandle(SchedulerHandle &&) noexcept = default;
     SchedulerHandle & operator=(const SchedulerHandle &) noexcept = default;
@@ -78,14 +83,11 @@ public:
 public:
     auto schedule() const noexcept;
     template <typename Record>
-    requires record_submitter_c<Submitter, Record> or indexed_record_submitter_c<Submitter, Record>
+    requires record_submitter_c<Submitter, Record>
     std::error_code submit(Record & record) const noexcept
     {
-        if constexpr (indexed_record_submitter_c<Submitter, Record>) {
-            return m_submitter_p->submit(m_scheduler_index, record);
-        } else {
-            return m_submitter_p->submit(record);
-        }
+        if constexpr (dispatch_record_c<Record>) { record.setTargetIndex(m_scheduler_index); }
+        return m_submitter_p->submit(record);
     }
 private:
     Submitter * m_submitter_p;

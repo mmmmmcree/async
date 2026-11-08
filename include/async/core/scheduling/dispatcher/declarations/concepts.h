@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/scheduling/declarations/dispatch_structs.h>
+#include <async/core/scheduling/DispatchRequest.h>
 
 #include <concepts>
 #include <system_error>

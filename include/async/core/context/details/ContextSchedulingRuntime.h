@@ -45,7 +45,6 @@ private:
     using Port = ContextPort<queue_capacity, Notifier>;
     using Dispatcher = ContextDispatcher<ContextSchedulingRuntime, Port>;
     using OwnerQueue = queue::intrusive::mpmc::Queue<>;
-    using SubmissionPort = std::remove_reference_t<decltype(std::declval<Port &>().getSubmissionPort())>;
     using StorageRequirementsResult = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
 private:
     static bool dispatch_requests(std::span<Dispatcher> dispatchers) noexcept
@@ -116,7 +115,7 @@ public:
     ContextSchedulingRuntime & operator=(const ContextSchedulingRuntime &) = delete;
     ContextSchedulingRuntime & operator=(ContextSchedulingRuntime &&) = delete;
 public:
-    void create(std::uint32_t domain_id, std::uint32_t scheduler_count, std::size_t worker_count,
+    void create(std::uint32_t scheduler_count, std::size_t worker_count,
         std::size_t dispatcher_count, std::size_t port_count, std::pmr::memory_resource & resource)
     {
         const auto executor_count = std::max<std::size_t>(worker_count, 1);
@@ -129,7 +128,7 @@ public:
             worker_executors.emplace_back(executor_span, executor_index, m_notifier);
         }
         for (std::size_t port_index = 0; port_index < port_count; ++port_index) {
-            ports.emplace_back(domain_id, m_notifier);
+            ports.emplace_back(m_notifier);
         }
         const auto ports_per_dispatcher = std::max<std::size_t>(
             port_count / dispatcher_count + (port_count % dispatcher_count != 0), 1);
@@ -149,12 +148,9 @@ public:
         m_ports_per_dispatcher = ports_per_dispatcher;
         m_submissions_closed.store(false, std::memory_order_release);
     }
-    template <dispatch_record_c Record>
-    std::error_code submit(std::uint32_t target_index, Record & record) noexcept
+    std::error_code submit(DispatchRequest & request) noexcept
     {
         if (this->areSubmissionsClosed()) { return std::make_error_code(std::errc::operation_canceled); }
-        auto & request = record.getDispatchRequest();
-        request.m_target_index = target_index;
         const auto dispatcher_index = m_next_dispatcher_index.fetch_add(1, std::memory_order_relaxed) % m_dispatchers.size();
         const auto error = m_dispatchers[dispatcher_index].accept(request);
         if (not error) { m_signal.notifyAll(); }
@@ -186,7 +182,7 @@ public:
         this->finishPoll(executed);
         return executed ? PollResult::eExecuted : PollResult::eIdle;
     }
-    SubmissionPort & getSubmissionPort(std::size_t port_index) noexcept { return m_ports[port_index].getSubmissionPort(); }
+    Port & getPort(std::size_t port_index) noexcept { return m_ports[port_index]; }
     void closeSubmissions() noexcept
     {
         m_submissions_closed.store(true, std::memory_order_release);
@@ -221,18 +217,18 @@ private:
         RoundRobinTargetSelector & executor_selector,
         DispatchRequest & request) noexcept
     {
-        const auto target_index = request.m_target_index;
+        const auto target_index = request.getTargetIndex();
         if (target_index == k_owner_scheduler_index) {
-            return m_owner_queue.tryEnqueue(*request.m_executable_p);
+            return m_owner_queue.tryEnqueue(request.getExecutable());
         }
         if (target_index < m_scheduler_count) {
             const auto executor_index = executor_selector.select(m_worker_executors.size());
-            return m_worker_executors[executor_index].tryEnqueue(*request.m_executable_p);
+            return m_worker_executors[executor_index].tryEnqueue(request.getExecutable());
         }
         const auto port_index = target_index - m_scheduler_count;
         const auto port_dispatcher_index = port_index / m_ports_per_dispatcher;
         if (port_dispatcher_index == dispatcher_index) {
-            return m_ports[port_index].tryEnqueueExecution(*request.m_executable_p);
+            return m_ports[port_index].tryEnqueueExecution(request.getExecutable());
         }
         return m_dispatchers[port_dispatcher_index].accept(request);
     }
