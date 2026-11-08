@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/queue/intrusive/ExecutionNode.h>
+#include <async/core/queue/ExecutionNode.h>
 #include <async/core/scheduling/declarations/dispatch_structs.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/execution/operations.h>
@@ -47,17 +47,17 @@ public:
     ScheduleOperation(ScheduleOperation &&) = delete;
     ScheduleOperation & operator=(ScheduleOperation &&) = delete;
 public:
-    queue::intrusive::ExecutionNode & getExecutable() noexcept { return m_node; }
+    queue::ExecutionNode & getExecutable() noexcept { return m_node; }
     DispatchRequest & getDispatchRequest() noexcept { return m_request; }
     void start() & noexcept
     requires record_submitter_c<Handle, ScheduleOperation>
     {
-        if (m_handle.tryEnqueue(*this)) { exec::set_stopped(std::move(m_receiver)); }
+        if (m_handle.submit(*this)) { exec::set_stopped(std::move(m_receiver)); }
     }
 private:
     Handle m_handle;
     Receiver m_receiver;
-    queue::intrusive::ExecutionNode m_node;
+    queue::ExecutionNode m_node;
     DispatchRequest m_request;
 };
 

@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/queue/intrusive/ExecutionNode.h>
+#include <async/core/queue/ExecutionNode.h>
 #include <async/core/queue/intrusive/spmc/queue_declarations.h>
 
 #include <atomic>

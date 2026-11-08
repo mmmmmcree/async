@@ -29,19 +29,19 @@ concept receiver_of_c = protocols::receiver_of<Receiver, Completions>;
 template <typename Submitter, typename Record>
 concept record_submitter_c = work_record_c<Record> and
     requires(Submitter & submitter, Record & record) {
-        { submitter.tryEnqueue(record) } noexcept -> std::same_as<std::error_code>;
+        { submitter.submit(record) } noexcept -> std::same_as<std::error_code>;
+    };
+
+template <typename Submitter, typename Record>
+concept indexed_record_submitter_c = work_record_c<Record> and
+    requires(Submitter & submitter, std::uint32_t target_index, Record & record) {
+        { submitter.submit(target_index, record) } noexcept -> std::same_as<std::error_code>;
     };
 
 template <typename Record>
 concept dispatch_record_c = work_record_c<Record> and requires(Record & record) {
     { record.getDispatchRequest() } noexcept -> std::same_as<DispatchRequest &>;
 };
-
-template <typename Submitter, typename Record>
-concept indexed_record_submitter_c = work_record_c<Record> and
-    requires(Submitter & submitter, std::uint32_t target_index, Record & record) {
-        { submitter.tryEnqueue(target_index, record) } noexcept -> std::same_as<std::error_code>;
-    };
 
 template <typename Executor>
 concept work_executor_c = requires(Executor & executor, const Executor & const_executor) {

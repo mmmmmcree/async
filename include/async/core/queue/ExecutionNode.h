@@ -5,7 +5,7 @@
 #include <atomic>
 
 LCF_ASYNC_EXPORT
-namespace lcf::async::queue::intrusive {
+namespace lcf::async::queue {
 
 class ExecutionNode
 {
@@ -52,4 +52,4 @@ private:
     bool m_queued = false;
 };
 
-} // namespace lcf::async::queue::intrusive
+} // namespace lcf::async::queue

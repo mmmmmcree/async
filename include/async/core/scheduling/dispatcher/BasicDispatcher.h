@@ -42,7 +42,7 @@ public:
             }
             m_retry_pending = not m_retry_pending;
             request_p->setNext(nullptr);
-            const auto error = m_router.tryEnqueue(*request_p);
+            const auto error = m_router.route(*request_p);
             // Publication may destroy the operation. Do not touch request on success.
             progressed |= received or not error;
             if (error) {

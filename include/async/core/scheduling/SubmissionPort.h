@@ -31,7 +31,7 @@ public:
         return SchedulerHandle{*this, token};
     }
     template <dispatch_record_c Record>
-    std::error_code tryEnqueue(std::uint32_t target_index, Record & record) noexcept
+    std::error_code submit(std::uint32_t target_index, Record & record) noexcept
     {
         auto & request = record.getDispatchRequest();
         request.m_target_index = target_index;

@@ -79,12 +79,12 @@ public:
     auto schedule() const noexcept;
     template <typename Record>
     requires record_submitter_c<Submitter, Record> or indexed_record_submitter_c<Submitter, Record>
-    std::error_code tryEnqueue(Record & record) const noexcept
+    std::error_code submit(Record & record) const noexcept
     {
         if constexpr (indexed_record_submitter_c<Submitter, Record>) {
-            return m_submitter_p->tryEnqueue(m_scheduler_index, record);
+            return m_submitter_p->submit(m_scheduler_index, record);
         } else {
-            return m_submitter_p->tryEnqueue(record);
+            return m_submitter_p->submit(record);
         }
     }
 private:

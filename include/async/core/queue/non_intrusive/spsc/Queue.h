@@ -52,10 +52,7 @@ public:
     }
     static constexpr std::size_t capacity() noexcept { return queue_capacity; }
 private:
-    static constexpr std::size_t advance(std::size_t index) noexcept
-    {
-        return index == queue_capacity ? 0 : index + 1;
-    }
+    static constexpr std::size_t advance(std::size_t index) noexcept { return index == queue_capacity ? 0 : index + 1; }
 private:
     std::array<Value *, queue_capacity + 1> m_slots{};
     alignas(64) std::atomic<std::size_t> m_write{0};

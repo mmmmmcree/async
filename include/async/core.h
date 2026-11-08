@@ -6,7 +6,7 @@
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/notify/NoopNotifier.h>
 #include <async/core/queue/declarations/concepts.h>
-#include <async/core/queue/intrusive/ExecutionNode.h>
+#include <async/core/queue/ExecutionNode.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/queue/intrusive/spmc/Queue.h>
 #include <async/core/queue/non_intrusive/spsc/Queue.h>

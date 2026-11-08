@@ -39,10 +39,52 @@ requires (queue_capacity > 0) and std::is_nothrow_default_constructible_v<Signal
     and notify::signal_notifier_c<Notifier, Signal>
 class ContextSchedulingRuntime
 {
+    template <typename> friend class ContextTargetRouter;
     using Executor = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier>;
     using Port = ContextPort<queue_capacity, Notifier>;
     using Dispatcher = ContextDispatcher<ContextSchedulingRuntime, Port>;
     using OwnerQueue = queue::intrusive::mpmc::Queue<>;
+private:
+    static bool dispatch_requests(std::span<Dispatcher> dispatchers) noexcept
+    {
+        bool dispatched = false;
+        for (auto & dispatcher : dispatchers) { dispatched |= dispatcher.dispatch(); }
+        return dispatched;
+    }
+public:
+    static std::expected<std::pair<std::size_t, std::size_t>, std::error_code> calc_storage_requirements(
+        std::size_t worker_count, std::size_t dispatcher_count, std::size_t port_count) noexcept
+    {
+        struct StorageSegment
+        {
+            std::size_t m_count;
+            std::size_t m_element_size;
+            std::size_t m_alignment;
+        };
+        const auto max_size = std::numeric_limits<std::size_t>::max();
+        const auto executor_count = std::max<std::size_t>(worker_count, 1);
+        const auto executor_view_count = executor_count + 1;
+        bool size_overflow = executor_count == max_size;
+        const std::array<StorageSegment, 4> segments {{
+            {executor_count, sizeof(Executor), alignof(Executor)},
+            {port_count, sizeof(Port), alignof(Port)},
+            {dispatcher_count, sizeof(Dispatcher), alignof(Dispatcher)},
+            {executor_view_count, sizeof(ExecutorView), alignof(ExecutorView)}
+        }};
+        std::size_t size_in_bytes = 0;
+        std::size_t storage_alignment = 1;
+        for (const auto & [count, element_size, alignment] : segments) {
+            const auto padding = (alignment - size_in_bytes % alignment) % alignment;
+            const auto padded_size = size_in_bytes + padding;
+            const bool padding_overflow = size_in_bytes > max_size - padding;
+            const bool segment_overflow = count > (max_size - padded_size) / element_size;
+            size_overflow |= padding_overflow or segment_overflow;
+            size_in_bytes = padded_size + count * element_size;
+            storage_alignment = std::max(storage_alignment, alignment);
+        }
+        if (size_overflow) { return std::unexpected {std::make_error_code(std::errc::value_too_large)}; }
+        return std::pair {size_in_bytes, storage_alignment};
+    }
 public:
     class WorkerProgress
     {
@@ -58,6 +100,7 @@ public:
     private:
         WorkerProgress(ContextSchedulingRuntime & runtime, Executor & executor, std::span<Dispatcher> dispatchers) noexcept :
             m_runtime_p(&runtime), m_executor_p(&executor), m_dispatchers(dispatchers) {}
+    private:
         ContextSchedulingRuntime * m_runtime_p;
         Executor * m_executor_p;
         std::span<Dispatcher> m_dispatchers;
@@ -103,47 +146,14 @@ public:
         m_ports_per_dispatcher = ports_per_dispatcher;
         m_submissions_closed.store(false, std::memory_order_release);
     }
-    static std::expected<std::pair<std::size_t, std::size_t>, std::error_code> calc_storage_requirements(
-        std::size_t worker_count, std::size_t dispatcher_count, std::size_t port_count) noexcept
-    {
-        struct StorageSegment
-        {
-            std::size_t m_count;
-            std::size_t m_element_size;
-            std::size_t m_alignment;
-        };
-        const auto max_size = std::numeric_limits<std::size_t>::max();
-        const auto executor_count = std::max<std::size_t>(worker_count, 1);
-        const auto executor_view_count = executor_count + 1;
-        bool size_overflow = executor_count == max_size;
-        const std::array<StorageSegment, 4> segments {{
-            {executor_count, sizeof(Executor), alignof(Executor)},
-            {port_count, sizeof(Port), alignof(Port)},
-            {dispatcher_count, sizeof(Dispatcher), alignof(Dispatcher)},
-            {executor_view_count, sizeof(ExecutorView), alignof(ExecutorView)}
-        }};
-        std::size_t size_in_bytes = 0;
-        std::size_t storage_alignment = 1;
-        for (const auto & [count, element_size, alignment] : segments) {
-            const auto padding = (alignment - size_in_bytes % alignment) % alignment;
-            const auto padded_size = size_in_bytes + padding;
-            const bool padding_overflow = size_in_bytes > max_size - padding;
-            const bool segment_overflow = count > (max_size - padded_size) / element_size;
-            size_overflow |= padding_overflow or segment_overflow;
-            size_in_bytes = padded_size + count * element_size;
-            storage_alignment = std::max(storage_alignment, alignment);
-        }
-        if (size_overflow) { return std::unexpected {std::make_error_code(std::errc::value_too_large)}; }
-        return std::pair {size_in_bytes, storage_alignment};
-    }
     template <dispatch_record_c Record>
-    std::error_code tryEnqueue(std::uint32_t target_index, Record & record) noexcept
+    std::error_code submit(std::uint32_t target_index, Record & record) noexcept
     {
         if (this->areSubmissionsClosed()) { return std::make_error_code(std::errc::operation_canceled); }
         auto & request = record.getDispatchRequest();
         request.m_target_index = target_index;
         const auto dispatcher_index = m_next_dispatcher_index.fetch_add(1, std::memory_order_relaxed) % m_dispatchers.size();
-        const auto error = m_dispatchers[dispatcher_index].tryEnqueue(request);
+        const auto error = m_dispatchers[dispatcher_index].accept(request);
         if (not error) { m_signal.notifyAll(); }
         return error;
     }
@@ -181,7 +191,6 @@ public:
         m_signal.notifyAll();
     }
     bool areSubmissionsClosed() const noexcept { return m_submissions_closed.load(std::memory_order_acquire); }
-    // All drivers must have stopped; completion may destroy the borrowed operation.
     void cancelPending() noexcept
     {
         std::ranges::for_each(m_dispatchers, &Dispatcher::cancelPending);
@@ -204,9 +213,9 @@ public:
     }
     Signal & getSignal() noexcept { return m_signal; }
 private:
-    template <typename> friend class ContextTargetRouter;
-
-    std::error_code tryRoute(std::size_t dispatcher_index, RoundRobinTargetSelector & executor_selector,
+    std::error_code tryRoute(
+        std::size_t dispatcher_index,
+        RoundRobinTargetSelector & executor_selector,
         DispatchRequest & request) noexcept
     {
         const auto target_index = request.m_target_index;
@@ -222,13 +231,7 @@ private:
         if (port_dispatcher_index == dispatcher_index) {
             return m_ports[port_index].tryEnqueueExecution(*request.m_executable_p);
         }
-        return m_dispatchers[port_dispatcher_index].tryEnqueue(request);
-    }
-    static bool dispatch_requests(std::span<Dispatcher> dispatchers) noexcept
-    {
-        bool dispatched = false;
-        for (auto & dispatcher : dispatchers) { dispatched |= dispatcher.dispatch(); }
-        return dispatched;
+        return m_dispatchers[port_dispatcher_index].accept(request);
     }
     bool pollWorker(Executor & executor, std::span<Dispatcher> dispatchers) noexcept
     {
@@ -271,7 +274,7 @@ private:
 };
 
 template <typename SchedulingRuntime>
-std::error_code ContextTargetRouter<SchedulingRuntime>::tryEnqueue(DispatchRequest & request) noexcept
+std::error_code ContextTargetRouter<SchedulingRuntime>::route(DispatchRequest & request) noexcept
 {
     return m_runtime_p->tryRoute(m_dispatcher_index, m_executor_selector, request);
 }

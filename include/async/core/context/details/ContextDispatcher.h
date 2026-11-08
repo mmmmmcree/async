@@ -25,7 +25,7 @@ public:
     ContextTargetRouter(ContextTargetRouter &&) noexcept = default;
     ContextTargetRouter & operator=(const ContextTargetRouter &) noexcept = default;
     ContextTargetRouter & operator=(ContextTargetRouter &&) noexcept = default;
-    std::error_code tryEnqueue(DispatchRequest & request) noexcept;
+    std::error_code route(DispatchRequest & request) noexcept;
 private:
     SchedulingRuntime * m_runtime_p;
     std::size_t m_dispatcher_index;
@@ -77,7 +77,7 @@ public:
     ContextDispatcher(ContextDispatcher &&) = delete;
     ContextDispatcher & operator=(const ContextDispatcher &) = delete;
     ContextDispatcher & operator=(ContextDispatcher &&) = delete;
-    std::error_code tryEnqueue(DispatchRequest & request) noexcept { return m_ingress.tryEnqueue(request); }
+    std::error_code accept(DispatchRequest & request) noexcept { return m_ingress.tryEnqueue(request); }
     bool dispatch() noexcept { return m_dispatcher.dispatch(); }
     void cancelPending() noexcept { m_dispatcher.cancelPending(); }
     bool isEmpty() const noexcept { return m_dispatcher.isEmpty(); }

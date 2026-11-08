@@ -16,7 +16,7 @@ concept dispatch_source_c = requires(Source & source, const Source & const_sourc
 
 template <typename Router>
 concept dispatch_router_c = requires(Router & router, DispatchRequest & request) {
-    { router.tryEnqueue(request) } noexcept -> std::same_as<std::error_code>;
+    { router.route(request) } noexcept -> std::same_as<std::error_code>;
 };
 
 } // namespace lcf::async
