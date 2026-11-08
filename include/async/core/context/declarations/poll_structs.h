@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/config/macros.h>
+#include <async/core/context/declarations/enums.h>
 
 #include <chrono>
 #include <cstddef>
@@ -17,10 +18,13 @@ struct PollBudget
 
 struct PollReport
 {
+    constexpr operator PollResult() const noexcept { return m_result; }
+
     std::size_t m_records = 0;
-    std::chrono::steady_clock::duration m_elapsed{};
+    std::chrono::steady_clock::duration m_elapsed {};
     bool m_count_limit_reached = false;
     bool m_time_limit_reached = false;
+    PollResult m_result = PollResult::eIdle;
 };
 
 } // namespace lcf::async

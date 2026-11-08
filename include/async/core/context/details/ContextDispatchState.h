@@ -1,6 +1,6 @@
 #pragma once
 
-#include <async/core/context/details/ContextTopologyStates.h>
+#include <async/core/context/details/ContextExecutionStates.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>
 #include <async/core/scheduling/dispatcher/selectors/RoundRobinTargetSelector.h>
@@ -13,32 +13,40 @@
 
 namespace lcf::async::details {
 
-template <typename Topology>
-class ContextTopologyRouter
+template <typename SchedulingRuntime>
+class ContextTargetRouter
 {
 public:
-    ~ContextTopologyRouter() noexcept = default;
-    ContextTopologyRouter() = delete;
-    ContextTopologyRouter(Topology & topology, std::size_t dispatcher_index) noexcept :
-        m_topology_p(&topology), m_dispatcher_index(dispatcher_index), m_selector(dispatcher_index) {}
+    ~ContextTargetRouter() noexcept = default;
+    ContextTargetRouter() = delete;
+    ContextTargetRouter(SchedulingRuntime & runtime, std::size_t dispatcher_index) noexcept :
+        m_runtime_p(&runtime), m_dispatcher_index(dispatcher_index), m_selector(dispatcher_index) {}
+    ContextTargetRouter(const ContextTargetRouter &) noexcept = default;
+    ContextTargetRouter(ContextTargetRouter &&) noexcept = default;
+    ContextTargetRouter & operator=(const ContextTargetRouter &) noexcept = default;
+    ContextTargetRouter & operator=(ContextTargetRouter &&) noexcept = default;
     std::error_code tryEnqueue(DispatchRequest & request) noexcept;
 private:
-    Topology * m_topology_p;
+    SchedulingRuntime * m_runtime_p;
     std::size_t m_dispatcher_index;
     RoundRobinTargetSelector m_selector;
 };
 
-template <typename Topology, typename PortState>
+template <typename SchedulingRuntime, typename PortState>
 class DispatchState
 {
     using Ingress = queue::intrusive::mpmc::Queue<queue::intrusive::mpmc::AlgorithmTag::eMutex, DispatchRequest>;
-    using Router = ContextTopologyRouter<Topology>;
+    using Router = ContextTargetRouter<SchedulingRuntime>;
     using PortStateSpan = std::span<PortState>;
     struct Inputs
     {
         ~Inputs() noexcept = default;
         Inputs() = delete;
         Inputs(Ingress & ingress, PortStateSpan ports) noexcept : m_ingress_p(&ingress), m_ports(ports) {}
+        Inputs(const Inputs &) noexcept = default;
+        Inputs(Inputs &&) noexcept = default;
+        Inputs & operator=(const Inputs &) noexcept = default;
+        Inputs & operator=(Inputs &&) noexcept = default;
         DispatchRequest * tryPop() noexcept
         {
             if (auto * request_p = m_ingress_p->tryPop()) { return request_p; }
@@ -60,8 +68,12 @@ class DispatchState
 public:
     ~DispatchState() noexcept = default;
     DispatchState() = delete;
-    DispatchState(Topology & topology, std::size_t index, PortStateSpan ports) :
-        m_dispatcher(Inputs{m_ingress, ports}, Router{topology, index}) {}
+    DispatchState(SchedulingRuntime & runtime, std::size_t index, PortStateSpan ports) :
+        m_dispatcher(Inputs {m_ingress, ports}, Router {runtime, index}) {}
+    DispatchState(const DispatchState &) = delete;
+    DispatchState(DispatchState &&) = delete;
+    DispatchState & operator=(const DispatchState &) = delete;
+    DispatchState & operator=(DispatchState &&) = delete;
     std::error_code tryEnqueue(DispatchRequest & request) noexcept { return m_ingress.tryEnqueue(request); }
     bool dispatch() noexcept { return m_dispatcher.dispatch(); }
     bool isEmpty() const noexcept { return m_dispatcher.isEmpty(); }

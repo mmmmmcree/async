@@ -3,6 +3,8 @@
 #include "BasicWorker.h"
 #include <async/core/worker/details/WorkerControl.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
+#include <async/core/notify/AtomicSequenceSignal.h>
+#include <async/core/notify/declarations/concepts.h>
 
 #include <algorithm>
 #include <thread>
@@ -11,15 +13,17 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <worker_progress_c Progress, join_handle_c ThreadHandle = std::thread>
+template <worker_progress_c Progress, join_handle_c ThreadHandle = std::thread,
+    notify::signal_c Signal = notify::AtomicSequenceSignal>
 class WorkerPool
 {
 public:
-    using Worker = BasicWorker<Progress, details::WorkerControl, ThreadHandle>;
+    using Worker = BasicWorker<Progress, details::WorkerControl<Signal>, ThreadHandle>;
     using WorkerList = details::FixedCapacityVector<Worker>;
 public:
-    explicit WorkerPool(details::WorkSignal & signal) noexcept : m_control(signal) {}
-    WorkerPool(details::WorkSignal & signal, WorkerList workers) noexcept :
+    WorkerPool() = delete;
+    explicit WorkerPool(Signal & signal) noexcept : m_control(signal) {}
+    WorkerPool(Signal & signal, WorkerList workers) noexcept :
         m_control(signal), m_workers(std::move(workers)) {}
     ~WorkerPool() noexcept { this->requestStop(); this->join(); }
     WorkerPool(const WorkerPool &) = delete;
@@ -52,8 +56,9 @@ public:
         m_running = false;
     }
     bool isRunning() const noexcept { return m_running; }
+    bool isStopRequested() const noexcept { return m_control.isStopRequested(); }
 private:
-    details::WorkerControl m_control;
+    details::WorkerControl<Signal> m_control;
     WorkerList m_workers;
     bool m_started = false;
     bool m_running = false;

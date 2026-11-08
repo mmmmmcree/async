@@ -37,7 +37,7 @@ private:
     static void execute_stub(void *) noexcept {}
 public:
     ~Queue() noexcept = default;
-    Queue() noexcept : m_stub{nullptr, &execute_stub}, m_head_p{&m_stub}, m_tail_p(&m_stub) {}
+    Queue() noexcept : m_stub {nullptr, &execute_stub}, m_head_p {&m_stub}, m_tail_p(&m_stub) {}
     Queue(const Queue &) = delete;
     Queue(Queue &&) = delete;
     Queue & operator=(const Queue &) = delete;

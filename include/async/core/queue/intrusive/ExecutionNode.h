@@ -37,7 +37,7 @@ public:
         execute_f(state_p);
     }
 private:
-    std::atomic<ExecutionNode *> m_next_p{nullptr};
+    std::atomic<ExecutionNode *> m_next_p {nullptr};
     void * m_state_p;
     ExecuteFunction m_execute_f;
     bool m_queued = false;

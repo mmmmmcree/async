@@ -1,6 +1,8 @@
 #pragma once
 
-#include <async/core/context/details/ContextTopology.h>
+#include <async/core/context/details/ContextSchedulingRuntime.h>
+#include <async/core/notify/AtomicSequenceSignal.h>
+#include <async/core/notify/SignalNotifier.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/worker/WorkerPool.h>
 
@@ -10,6 +12,7 @@
 #include <limits>
 #include <memory_resource>
 #include <thread>
+#include <type_traits>
 #include <utility>
 
 LCF_ASYNC_EXPORT
@@ -48,7 +51,7 @@ public:
     ContextInfo & operator=(ContextInfo &&) = delete;
 public:
     SchedulerToken addScheduler() noexcept { return SchedulerToken{m_domain_id, m_scheduler_count++}; }
-    std::uint32_t addSubmissionPort() noexcept { return m_port_count++; }
+    PortToken addSubmissionPort() noexcept { return PortToken{m_domain_id, m_port_count++}; }
     Self & setWorkerCount(std::uint32_t count) noexcept { m_worker_count = count; return *this; }
     Self & setDispatcherCount(std::uint32_t count) noexcept { m_dispatcher_count = count; return *this; }
     Self & setMemoryResources(
@@ -64,14 +67,16 @@ public:
     template <join_handle_c ThreadHandle = std::thread, std::size_t queue_capacity = 256,
         template <typename, typename, typename, typename> class CpuExecutor = WorkStealingExecutor,
         template <typename> class VictimSelector = RoundRobinVictimSelector,
-        typename Notifier = details::ContextTopologyNotifier>
-    requires (queue_capacity > 0)
+        notify::signal_c Signal = notify::AtomicSequenceSignal,
+        typename Notifier = notify::SignalNotifier<Signal>>
+    requires (queue_capacity > 0) and std::is_nothrow_default_constructible_v<Signal>
+        and notify::signal_notifier_c<Notifier, Signal>
     ContextStorageRequirements getStorageRequirements() const noexcept
     {
-        using Topology = details::ContextTopology<queue_capacity, CpuExecutor, VictimSelector, Notifier>;
-        using Worker = typename WorkerPool<typename Topology::Progress, ThreadHandle>::Worker;
+        using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, CpuExecutor, VictimSelector, Signal, Notifier>;
+        using Worker = typename WorkerPool<typename SchedulingRuntime::Progress, ThreadHandle, Signal>::Worker;
         const auto max_size = std::numeric_limits<std::size_t>::max();
-        const auto expected_runtime_requirements = Topology::calc_runtime_storage_requirements(m_worker_count, m_dispatcher_count, m_port_count);
+        const auto expected_runtime_requirements = SchedulingRuntime::calc_runtime_storage_requirements(m_worker_count, m_dispatcher_count, m_port_count);
         const bool is_worker_size_overflow = m_worker_count > max_size / sizeof(Worker);
         const bool is_runtime_size_overflow = not expected_runtime_requirements;
         if (is_runtime_size_overflow or is_worker_size_overflow) { std::terminate(); }

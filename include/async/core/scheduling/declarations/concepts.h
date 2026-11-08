@@ -26,11 +26,6 @@ concept operation_state_c = protocols::operation_state<Type>;
 template <typename Receiver, typename Completions>
 concept receiver_of_c = protocols::receiver_of<Receiver, Completions>;
 
-template <typename Notifier>
-concept work_notifier_c = requires(Notifier & notifier) {
-    { notifier.notifyOne() } noexcept -> std::same_as<void>;
-};
-
 template <typename Submitter, typename Record>
 concept record_submitter_c = work_record_c<Record> and
     requires(Submitter & submitter, Record & record) {

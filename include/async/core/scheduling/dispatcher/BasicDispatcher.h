@@ -17,6 +17,8 @@ template <dispatch_source_c Inputs, dispatch_router_c Router>
 class BasicDispatcher
 {
 public:
+    ~BasicDispatcher() noexcept = default;
+    BasicDispatcher() = delete;
     BasicDispatcher(Inputs inputs, Router router) noexcept(
         std::is_nothrow_move_constructible_v<Inputs> and std::is_nothrow_move_constructible_v<Router>) :
         m_inputs(std::move(inputs)), m_router(std::move(router)) {}

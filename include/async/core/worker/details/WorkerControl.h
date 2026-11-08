@@ -1,20 +1,21 @@
 #pragma once
 
-#include "WorkSignal.h"
+#include <async/core/notify/AtomicSequenceSignal.h>
+#include <async/core/notify/declarations/concepts.h>
 
 #include <atomic>
-#include <cstdint>
 
 namespace lcf::async::details {
 
+template <notify::signal_c Signal = notify::AtomicSequenceSignal>
 class WorkerControl
 {
 public:
-    using Observation = std::uint64_t;
+    using Observation = typename Signal::Observation;
 public:
     ~WorkerControl() noexcept = default;
     WorkerControl() = delete;
-    explicit WorkerControl(WorkSignal & signal) noexcept : m_signal_p(&signal) {}
+    explicit WorkerControl(Signal & signal) noexcept : m_signal_p(&signal) {}
     WorkerControl(const WorkerControl &) = delete;
     WorkerControl(WorkerControl &&) = delete;
     WorkerControl & operator=(const WorkerControl &) = delete;
@@ -35,7 +36,7 @@ public:
         m_signal_p->notifyAll();
     }
 private:
-    WorkSignal * m_signal_p;
+    Signal * m_signal_p;
     std::atomic<bool> m_stop_requested{false};
     std::atomic<bool> m_closed{false};
 };

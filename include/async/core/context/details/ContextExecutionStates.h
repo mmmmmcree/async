@@ -9,7 +9,8 @@
 #include <async/core/scheduling/executor/BasicExecutor.h>
 #include <async/core/scheduling/executor/WorkStealingExecutor.h>
 #include <async/core/scheduling/executor/selectors/RoundRobinVictimSelector.h>
-#include <async/core/worker/details/WorkSignal.h>
+#include <async/core/notify/SignalNotifier.h>
+#include <async/core/notify/declarations/concepts.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -21,21 +22,11 @@ namespace lcf::async::details {
 
 using ContextOwnerQueue = queue::intrusive::mpmc::Queue<>;
 
-class ContextTopologyNotifier
-{
-public:
-    explicit ContextTopologyNotifier(WorkSignal & signal) noexcept : m_signal_p(&signal) {}
-    ~ContextTopologyNotifier() noexcept = default;
-    void operator()() const noexcept { m_signal_p->notifyAll(); }
-private:
-    WorkSignal * m_signal_p;
-};
-
 template <std::size_t queue_capacity,
     template <typename, typename, typename, typename> class CpuExecutor = WorkStealingExecutor,
     template <typename> class VictimSelector = RoundRobinVictimSelector,
-    typename Notifier = ContextTopologyNotifier>
-requires (queue_capacity > 0)
+    typename Notifier = notify::SignalNotifier<>>
+requires (queue_capacity > 0) and notify::notifier_c<Notifier>
 class ContextCpuState
 {
 public:
@@ -52,10 +43,14 @@ private:
     using Selector = VictimSelector<Self>;
     using Executor = CpuExecutor<Inbox, ReadyQueue, Selector, Notifier>;
 public:
-    ContextCpuState(std::span<Self> cpus, std::size_t index, Notifier notify) :
-        m_executor(m_inbox, m_ready, Selector{cpus, index}, std::move(notify)) {}
+    ContextCpuState(std::span<Self> cpus, std::size_t index, Notifier notifier) :
+        m_executor(m_inbox, m_ready, Selector{cpus, index}, std::move(notifier)) {}
     ~ContextCpuState() noexcept = default;
     ContextCpuState() = delete;
+    ContextCpuState(const ContextCpuState &) = delete;
+    ContextCpuState(ContextCpuState &&) = delete;
+    ContextCpuState & operator=(const ContextCpuState &) = delete;
+    ContextCpuState & operator=(ContextCpuState &&) = delete;
     std::error_code tryEnqueue(Value & executable) noexcept { return m_inbox.tryEnqueue(executable); }
     bool executeOne() noexcept { return m_executor.executeOne(); }
     bool isEmpty() const noexcept { return m_inbox.isEmpty() and m_ready.isEmpty(); }
@@ -65,35 +60,38 @@ private:
     Executor m_executor;
 };
 
-template <std::size_t queue_capacity, typename Notifier = ContextTopologyNotifier>
-requires (queue_capacity > 0)
+template <std::size_t queue_capacity, typename Notifier = notify::SignalNotifier<>>
+requires (queue_capacity > 0) and notify::notifier_c<Notifier>
 class ContextPortState
 {
     using Node = queue::intrusive::ExecutionNode;
     using SubmitQueue = queue::non_intrusive::spsc::Queue<DispatchRequest, queue_capacity>;
-    using ReturnQueue = queue::non_intrusive::spsc::Queue<Node, queue_capacity>;
+    using ExecutionQueue = queue::non_intrusive::spsc::Queue<Node, queue_capacity>;
     using Port = SubmissionPort<SubmitQueue, Notifier>;
 public:
     ~ContextPortState() noexcept = default;
     ContextPortState() = delete;
     ContextPortState(
         std::uint32_t domain_id,
-        std::uint32_t scheduler_count,
-        Notifier & notify) noexcept :
-        m_port(m_submissions, domain_id, scheduler_count, notify),
-        m_executor(m_returns) {}
+        Notifier & notifier) noexcept :
+        m_port(m_submissions, domain_id, notifier),
+        m_executor(m_executions) {}
+    ContextPortState(const ContextPortState &) = delete;
+    ContextPortState(ContextPortState &&) = delete;
+    ContextPortState & operator=(const ContextPortState &) = delete;
+    ContextPortState & operator=(ContextPortState &&) = delete;
     auto & getPort() noexcept { return m_port; }
     DispatchRequest * tryPopSubmission() noexcept { return m_submissions.tryPop(); }
     bool areSubmissionsEmpty() const noexcept { return m_submissions.isEmpty(); }
-    std::error_code tryEnqueueReturn(Node & executable) noexcept { return m_returns.tryEnqueue(executable); }
-    bool executeReturn() noexcept { return m_executor.executeOne(); }
-    bool isReturnEmpty() const noexcept { return m_returns.isEmpty(); }
-    void close() noexcept { m_submissions.close(); }
+    std::error_code tryEnqueueExecution(Node & executable) noexcept { return m_executions.tryEnqueue(executable); }
+    bool executeOne() noexcept { return m_executor.executeOne(); }
+    bool isExecutionEmpty() const noexcept { return m_executions.isEmpty(); }
+    void closeSubmissions() noexcept { m_submissions.close(); }
 private:
     SubmitQueue m_submissions;
-    ReturnQueue m_returns;
+    ExecutionQueue m_executions;
     Port m_port;
-    BasicExecutor<ReturnQueue> m_executor;
+    BasicExecutor<ExecutionQueue> m_executor;
 };
 
 } // namespace lcf::async::details

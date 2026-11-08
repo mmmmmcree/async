@@ -1,6 +1,10 @@
 #pragma once
 
 #include <async/core/declarations/concepts.h>
+#include <async/core/notify/declarations/concepts.h>
+#include <async/core/notify/AtomicSequenceSignal.h>
+#include <async/core/notify/SignalNotifier.h>
+#include <async/core/notify/NoopNotifier.h>
 #include <async/core/queue/declarations/concepts.h>
 #include <async/core/queue/intrusive/ExecutionNode.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
@@ -28,4 +32,5 @@
 #include <async/core/worker/thread/declarations/concepts.h>
 #include <async/core/context/ContextInfo.h>
 #include <async/core/context/BasicContext.h>
+#include <async/core/context/declarations/enums.h>
 #include <async/core/context/declarations/poll_structs.h>

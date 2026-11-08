@@ -2,8 +2,11 @@
 
 #include "ContextInfo.h"
 #include <async/core/context/declarations/poll_structs.h>
-#include <async/core/worker/thread/details/OwnerThreadBinding.h>
+#include <async/core/notify/AtomicSequenceSignal.h>
+#include <async/core/notify/SignalNotifier.h>
+#include <async/core/context/details/OwnerThreadState.h>
 
+#include <algorithm>
 #include <cassert>
 #include <chrono>
 #include <cstddef>
@@ -13,6 +16,8 @@
 #include <stdexcept>
 #include <system_error>
 #include <thread>
+#include <type_traits>
+#include <utility>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
@@ -20,38 +25,39 @@ namespace lcf::async {
 template <join_handle_c ThreadHandle = std::thread, std::size_t queue_capacity = 256,
     template <typename, typename, typename, typename> class CpuExecutor = WorkStealingExecutor,
     template <typename> class VictimSelector = RoundRobinVictimSelector,
-    typename Notifier = details::ContextTopologyNotifier>
-requires (queue_capacity > 0)
+    notify::signal_c Signal = notify::AtomicSequenceSignal,
+    typename Notifier = notify::SignalNotifier<Signal>>
+requires (queue_capacity > 0) and
+    std::is_nothrow_default_constructible_v<Signal> and
+    notify::signal_notifier_c<Notifier, Signal>
 class BasicContext
 {
-    using Topology = details::ContextTopology<queue_capacity, CpuExecutor, VictimSelector, Notifier>;
-    using Pool = WorkerPool<typename Topology::Progress, ThreadHandle>;
+    using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, CpuExecutor, VictimSelector, Signal, Notifier>;
+    using WorkerPool = WorkerPool<typename SchedulingRuntime::Progress, ThreadHandle, Signal>;
 public:
     BasicContext() = default;
     ~BasicContext() noexcept
     {
-        this->requestStop();
-        this->joinWorkers();
-        assert(m_topology.isIdle() and "Drain accepted operations and return queues before destruction");
+        this->stopAndJoinWorkers();
+        assert(m_scheduling_runtime.isIdle() and "Drain accepted operations and return queues before destruction");
     }
     BasicContext(const BasicContext &) = delete;
     BasicContext(BasicContext &&) = delete;
     BasicContext & operator=(const BasicContext &) = delete;
     BasicContext & operator=(BasicContext &&) = delete;
 public:
-    [[nodiscard]] std::error_code create(const ContextInfo & info) noexcept
+    [[nodiscard]] std::error_code create(ContextInfo && context_info) noexcept
     {
         if (m_domain_id != 0) { return std::make_error_code(std::errc::operation_in_progress); }
-        if (info.getDomainId() == 0 or info.getDispatcherCount() == 0) {
-            return std::make_error_code(std::errc::invalid_argument);
-        }
+        ContextInfo info {std::move(context_info)};
+        if (info.getDomainId() == 0 or info.getDispatcherCount() == 0) { return std::make_error_code(std::errc::invalid_argument); }
         try {
             const std::size_t thread_count = info.getWorkerCount();
-            typename Pool::WorkerList workers{thread_count, {&info.getWorkerMemoryResource()}};
-            m_topology.create(info.getDomainId(), info.getSchedulerCount(), info.getWorkerCount(), info.getDispatcherCount(),
-                info.getSubmissionPortCount(), &info.getRuntimeMemoryResource());
-            std::destroy_at(&m_pool);
-            std::construct_at(&m_pool, m_topology.getSignal(), std::move(workers));
+            typename WorkerPool::WorkerList workers {thread_count, {&info.getWorkerMemoryResource()}};
+            m_scheduling_runtime.create(info.getDomainId(), info.getSchedulerCount(), info.getWorkerCount(),
+                info.getDispatcherCount(), info.getSubmissionPortCount(), info.getRuntimeMemoryResource());
+            std::destroy_at(&m_worker_pool);
+            std::construct_at(&m_worker_pool, m_scheduling_runtime.getSignal(), std::move(workers));
         } catch (const std::bad_array_new_length &) {
             return std::make_error_code(std::errc::value_too_large);
         } catch (const std::bad_alloc &) {
@@ -65,121 +71,94 @@ public:
         }
         m_domain_id = info.getDomainId();
         m_scheduler_count = info.getSchedulerCount();
-        m_port_count = info.getSubmissionPortCount();
         return {};
     }
     auto getSchedulerHandle(SchedulerToken token) noexcept
     {
-        assert(token.getDomainId() == m_domain_id and token.getIndex() < m_scheduler_count);
-        return SchedulerHandle{*this, token};
+        assert(token.getDomainId() == m_domain_id);
+        return SchedulerHandle {m_scheduling_runtime, token};
     }
     auto getEventLoopSchedulerHandle() noexcept
     {
-        return SchedulerHandle{*this, m_domain_id, details::k_owner_scheduler_index};
+        return SchedulerHandle {m_scheduling_runtime, m_domain_id, details::k_owner_scheduler_index};
     }
-    auto getReturnSchedulerHandle(std::uint32_t port_index) noexcept
+    auto getPortSchedulerHandle(PortToken token) noexcept
     {
-        assert(port_index < m_port_count);
-        return SchedulerHandle{*this, m_domain_id, m_scheduler_count + port_index};
+        assert(token.getDomainId() == m_domain_id);
+        return SchedulerHandle {m_scheduling_runtime, m_domain_id, m_scheduler_count + token.getIndex()};
     }
-    auto & getSubmissionPort(std::uint32_t port_index) noexcept
+    auto & getSubmissionPort(PortToken token) noexcept
     {
-        return m_topology.getSubmissionPort(port_index);
-    }
-    template <dispatch_record_c Record>
-    std::error_code tryEnqueue(std::uint32_t target_index, Record & record) noexcept
-    {
-        return m_topology.tryEnqueue(target_index, record.getDispatchRequest());
-    }
-    template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
-    void startWorkers(Launcher launcher = {})
-    {
-        try {
-            m_pool.start([this](std::size_t index) noexcept {
-                return m_topology.getWorkerProgress(index);
-            }, std::move(launcher));
-        } catch (...) {
-            this->requestStop();
-            throw;
-        }
+        assert(token.getDomainId() == m_domain_id);
+        return m_scheduling_runtime.getSubmissionPort(token.getIndex());
     }
     template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
     void run(Launcher launcher = {})
     {
-        this->startWorkers(std::move(launcher));
-        m_owner_binding.enter();
-        auto & signal = m_topology.getSignal();
+        const details::OwnerThreadGuard guard {m_owner_state};
+        try {
+            m_worker_pool.start([this](std::size_t index) noexcept {
+                return m_scheduling_runtime.getWorkerProgress(index);
+            }, std::move(launcher));
+        } catch (...) {
+            this->requestStopProcessing();
+            throw;
+        }
+        auto & signal = m_scheduling_runtime.getSignal();
         for (;;) {
             const auto observed = signal.observe();
-            if (m_stop_requested) { break; }
-            if (m_topology.pollOwner(not m_pool.isRunning()).m_progressed) { continue; }
-            if (m_closed) {
-                if (m_topology.isIdle()) { break; }
+            if (m_worker_pool.isStopRequested()) { break; }
+            if (m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning())) { continue; }
+            if (m_scheduling_runtime.areSubmissionsClosed()) {
+                if (m_scheduling_runtime.isIdle()) { break; }
                 std::this_thread::yield();
             } else { signal.wait(observed); }
         }
-        m_owner_binding.leave();
+        this->stopAndJoinWorkers();
     }
-    bool pollOne() noexcept
+    PollResult pollOne() noexcept
     {
-        m_owner_binding.enter();
-        const bool progressed = m_topology.pollOwner(not m_pool.isRunning()).m_progressed;
-        m_owner_binding.leave();
-        return progressed;
+        const details::OwnerThreadGuard guard {m_owner_state};
+        return m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
     }
     PollReport poll(PollBudget budget = {}) noexcept
     {
         using Clock = std::chrono::steady_clock;
-        m_owner_binding.enter();
+        const details::OwnerThreadGuard guard {m_owner_state};
         const auto started = Clock::now();
         PollReport report;
         while (report.m_records < budget.m_max_records) {
             if (Clock::now() - started >= budget.m_max_duration) { break; }
-            const auto turn = m_topology.pollOwner(not m_pool.isRunning());
-            if (not turn.m_progressed) { break; }
-            if (turn.m_executed) { ++report.m_records; }
+            const auto result = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
+            if (not result) { break; }
+            report.m_result = std::max(report.m_result, result);
+            if (result == PollResult::eExecuted) { ++report.m_records; }
         }
         report.m_elapsed = Clock::now() - started;
         report.m_count_limit_reached = report.m_records == budget.m_max_records;
         report.m_time_limit_reached = report.m_elapsed >= budget.m_max_duration;
-        m_owner_binding.leave();
         return report;
     }
-    bool pollReturn(std::uint32_t port_index) noexcept
+    PollResult pollPortOne(PortToken token) noexcept
     {
-        return m_topology.pollReturn(port_index);
+        assert(token.getDomainId() == m_domain_id);
+        return m_scheduling_runtime.pollPortOne(token.getIndex());
     }
-    void close() noexcept
-    {
-        m_closed = true;
-        m_topology.close();
-    }
-    void requestStop() noexcept
-    {
-        m_stop_requested = true;
-        m_pool.requestStop();
-    }
-    void joinWorkers() noexcept
-    {
-        if (m_closed and not m_stop_requested) {
-            while (not m_topology.isIdle()) {
-                this->pollOne();
-                std::this_thread::yield();
-            }
-            this->requestStop();
-        }
-        m_pool.join();
-    }
-    bool isEmpty() const noexcept { return m_topology.isEmpty(); }
+    void closeSubmissions() noexcept { m_scheduling_runtime.closeSubmissions(); }
+    void requestStopProcessing() noexcept { m_worker_pool.requestStop(); }
+    bool isEmpty() const noexcept { return m_scheduling_runtime.isEmpty(); }
 private:
-    Topology m_topology;
-    Pool m_pool{m_topology.getSignal()};
-    details::OwnerThreadBinding m_owner_binding;
+    void stopAndJoinWorkers() noexcept
+    {
+        this->requestStopProcessing();
+        m_worker_pool.join();
+    }
+private:
+    SchedulingRuntime m_scheduling_runtime;
+    WorkerPool m_worker_pool {m_scheduling_runtime.getSignal()};
+    details::OwnerThreadState m_owner_state;
     std::uint32_t m_domain_id = 0;
     std::uint32_t m_scheduler_count = 0;
-    std::uint32_t m_port_count = 0;
-    std::atomic<bool> m_closed{false};
-    std::atomic<bool> m_stop_requested{false};
 };
 
 using Context = BasicContext<>;

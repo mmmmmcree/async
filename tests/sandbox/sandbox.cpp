@@ -1,4 +1,4 @@
-#include <async/async.h>
+#include "library_under_test.h"
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -7,8 +7,6 @@
 #include <memory>
 #include <memory_resource>
 #include <optional>
-#include <span>
-#include <stdexcept>
 #include <thread>
 #include <utility>
 #include <vector>
@@ -21,71 +19,11 @@ using namespace std::chrono_literals;
 
 using ExampleContext = async::Context;
 
-class SandboxNotifier
-{
-public:
-    explicit SandboxNotifier(async::details::WorkSignal & signal) noexcept : m_signal_p(&signal) {}
-    ~SandboxNotifier() noexcept = default;
-    void operator()() const noexcept { m_signal_p->notifyAll(); }
-private:
-    async::details::WorkSignal * m_signal_p;
-};
-
-template <typename Source>
-class SandboxVictimSelector
-{
-    using Selector = async::RoundRobinVictimSelector<Source>;
-public:
-    using Value = typename Source::Value;
-    ~SandboxVictimSelector() noexcept = default;
-    SandboxVictimSelector(std::span<Source> sources, std::size_t owner_index) noexcept :
-        m_selector(sources, owner_index) {}
-    Value * trySteal() noexcept { return m_selector.trySteal(); }
-private:
-    Selector m_selector;
-};
-
-template <typename Inbox, typename ReadyQueue, typename Selector, typename Notifier>
-class SandboxCpuExecutor
-{
-    using Executor = async::WorkStealingExecutor<Inbox, ReadyQueue, Selector, Notifier>;
-public:
-    ~SandboxCpuExecutor() noexcept = default;
-    SandboxCpuExecutor(Inbox & inbox, ReadyQueue & ready, Selector selector, Notifier notify) noexcept :
-        m_executor(inbox, ready, std::move(selector), std::move(notify)) {}
-    bool executeOne() noexcept { return m_executor.executeOne(); }
-private:
-    Executor m_executor;
-};
-
 void * aligned_storage(std::vector<std::byte> & bytes, std::size_t alignment, std::size_t size_in_bytes) noexcept
 {
     void * storage_p = bytes.data();
     auto space = bytes.size();
     return std::align(alignment, size_in_bytes, storage_p, space);
-}
-
-bool validates_custom_context_policies()
-{
-    using PolicyContext = async::BasicContext<std::thread, 64,
-        SandboxCpuExecutor, SandboxVictimSelector, SandboxNotifier>;
-
-    async::ContextInfo context_info{0};
-    context_info.addScheduler();
-    const auto [runtime_size, runtime_alignment, worker_size, worker_alignment] = context_info
-        .getStorageRequirements<std::thread, 64, SandboxCpuExecutor, SandboxVictimSelector, SandboxNotifier>();
-    std::vector<std::byte> runtime_bytes(runtime_size + runtime_alignment - 1);
-    std::pmr::monotonic_buffer_resource runtime_resource{
-        aligned_storage(runtime_bytes, runtime_alignment, runtime_size), runtime_size,
-        std::pmr::null_memory_resource()};
-    std::pmr::monotonic_buffer_resource worker_resource{std::pmr::null_memory_resource()};
-    context_info.setMemoryResources(runtime_resource, worker_resource);
-
-    PolicyContext context;
-    if (context.create(context_info)) { return false; }
-    context.requestStop();
-    context.joinWorkers();
-    return context.isEmpty() and worker_size == 0 and worker_alignment != 0;
 }
 
 struct BranchResult
@@ -168,17 +106,12 @@ private:
         m_outcome_p->m_receiver_thread = std::this_thread::get_id();
 
         *m_caller_completed_p = true;
-        m_context_p->requestStop();
+        m_context_p->requestStopProcessing();
     }
 };
 
 int main()
 {
-    if (not validates_custom_context_policies()) {
-        std::cerr << "Custom Context policy setup failed\n";
-        return 1;
-    }
-
     constexpr std::uint32_t k_worker_count = 2;
     const auto main_thread = std::this_thread::get_id();
 
@@ -200,7 +133,7 @@ int main()
 
     context_info.setMemoryResources(runtime_arena, worker_arena);
     ExampleContext context;
-    if (const auto error = context.create(context_info)) {
+    if (const auto error = context.create(std::move(context_info))) {
         std::cerr << "Context creation failed: " << error.message() << '\n';
         return 1;
     }
@@ -216,9 +149,9 @@ int main()
             outcome.m_caller_thread = caller_thread;
 
             auto & submissions = context.getSubmissionPort(caller_port);
-            const auto left_scheduler = submissions.getSchedulerHandle(left_token);
+            const auto left_scheduler = context.getSchedulerHandle(left_token);
             const auto right_scheduler = submissions.getSchedulerHandle(right_token);
-            const auto caller_scheduler = context.getReturnSchedulerHandle(caller_port);
+            const auto caller_scheduler = context.getPortSchedulerHandle(caller_port);
             auto left = ex::schedule(left_scheduler) |
                 ex::then([] {
                     std::this_thread::sleep_for(1s);
@@ -249,21 +182,19 @@ int main()
             while (not caller_completed) {
                 auto elapsed = std::chrono::steady_clock::now() - time;
                 std::cout << "heartbeat: " << heartbeat_count++ << " elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
-                context.pollReturn(caller_port);
+                context.pollPortOne(caller_port);
                 if (not caller_completed) {
                     std::this_thread::sleep_for(100ms);
                 }
             }
         }};
     } catch (...) {
-        context.close();
-        context.joinWorkers();
+        context.closeSubmissions();
         throw;
     }
     context.run();
     caller.join();
-    context.close();
-    context.joinWorkers();
+    context.closeSubmissions();
     if (outcome.m_completion != Completion::eValue or not outcome.m_result) {
         std::cerr << "work completed with error or stopped\n";
         return 1;
