@@ -35,7 +35,7 @@ class BasicContext
 private:
     using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, Executor, VictimSelector, Signal, Notifier>;
     using WorkerPool = WorkerPool<typename SchedulingRuntime::WorkerProgress, ThreadHandle, Signal>;
-    using Scheduler = SchedulerHandle<SchedulingRuntime>;
+    using SchedulerHandle = SchedulerHandle<SchedulingRuntime>;
     using SubmissionPort = std::remove_reference_t<decltype(std::declval<SchedulingRuntime &>().getSubmissionPort(0))>;
 public:
     BasicContext() = default;
@@ -78,19 +78,19 @@ public:
         m_scheduler_count = info.getSchedulerCount();
         return {};
     }
-    Scheduler getSchedulerHandle(SchedulerToken token) noexcept
+    SchedulerHandle getSchedulerHandle(SchedulerToken token) noexcept
     {
         assert(token.getDomainId() == m_domain_id);
-        return Scheduler {m_scheduling_runtime, token};
+        return SchedulerHandle {m_scheduling_runtime, token};
     }
-    Scheduler getEventLoopSchedulerHandle() noexcept
+    SchedulerHandle getEventLoopSchedulerHandle() noexcept
     {
-        return Scheduler {m_scheduling_runtime, m_domain_id, details::k_owner_scheduler_index};
+        return SchedulerHandle {m_scheduling_runtime, m_domain_id, details::k_owner_scheduler_index};
     }
-    Scheduler getPortSchedulerHandle(PortToken token) noexcept
+    SchedulerHandle getPortSchedulerHandle(PortToken token) noexcept
     {
         assert(token.getDomainId() == m_domain_id);
-        return Scheduler {m_scheduling_runtime, m_domain_id, m_scheduler_count + token.getIndex()};
+        return SchedulerHandle {m_scheduling_runtime, m_domain_id, m_scheduler_count + token.getIndex()};
     }
     SubmissionPort & getSubmissionPort(PortToken token) noexcept
     {
