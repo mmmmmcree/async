@@ -76,6 +76,7 @@ public:
     DispatchState & operator=(DispatchState &&) = delete;
     std::error_code tryEnqueue(DispatchRequest & request) noexcept { return m_ingress.tryEnqueue(request); }
     bool dispatch() noexcept { return m_dispatcher.dispatch(); }
+    void cancelPending() noexcept { m_dispatcher.cancelPending(); }
     bool isEmpty() const noexcept { return m_dispatcher.isEmpty(); }
 private:
     Ingress m_ingress;

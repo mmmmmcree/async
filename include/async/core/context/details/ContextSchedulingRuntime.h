@@ -165,6 +165,14 @@ public:
         m_signal.notifyAll();
     }
     bool areSubmissionsClosed() const noexcept { return not m_accepting.load(std::memory_order_acquire); }
+    // All drivers must have stopped; completion may destroy the borrowed operation.
+    void cancelPending() noexcept
+    {
+        std::ranges::for_each(m_dispatchers, &DispatchState::cancelPending);
+        while (auto * executable_p = m_owner_queue.tryPop()) { executable_p->cancel(); }
+        std::ranges::for_each(m_cpus, &CpuState::cancelPending);
+        std::ranges::for_each(m_ports, &PortState::cancelPending);
+    }
     bool isEmpty() const noexcept
     {
         return m_owner_queue.isEmpty() and

@@ -54,6 +54,10 @@ public:
     std::error_code tryEnqueue(Value & executable) noexcept { return m_inbox.tryEnqueue(executable); }
     bool executeOne() noexcept { return m_executor.executeOne(); }
     bool isEmpty() const noexcept { return m_inbox.isEmpty() and m_ready.isEmpty(); }
+    void cancelPending() noexcept
+    {
+        while (auto * executable_p = this->trySteal()) { executable_p->cancel(); }
+    }
 private:
     Inbox m_inbox;
     ReadyQueue m_ready;
@@ -87,6 +91,10 @@ public:
     bool executeOne() noexcept { return m_executor.executeOne(); }
     bool isExecutionEmpty() const noexcept { return m_executions.isEmpty(); }
     void closeSubmissions() noexcept { m_submissions.close(); }
+    void cancelPending() noexcept
+    {
+        while (auto * executable_p = m_executions.tryPop()) { executable_p->cancel(); }
+    }
 private:
     SubmitQueue m_submissions;
     ExecutionQueue m_executions;

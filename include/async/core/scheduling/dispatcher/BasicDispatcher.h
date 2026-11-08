@@ -58,6 +58,20 @@ public:
     {
         return not m_has_pending.load(std::memory_order_acquire) and m_inputs.isEmpty();
     }
+    // Producers and the dispatcher driver must be quiescent.
+    void cancelPending() noexcept
+    {
+        while (auto * request_p = m_pending_header.getNext()) {
+            m_pending_header.setNext(request_p->getNext());
+            if (not m_pending_header.getNext()) { m_pending_tail_p = &m_pending_header; }
+            m_has_pending.store(m_pending_header.getNext() != nullptr, std::memory_order_release);
+            request_p->clearQueueState();
+            request_p->m_executable_p->cancel();
+        }
+        while (auto * request_p = m_inputs.tryPop()) {
+            request_p->m_executable_p->cancel();
+        }
+    }
 private:
     Inputs m_inputs;
     Router m_router;

@@ -20,12 +20,17 @@ class ScheduleOperation
 public:
     using operation_state_concept = protocols::operation_state_t;
 private:
+    static void cancel(void * state_p) noexcept
+    {
+        auto & operation = *static_cast<ScheduleOperation *>(state_p);
+        exec::set_stopped(std::move(operation.m_receiver));
+    }
     static void execute(void * state_p) noexcept
     {
         auto & operation = *static_cast<ScheduleOperation *>(state_p);
         const auto & environment = exec::get_env(operation.m_receiver);
         if (exec::get_stop_token(environment).stop_requested()) {
-            exec::set_stopped(std::move(operation.m_receiver));
+            cancel(state_p);
             return;
         }
         exec::set_value(std::move(operation.m_receiver));
@@ -35,7 +40,8 @@ public:
     ScheduleOperation() = delete;
     ScheduleOperation(Handle handle, Receiver receiver) noexcept(
         std::is_nothrow_copy_constructible_v<Handle> and std::is_nothrow_move_constructible_v<Receiver>) :
-        m_handle(handle), m_receiver(std::move(receiver)), m_node(this, &execute), m_request {&m_node} {}
+        m_handle(handle), m_receiver(std::move(receiver)),
+        m_node(this, &execute, &cancel), m_request {&m_node} {}
     ScheduleOperation(const ScheduleOperation &) = delete;
     ScheduleOperation & operator=(const ScheduleOperation &) = delete;
     ScheduleOperation(ScheduleOperation &&) = delete;

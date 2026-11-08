@@ -38,8 +38,10 @@ public:
     BasicContext() = default;
     ~BasicContext() noexcept
     {
+        const details::OwnerThreadGuard guard {m_owner_state};
+        this->closeSubmissions();
         this->stopAndJoinWorkers();
-        assert(m_scheduling_runtime.isIdle() and "Drain accepted operations and return queues before destruction");
+        m_scheduling_runtime.cancelPending();
     }
     BasicContext(const BasicContext &) = delete;
     BasicContext(BasicContext &&) = delete;
