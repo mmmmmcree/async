@@ -80,6 +80,7 @@ public:
     ContextDispatcher(ContextDispatcher &&) = delete;
     ContextDispatcher & operator=(const ContextDispatcher &) = delete;
     ContextDispatcher & operator=(ContextDispatcher &&) = delete;
+public:
     std::error_code accept(DispatchRequest & request) noexcept { return m_ingress.tryEnqueue(request); }
     DispatchReport dispatch() noexcept { return m_dispatcher.dispatch(); }
     void cancelPending() noexcept { m_dispatcher.cancelPending(); }

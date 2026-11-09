@@ -11,8 +11,8 @@
 
 namespace lcf::async::details {
 
-template <std::uint64_t queue_capacity, typename Notifier, cancellable_executable_c Executable>
-requires (queue_capacity > 0) and notify::notifier_c<Notifier>
+template <std::uint64_t queue_capacity, notify::notifier_c Notifier, cancellable_executable_c Executable>
+requires (queue_capacity > 0)
 class ContextPort
 {
 public:
@@ -32,9 +32,9 @@ public:
 public:
     std::error_code submit(DispatchRequest & request) noexcept
     {
-        const std::error_code error_code = m_submission_queue.tryEnqueue(request);
-        if (not error_code) { m_notifier_p->notifyAll(); }
-        return error_code;
+        if (auto ec = m_submission_queue.tryEnqueue(request)) { return ec; }
+        m_notifier_p->notifyAll();
+        return {};
     }
     DispatchRequest * tryPopSubmission() noexcept { return m_submission_queue.tryPop(); }
     bool areSubmissionsEmpty() const noexcept { return m_submission_queue.isEmpty(); }

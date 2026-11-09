@@ -21,14 +21,9 @@ class ContextExecutor
 {
 public:
     using Value = Executable;
-    Value * trySteal() noexcept
-    {
-        if (auto * executable_p = m_ready_queue.trySteal()) { return executable_p; }
-        return m_inbox.tryPop();
-    }
 private:
-    using Inbox = queue::intrusive::mpmc::Queue<Value>;
-    using ReadyQueue = queue::non_intrusive::spmc::Deque<Value, queue_capacity>;
+    using Inbox = queue::intrusive::mpmc::Queue<Executable>;
+    using ReadyQueue = queue::non_intrusive::spmc::Deque<Executable, queue_capacity>;
     using Self = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier, Executable>;
     using Selector = VictimSelector<Self>;
     using Executor = ExecutorPolicy<Inbox, ReadyQueue, Selector, Notifier>;
@@ -45,6 +40,11 @@ public:
     std::error_code tryEnqueue(Value & executable) noexcept { return m_inbox.tryEnqueue(executable); }
     bool executeOne() noexcept { return m_executor.executeOne(); }
     bool isEmpty() const noexcept { return m_inbox.isEmpty() and m_ready_queue.isEmpty(); }
+    Value * trySteal() noexcept
+    {
+        if (auto * executable_p = m_ready_queue.trySteal()) { return executable_p; }
+        return m_inbox.tryPop();
+    }
     void cancelPending() noexcept
     {
         while (auto * executable_p = this->trySteal()) { executable_p->cancel(); }
