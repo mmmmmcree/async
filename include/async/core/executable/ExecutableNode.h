@@ -15,8 +15,13 @@ public:
 public:
     ~ExecutableNode() noexcept = default;
     ExecutableNode() = delete;
-    ExecutableNode(void * state_p, ExecuteFunction execute_f, CancelFunction cancel_f) noexcept :
-        m_state_p(state_p), m_execute_f(execute_f), m_cancel_f(cancel_f) {}
+    ExecutableNode(
+        void * state_p,
+        ExecuteFunction execute_f,
+        CancelFunction cancel_f) noexcept :
+        m_state_p(state_p),
+        m_execute_f(execute_f),
+        m_cancel_f(cancel_f) {}
     ExecutableNode(const ExecutableNode &) = delete;
     ExecutableNode & operator=(const ExecutableNode &) = delete;
     ExecutableNode(ExecutableNode &&) = delete;

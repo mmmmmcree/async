@@ -45,7 +45,7 @@ public:
     {
         std::unique_lock lock{m_mutex};
         m_condition.wait(lock, [this] {
-            return m_stop_requested || m_closed || not m_queue.isEmpty();
+            return m_stop_requested or m_closed or not m_queue.isEmpty();
         });
         if (m_stop_requested) { return nullptr; }
         return m_queue.popFront();
