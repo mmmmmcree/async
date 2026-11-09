@@ -7,12 +7,14 @@
 #include <async/execution/queries.h>
 
 #include <concepts>
+#include <system_error>
 #include <type_traits>
 #include <utility>
 
 namespace lcf::async::details {
 
-using ScheduleCompletions = protocols::completion_signatures<exec::set_value_t(), exec::set_stopped_t()>;
+using ScheduleCompletions = protocols::completion_signatures<
+    exec::set_value_t(), exec::set_error_t(std::error_code), exec::set_stopped_t()>;
 
 template <std::copyable Handle, callback_executable_c Executable, receiver_of_c<ScheduleCompletions> Receiver>
 class ScheduleOperation
@@ -51,7 +53,10 @@ public:
     void start() & noexcept
     requires record_submitter_c<Handle, DispatchRequest>
     {
-        if (m_handle.submit(m_request)) { exec::set_stopped(std::move(m_receiver)); }
+        const auto ec = m_handle.submit(m_request);
+        if (not ec) { return; }
+        if (ec == std::errc::operation_canceled) { exec::set_stopped(std::move(m_receiver)); }
+        else { exec::set_error(std::move(m_receiver), ec); }
     }
 private:
     Handle m_handle;

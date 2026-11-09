@@ -17,6 +17,7 @@
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>
 #include <async/core/scheduling/dispatcher/declarations/concepts.h>
+#include <async/core/scheduling/dispatcher/declarations/structs.h>
 #include <async/core/scheduling/dispatcher/selectors/RoundRobinTargetSelector.h>
 #include <async/core/scheduling/executor/BasicExecutor.h>
 #include <async/core/scheduling/executor/WorkStealingExecutor.h>

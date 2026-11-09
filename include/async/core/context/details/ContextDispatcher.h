@@ -53,10 +53,11 @@ class ContextDispatcher
     public:
         DispatchRequest * tryPop() noexcept
         {
-            if (auto * request_p = m_ingress_p->tryPop()) { return request_p; }
-            for (std::size_t attempt = 0; attempt < m_ports.size(); ++attempt) {
-                auto * request_p = m_ports[m_next_port_index].tryPopSubmission();
-                if (++m_next_port_index == m_ports.size()) { m_next_port_index = 0; }
+            for (std::size_t attempt = 0; attempt <= m_ports.size(); ++attempt) {
+                const auto input_index = m_next_input_index;
+                if (++m_next_input_index > m_ports.size()) { m_next_input_index = 0; }
+                auto * request_p = input_index == m_ports.size() ? m_ingress_p->tryPop()
+                    : m_ports[input_index].tryPopSubmission();
                 if (request_p) { return request_p; }
             }
             return nullptr;
@@ -68,7 +69,7 @@ class ContextDispatcher
     private:
         Ingress * m_ingress_p;
         PortSpan m_ports;
-        std::size_t m_next_port_index = 0;
+        std::size_t m_next_input_index = 0;
     };
 public:
     ~ContextDispatcher() noexcept = default;
@@ -80,7 +81,7 @@ public:
     ContextDispatcher & operator=(const ContextDispatcher &) = delete;
     ContextDispatcher & operator=(ContextDispatcher &&) = delete;
     std::error_code accept(DispatchRequest & request) noexcept { return m_ingress.tryEnqueue(request); }
-    bool dispatch() noexcept { return m_dispatcher.dispatch(); }
+    DispatchReport dispatch() noexcept { return m_dispatcher.dispatch(); }
     void cancelPending() noexcept { m_dispatcher.cancelPending(); }
     bool isEmpty() const noexcept { return m_dispatcher.isEmpty(); }
 private:

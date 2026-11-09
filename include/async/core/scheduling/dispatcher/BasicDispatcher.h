@@ -1,8 +1,8 @@
 #pragma once
 
 #include <async/core/scheduling/dispatcher/declarations/concepts.h>
+#include <async/core/scheduling/dispatcher/declarations/structs.h>
 
-#include <cassert>
 #include <atomic>
 #include <cstddef>
 #include <system_error>
@@ -19,6 +19,30 @@ class BasicDispatcher
 {
     using DispatchRequest = typename Inputs::Value;
     using Executable = std::remove_reference_t<decltype(std::declval<DispatchRequest &>().getExecutable())>;
+    class PendingQueue
+    {
+    public:
+        bool isEmpty() const noexcept { return not m_tail_p; }
+        DispatchRequest * popFront() noexcept
+        {
+            if (not m_tail_p) { return nullptr; }
+            auto * request_p = m_tail_p->getNext();
+            if (request_p == m_tail_p) { m_tail_p = nullptr; }
+            else { m_tail_p->setNext(request_p->getNext()); }
+            request_p->setNext(nullptr);
+            return request_p;
+        }
+        void pushBack(DispatchRequest & request) noexcept
+        {
+            if (m_tail_p) {
+                request.setNext(m_tail_p->getNext());
+                m_tail_p->setNext(&request);
+            } else { request.setNext(&request); }
+            m_tail_p = &request;
+        }
+    private:
+        DispatchRequest * m_tail_p = nullptr;
+    };
 public:
     ~BasicDispatcher() noexcept = default;
     BasicDispatcher() = delete;
@@ -30,33 +54,26 @@ public:
     BasicDispatcher & operator=(const BasicDispatcher &) = delete;
     BasicDispatcher & operator=(BasicDispatcher &&) = delete;
 public:
-    bool dispatch(std::size_t max_requests = 64) noexcept
+    DispatchReport dispatch(std::size_t max_attempts = 64) noexcept
     {
-        bool progressed = false;
-        for (std::size_t attempt = 0; attempt < max_requests; ++attempt) {
-            auto * pending_p = m_pending_head_p;
-            auto * request_p = m_retry_pending and pending_p ? pending_p : m_inputs.tryPop();
-            const bool received = request_p and request_p != pending_p;
-            if (not request_p) { request_p = pending_p; }
+        DispatchReport report;
+        for (std::size_t attempt = 0; attempt < max_attempts; ++attempt) {
+            auto * request_p = this->takeRequest(report);
             if (not request_p) { break; }
-            if (request_p == pending_p) {
-                m_pending_head_p = request_p->getNext();
-                if (not m_pending_head_p) { m_pending_tail_p = nullptr; }
-            }
             m_retry_pending = not m_retry_pending;
-            request_p->setNext(nullptr);
-            const auto error = m_router.route(*request_p);
+            const auto error_code = m_router.route(*request_p);
             // Publication may destroy the operation. Do not touch request on success.
-            progressed |= received or not error;
-            if (error) {
-                assert(error == std::errc::no_buffer_space and "Close ingress before draining and closing outputs");
-                if (m_pending_tail_p) { m_pending_tail_p->setNext(request_p); }
-                else { m_pending_head_p = request_p; }
-                m_pending_tail_p = request_p;
+            if (not error_code) {
+                ++report.m_dispatched;
+                continue;
             }
+            m_pending_queue.pushBack(*request_p);
+            if (error_code == std::errc::no_buffer_space) { continue; }
+            report.m_error_code = error_code;
+            break;
         }
-        m_has_pending.store(m_pending_head_p != nullptr, std::memory_order_release);
-        return progressed;
+        m_has_pending.store(not m_pending_queue.isEmpty(), std::memory_order_release);
+        return report;
     }
     bool isEmpty() const noexcept
     {
@@ -65,22 +82,27 @@ public:
     // Producers and the dispatcher driver must be quiescent.
     void cancelPending() noexcept requires cancellable_executable_c<Executable>
     {
-        while (auto * request_p = m_pending_head_p) {
-            m_pending_head_p = request_p->getNext();
-            if (not m_pending_head_p) { m_pending_tail_p = nullptr; }
-            m_has_pending.store(m_pending_head_p != nullptr, std::memory_order_release);
-            request_p->setNext(nullptr);
-            request_p->getExecutable().cancel();
-        }
+        while (auto * request_p = m_pending_queue.popFront()) { request_p->getExecutable().cancel(); }
+        m_has_pending.store(false, std::memory_order_release);
         while (auto * request_p = m_inputs.tryPop()) {
             request_p->getExecutable().cancel();
         }
     }
 private:
+    DispatchRequest * takeRequest(DispatchReport & report) noexcept
+    {
+        if (m_retry_pending and not m_pending_queue.isEmpty()) { return m_pending_queue.popFront(); }
+        if (auto * request_p = m_inputs.tryPop()) {
+            ++report.m_received;
+            request_p->setNext(nullptr);
+            return request_p;
+        }
+        return m_pending_queue.popFront();
+    }
+private:
     Inputs m_inputs;
     Router m_router;
-    DispatchRequest * m_pending_head_p = nullptr;
-    DispatchRequest * m_pending_tail_p = nullptr;
+    PendingQueue m_pending_queue;
     bool m_retry_pending = false;
     std::atomic<bool> m_has_pending{false};
 };

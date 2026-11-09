@@ -24,18 +24,8 @@ public:
 public:
     ExecutableNode * getNext() const noexcept { return m_next_p.load(std::memory_order_acquire); }
     void setNext(ExecutableNode * next_p) noexcept { m_next_p.store(next_p, std::memory_order_release); }
-    void execute() noexcept
-    {
-        auto * state_p = m_state_p;
-        auto execute_f = m_execute_f;
-        execute_f(state_p);
-    }
-    void cancel() noexcept
-    {
-        auto * state_p = m_state_p;
-        auto cancel_f = m_cancel_f;
-        cancel_f(state_p);
-    }
+    void execute() noexcept { m_execute_f(m_state_p); }
+    void cancel() noexcept { m_cancel_f(m_state_p); }
 private:
     std::atomic<ExecutableNode *> m_next_p {nullptr};
     void * m_state_p;

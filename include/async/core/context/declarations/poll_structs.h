@@ -18,7 +18,8 @@ struct PollBudget
 
 struct PollReport
 {
-    constexpr operator PollResult() const noexcept { return m_result; }
+    constexpr PollResult getResult() const noexcept { return m_result; }
+    constexpr bool hasProgress() const noexcept { return m_result != PollResult::eIdle; }
 
     std::size_t m_records = 0;
     std::chrono::steady_clock::duration m_elapsed {};

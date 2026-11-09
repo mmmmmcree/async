@@ -3,7 +3,7 @@
 #include <async/core/context/details/ContextDispatcher.h>
 #include <async/core/context/details/ContextExecutor.h>
 #include <async/core/context/details/ContextPort.h>
-#include <async/core/context/declarations/enums.h>
+#include <async/core/context/declarations/poll_structs.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/executable/declarations/concepts.h>
 #include <async/core/scheduling/dispatcher/DispatchRequest.h>
@@ -47,11 +47,15 @@ private:
     using OwnerQueue = queue::intrusive::mpmc::Queue<Executable>;
     using StorageRequirementsResult = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
 private:
-    static bool dispatch_requests(std::span<Dispatcher> dispatchers) noexcept
+    static DispatchReport dispatch_requests(std::span<Dispatcher> dispatchers) noexcept
     {
-        bool dispatched = false;
-        for (auto & dispatcher : dispatchers) { dispatched |= dispatcher.dispatch(); }
-        return dispatched;
+        DispatchReport report;
+        for (auto & dispatcher : dispatchers) {
+            const auto dispatched = dispatcher.dispatch();
+            report.m_received += dispatched.m_received;
+            report.m_dispatched += dispatched.m_dispatched;
+        }
+        return report;
     }
 public:
     static StorageRequirementsResult calc_storage_requirements(
@@ -166,21 +170,16 @@ public:
         return {*this, m_worker_executors[worker_index],
             std::span {m_dispatchers}.subspan(first_dispatcher_index, assigned_dispatcher_count)};
     }
-    PollResult pollOwner(bool include_worker_work) noexcept
+    PollReport pollOwner(bool include_worker_work) noexcept
     {
-        m_active_poll_count.fetch_add(1, std::memory_order_acq_rel);
-        const bool dispatched = include_worker_work and dispatch_requests(m_dispatchers);
-        const bool executed = include_worker_work ? this->executeNext() : m_owner_executor.executeOne();
-        this->finishPoll(dispatched or executed);
-        if (executed) { return PollResult::eExecuted; }
-        return dispatched ? PollResult::eDispatched : PollResult::eIdle;
+        return this->pollOnce(include_worker_work ? std::span {m_dispatchers} : std::span<Dispatcher> {},
+            [this, include_worker_work]() noexcept {
+                return include_worker_work ? this->executeNext() : m_owner_executor.executeOne();
+            });
     }
-    PollResult pollPortOne(std::size_t port_index) noexcept
+    PollReport pollPortOne(std::size_t port_index) noexcept
     {
-        m_active_poll_count.fetch_add(1, std::memory_order_acq_rel);
-        const bool executed = m_ports[port_index].executeOne();
-        this->finishPoll(executed);
-        return executed ? PollResult::eExecuted : PollResult::eIdle;
+        return this->pollOnce({}, [this, port_index]() noexcept { return m_ports[port_index].executeOne(); });
     }
     Port & getPort(std::size_t port_index) noexcept { return m_ports[port_index]; }
     void closeSubmissions() noexcept
@@ -234,12 +233,21 @@ private:
     }
     bool pollWorker(Executor & executor, std::span<Dispatcher> dispatchers) noexcept
     {
+        return this->pollOnce(dispatchers, [&executor]() noexcept { return executor.executeOne(); }).hasProgress();
+    }
+    template <typename ExecuteOne>
+    requires std::is_nothrow_invocable_r_v<bool, ExecuteOne &>
+    PollReport pollOnce(std::span<Dispatcher> dispatchers, ExecuteOne execute_one) noexcept
+    {
+        PollReport report;
         m_active_poll_count.fetch_add(1, std::memory_order_acq_rel);
-        const bool dispatched = dispatch_requests(dispatchers);
-        const bool executed = executor.executeOne();
-        const bool progressed = dispatched or executed;
-        this->finishPoll(progressed);
-        return progressed;
+        const auto dispatched = dispatch_requests(dispatchers);
+        report.m_records = execute_one();
+        report.m_result = report.m_records ? PollResult::eExecuted
+            : dispatched.hasProgress() ? PollResult::eDispatched : PollResult::eIdle;
+        if (report.hasProgress()) { m_signal.notifyAll(); }
+        m_active_poll_count.fetch_sub(1, std::memory_order_release);
+        return report;
     }
     bool executeNext() noexcept
     {
@@ -249,11 +257,6 @@ private:
             if (executor.executeOne()) { return true; }
         }
         return false;
-    }
-    void finishPoll(bool progressed) noexcept
-    {
-        if (progressed) { m_signal.notifyAll(); }
-        m_active_poll_count.fetch_sub(1, std::memory_order_release);
     }
 private:
     Signal m_signal;

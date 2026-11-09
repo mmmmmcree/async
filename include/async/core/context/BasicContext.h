@@ -113,7 +113,8 @@ public:
         for (;;) {
             const auto observed = signal.observe();
             if (m_worker_pool.isStopRequested()) { break; }
-            if (m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning())) { continue; }
+            const auto report = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
+            if (report.hasProgress()) { continue; }
             if (m_scheduling_runtime.areSubmissionsClosed()) {
                 if (m_scheduling_runtime.isIdle()) { break; }
                 std::this_thread::yield();
@@ -121,7 +122,7 @@ public:
         }
         this->stopAndJoinWorkers();
     }
-    PollResult pollOne() noexcept
+    PollReport pollOne() noexcept
     {
         const details::OwnerThreadGuard guard {m_owner_state};
         return m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
@@ -134,17 +135,17 @@ public:
         PollReport report;
         while (report.m_records < budget.m_max_records) {
             if (Clock::now() - started >= budget.m_max_duration) { break; }
-            const auto result = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
-            if (not result) { break; }
-            report.m_result = std::max(report.m_result, result);
-            if (result == PollResult::eExecuted) { ++report.m_records; }
+            const auto polled = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
+            report.m_records += polled.m_records;
+            report.m_result = std::max(report.m_result, polled.getResult());
+            if (not polled.hasProgress()) { break; }
         }
         report.m_elapsed = Clock::now() - started;
         report.m_count_limit_reached = report.m_records == budget.m_max_records;
         report.m_time_limit_reached = report.m_elapsed >= budget.m_max_duration;
         return report;
     }
-    PollResult pollPortOne(PortToken token) noexcept
+    PollReport pollPortOne(PortToken token) noexcept
     {
         assert(token.getDomainId() == m_domain_id);
         return m_scheduling_runtime.pollPortOne(token.getIndex());
