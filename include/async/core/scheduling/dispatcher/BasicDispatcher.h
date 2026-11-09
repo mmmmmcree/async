@@ -1,5 +1,6 @@
 #pragma once
 
+#include <async/core/queue/intrusive/Queue.h>
 #include <async/core/scheduling/dispatcher/declarations/concepts.h>
 #include <async/core/scheduling/dispatcher/declarations/structs.h>
 
@@ -19,30 +20,7 @@ class BasicDispatcher
 {
     using DispatchRequest = typename Inputs::Value;
     using Executable = std::remove_reference_t<decltype(std::declval<DispatchRequest &>().getExecutable())>;
-    class PendingQueue
-    {
-    public:
-        bool isEmpty() const noexcept { return not m_tail_p; }
-        DispatchRequest * popFront() noexcept
-        {
-            if (not m_tail_p) { return nullptr; }
-            auto * request_p = m_tail_p->getNext();
-            if (request_p == m_tail_p) { m_tail_p = nullptr; }
-            else { m_tail_p->setNext(request_p->getNext()); }
-            request_p->setNext(nullptr);
-            return request_p;
-        }
-        void pushBack(DispatchRequest & request) noexcept
-        {
-            if (m_tail_p) {
-                request.setNext(m_tail_p->getNext());
-                m_tail_p->setNext(&request);
-            } else { request.setNext(&request); }
-            m_tail_p = &request;
-        }
-    private:
-        DispatchRequest * m_tail_p = nullptr;
-    };
+    using DispatchRequestPendingQueue = queue::intrusive::Queue<DispatchRequest>;
 public:
     ~BasicDispatcher() noexcept = default;
     BasicDispatcher() = delete;
@@ -102,7 +80,7 @@ private:
 private:
     Inputs m_inputs;
     Router m_router;
-    PendingQueue m_pending_queue;
+    DispatchRequestPendingQueue m_pending_queue;
     bool m_retry_pending = false;
     std::atomic<bool> m_has_pending{false};
 };
