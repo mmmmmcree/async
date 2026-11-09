@@ -3,7 +3,6 @@
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>
 #include <async/core/scheduling/dispatcher/selectors/RoundRobinTargetSelector.h>
-#include <async/core/scheduling/DispatchRequest.h>
 
 #include <algorithm>
 #include <cstddef>
@@ -13,7 +12,7 @@
 
 namespace lcf::async::details {
 
-template <typename SchedulingRuntime>
+template <typename SchedulingRuntime, dispatch_record_c DispatchRequest>
 class ContextTargetRouter
 {
 public:
@@ -35,11 +34,14 @@ private:
 template <typename SchedulingRuntime, typename Port>
 class ContextDispatcher
 {
+    using DispatchRequest = typename Port::DispatchRequest;
     using Ingress = queue::intrusive::mpmc::Queue<DispatchRequest>;
-    using Router = ContextTargetRouter<SchedulingRuntime>;
+    using Router = ContextTargetRouter<SchedulingRuntime, DispatchRequest>;
     using PortSpan = std::span<Port>;
     class InputSource
     {
+    public:
+        using Value = DispatchRequest;
     public:
         ~InputSource() noexcept = default;
         InputSource() = delete;

@@ -2,9 +2,12 @@
 
 #include <async/core/context/declarations/tokens.h>
 #include <async/core/context/details/ContextSchedulingRuntime.h>
+#include <async/core/executable/ExecutableNode.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
+#include <async/core/scheduling/executor/WorkStealingExecutor.h>
+#include <async/core/scheduling/executor/selectors/RoundRobinVictimSelector.h>
 #include <async/core/worker/WorkerPool.h>
 
 #include <cstddef>
@@ -69,12 +72,13 @@ public:
         template <typename, typename, typename, typename> class Executor = WorkStealingExecutor,
         template <typename> class VictimSelector = RoundRobinVictimSelector,
         notify::signal_c Signal = notify::AtomicSequenceSignal,
-        typename Notifier = notify::SignalNotifier<Signal>>
+        typename Notifier = notify::SignalNotifier<Signal>,
+        cancellable_executable_c Executable = ExecutableNode>
     requires (queue_capacity > 0) and std::is_nothrow_default_constructible_v<Signal>
-        and notify::signal_notifier_c<Notifier, Signal>
+        and notify::signal_notifier_c<Notifier, Signal> and linked_node_c<Executable>
     ContextStorageRequirements getStorageRequirements() const noexcept
     {
-        using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, Executor, VictimSelector, Signal, Notifier>;
+        using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, Executor, VictimSelector, Signal, Notifier, Executable>;
         using Worker = typename WorkerPool<typename SchedulingRuntime::WorkerProgress, ThreadHandle, Signal>::Worker;
         const auto max_size = std::numeric_limits<std::size_t>::max();
         const auto expected_runtime_requirements = SchedulingRuntime::calc_storage_requirements(m_worker_count, m_dispatcher_count, m_port_count);

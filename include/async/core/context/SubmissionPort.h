@@ -2,7 +2,8 @@
 
 #include <async/core/context/declarations/tokens.h>
 #include <async/core/scheduling/SchedulerHandle.h>
-#include <async/core/scheduling/DispatchRequest.h>
+#include <async/core/executable/declarations/concepts.h>
+#include <async/core/scheduling/dispatcher/DispatchRequest.h>
 #include <async/core/scheduling/declarations/concepts.h>
 
 #include <cassert>
@@ -11,10 +12,11 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <record_submitter_c<DispatchRequest> Submitter>
+template <typename Submitter, cancellable_executable_c Executable>
+requires record_submitter_c<Submitter, DispatchRequest<Executable>>
 class SubmissionPort
 {
-    using SchedulerHandle = SchedulerHandle<Submitter>;
+    using SchedulerHandle = ::lcf::async::SchedulerHandle<Submitter, Executable>;
 public:
     ~SubmissionPort() noexcept = default;
     SubmissionPort() = delete;

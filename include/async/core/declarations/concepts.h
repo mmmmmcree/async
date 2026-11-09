@@ -1,17 +1,11 @@
 #pragma once
 
-#include <async/config/macros.h>
+#include <async/core/executable/declarations/concepts.h>
 
-#include <concepts>
 #include <type_traits>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
-
-template <typename Executable>
-concept executable_c = requires(Executable & executable) {
-    { executable.execute() } noexcept -> std::same_as<void>;
-};
 
 template <typename Record>
 concept work_record_c = requires(Record & record) {

@@ -1,6 +1,5 @@
 #pragma once
 
-#include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/declarations/concepts.h>
 
 #include <async/config/macros.h>
@@ -8,7 +7,7 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async::notify {
 
-template <signal_c Signal = AtomicSequenceSignal>
+template <signal_c Signal>
 class SignalNotifier
 {
 public:

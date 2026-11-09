@@ -1,6 +1,6 @@
 #pragma once
 
-#include "NullThreadHandle.h"
+#include <async/core/worker/thread/declarations/aliases.h>
 #include <async/core/worker/thread/declarations/concepts.h>
 
 #include <concepts>

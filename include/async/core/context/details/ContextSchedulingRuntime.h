@@ -5,13 +5,12 @@
 #include <async/core/context/details/ContextPort.h>
 #include <async/core/context/declarations/enums.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
-#include <async/core/scheduling/WorkItem.h>
+#include <async/core/executable/declarations/concepts.h>
+#include <async/core/scheduling/dispatcher/DispatchRequest.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/core/scheduling/executor/BasicExecutor.h>
 #include <async/core/scheduling/executor/ExecutorView.h>
-#include <async/core/notify/AtomicSequenceSignal.h>
-#include <async/core/notify/SignalNotifier.h>
 #include <async/core/notify/declarations/concepts.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 
@@ -32,20 +31,20 @@
 namespace lcf::async::details {
 
 template <std::size_t queue_capacity,
-    template <typename, typename, typename, typename> class ExecutorPolicy = WorkStealingExecutor,
-    template <typename> class VictimSelector = RoundRobinVictimSelector,
-    notify::signal_c Signal = notify::AtomicSequenceSignal,
-    typename Notifier = notify::SignalNotifier<Signal>>
+    template <typename, typename, typename, typename> class ExecutorPolicy,
+    template <typename> class VictimSelector, notify::signal_c Signal,
+    typename Notifier, cancellable_executable_c Executable>
 requires (queue_capacity > 0) and std::is_nothrow_default_constructible_v<Signal>
-    and notify::signal_notifier_c<Notifier, Signal>
+    and notify::signal_notifier_c<Notifier, Signal> and linked_node_c<Executable>
 class ContextSchedulingRuntime
 {
 private:
-    template <typename> friend class ContextTargetRouter;
-    using Executor = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier>;
-    using Port = ContextPort<queue_capacity, Notifier>;
+    template <typename, dispatch_record_c> friend class ContextTargetRouter;
+    using DispatchRequest = ::lcf::async::DispatchRequest<Executable>;
+    using Executor = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier, Executable>;
+    using Port = ContextPort<queue_capacity, Notifier, Executable>;
     using Dispatcher = ContextDispatcher<ContextSchedulingRuntime, Port>;
-    using OwnerQueue = queue::intrusive::mpmc::Queue<WorkItem>;
+    using OwnerQueue = queue::intrusive::mpmc::Queue<Executable>;
     using StorageRequirementsResult = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
 private:
     static bool dispatch_requests(std::span<Dispatcher> dispatchers) noexcept
@@ -273,8 +272,8 @@ private:
     std::size_t m_next_executor_index = 0;
 };
 
-template <typename SchedulingRuntime>
-std::error_code ContextTargetRouter<SchedulingRuntime>::route(DispatchRequest & request) noexcept
+template <typename SchedulingRuntime, dispatch_record_c DispatchRequest>
+std::error_code ContextTargetRouter<SchedulingRuntime, DispatchRequest>::route(DispatchRequest & request) noexcept
 {
     return m_runtime_p->tryRoute(m_dispatcher_index, m_executor_selector, request);
 }

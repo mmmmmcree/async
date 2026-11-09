@@ -1,15 +1,17 @@
 #pragma once
 
+#include <async/core/executable/declarations/concepts.h>
 #include <async/core/scheduling/details/exec_schedule_adapters.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
 #include <async/core/scheduling/declarations/concepts.h>
+#include <async/core/scheduling/dispatcher/declarations/concepts.h>
 
 #include <cstdint>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <typename Submitter>
+template <typename Submitter, cancellable_executable_c Executable>
 class SchedulerHandle
 {
 public:
@@ -31,7 +33,7 @@ public:
     SchedulerHandle & operator=(SchedulerHandle &&) noexcept = default;
     bool operator==(const SchedulerHandle &) const noexcept = default;
 public:
-    auto schedule() const noexcept;
+    auto schedule() const noexcept requires callback_executable_c<Executable>;
     template <typename Record>
     requires record_submitter_c<Submitter, Record>
     std::error_code submit(Record & record) const noexcept
@@ -45,10 +47,10 @@ private:
     std::uint32_t m_scheduler_index;
 };
 
-template <typename Submitter>
-auto SchedulerHandle<Submitter>::schedule() const noexcept
+template <typename Submitter, cancellable_executable_c Executable>
+auto SchedulerHandle<Submitter, Executable>::schedule() const noexcept requires callback_executable_c<Executable>
 {
-    return details::ScheduleSender<SchedulerHandle>{*this};
+    return details::ScheduleSender<SchedulerHandle, Executable>{*this};
 }
 
 } // namespace lcf::async

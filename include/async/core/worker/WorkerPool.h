@@ -3,18 +3,15 @@
 #include "BasicWorker.h"
 #include <async/core/worker/details/WorkerControl.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
-#include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/declarations/concepts.h>
 
 #include <algorithm>
-#include <thread>
 #include <utility>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <worker_progress_c Progress, join_handle_c ThreadHandle = std::thread,
-    notify::signal_c Signal = notify::AtomicSequenceSignal>
+template <worker_progress_c Progress, join_handle_c ThreadHandle, notify::signal_c Signal>
 class WorkerPool
 {
 public:
@@ -31,8 +28,8 @@ public:
     WorkerPool & operator=(const WorkerPool &) = delete;
     WorkerPool & operator=(WorkerPool &&) = delete;
 public:
-    template <typename Factory, thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
-    void start(Factory make_progress, Launcher launcher = {})
+    template <typename Factory, thread_launcher_c<ThreadHandle> Launcher>
+    void start(Factory make_progress, Launcher launcher)
     {
         if (m_started) { return; }
         m_started = true;

@@ -1,11 +1,8 @@
 #pragma once
 
-#include <async/core/scheduling/WorkItem.h>
+#include <async/core/executable/declarations/concepts.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/queue/non_intrusive/spmc/Deque.h>
-#include <async/core/scheduling/executor/WorkStealingExecutor.h>
-#include <async/core/scheduling/executor/selectors/RoundRobinVictimSelector.h>
-#include <async/core/notify/SignalNotifier.h>
 #include <async/core/notify/declarations/concepts.h>
 
 #include <cstddef>
@@ -16,14 +13,14 @@
 namespace lcf::async::details {
 
 template <std::size_t queue_capacity,
-    template <typename, typename, typename, typename> class ExecutorPolicy = WorkStealingExecutor,
-    template <typename> class VictimSelector = RoundRobinVictimSelector,
-    typename Notifier = notify::SignalNotifier<>>
-requires (queue_capacity > 0) and notify::notifier_c<Notifier>
+    template <typename, typename, typename, typename> class ExecutorPolicy,
+    template <typename> class VictimSelector, typename Notifier,
+    cancellable_executable_c Executable>
+requires (queue_capacity > 0) and notify::notifier_c<Notifier> and linked_node_c<Executable>
 class ContextExecutor
 {
 public:
-    using Value = WorkItem;
+    using Value = Executable;
     Value * trySteal() noexcept
     {
         if (auto * executable_p = m_ready_queue.trySteal()) { return executable_p; }
@@ -32,7 +29,7 @@ public:
 private:
     using Inbox = queue::intrusive::mpmc::Queue<Value>;
     using ReadyQueue = queue::non_intrusive::spmc::Deque<Value, queue_capacity>;
-    using Self = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier>;
+    using Self = ContextExecutor<queue_capacity, ExecutorPolicy, VictimSelector, Notifier, Executable>;
     using Selector = VictimSelector<Self>;
     using Executor = ExecutorPolicy<Inbox, ReadyQueue, Selector, Notifier>;
 public:

@@ -1,13 +1,12 @@
 #pragma once
 
-#include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/declarations/concepts.h>
 
 #include <atomic>
 
 namespace lcf::async::details {
 
-template <notify::signal_c Signal = notify::AtomicSequenceSignal>
+template <notify::signal_c Signal>
 class WorkerControl
 {
 public:

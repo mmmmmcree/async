@@ -4,7 +4,6 @@
 #include <async/protocol.h>
 
 #include <concepts>
-#include <cstdint>
 #include <system_error>
 
 LCF_ASYNC_EXPORT
@@ -30,13 +29,6 @@ concept record_submitter_c = work_record_c<Record> and
     requires(Submitter & submitter, Record & record) {
         { submitter.submit(record) } noexcept -> std::same_as<std::error_code>;
     };
-
-template <typename Record>
-concept dispatch_record_c = work_record_c<Record> and requires(
-    Record & record, const Record & const_record, std::uint32_t target_index) {
-    { const_record.getTargetIndex() } noexcept -> std::same_as<std::uint32_t>;
-    { record.setTargetIndex(target_index) } noexcept -> std::same_as<void>;
-};
 
 template <typename Executor>
 concept work_executor_c = requires(Executor & executor, const Executor & const_executor) {

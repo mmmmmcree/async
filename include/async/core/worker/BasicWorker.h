@@ -1,18 +1,19 @@
 #pragma once
 
-#include <async/core/worker/thread/ThreadLauncher.h>
+#include <async/core/worker/thread/declarations/concepts.h>
 #include <async/core/worker/declarations/concepts.h>
 #include <async/core/worker/declarations/enums.h>
 
 #include <atomic>
 #include <cassert>
 #include <concepts>
+#include <type_traits>
 #include <utility>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <worker_progress_c Progress, worker_waiter_c Waiter, join_handle_c ThreadHandle = NullThreadHandle>
+template <worker_progress_c Progress, worker_waiter_c Waiter, join_handle_c ThreadHandle>
 class BasicWorker
 {
     static void run_worker(void * state_p) noexcept

@@ -1,6 +1,8 @@
 #pragma once
 
 #include <async/core/declarations/concepts.h>
+#include <async/core/executable/declarations/concepts.h>
+#include <async/core/executable/ExecutableNode.h>
 #include <async/core/notify/declarations/concepts.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/SignalNotifier.h>
@@ -11,8 +13,7 @@
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
 #include <async/core/queue/non_intrusive/spmc/Deque.h>
 #include <async/core/scheduling/declarations/concepts.h>
-#include <async/core/scheduling/WorkItem.h>
-#include <async/core/scheduling/DispatchRequest.h>
+#include <async/core/scheduling/dispatcher/DispatchRequest.h>
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>
 #include <async/core/scheduling/dispatcher/declarations/concepts.h>

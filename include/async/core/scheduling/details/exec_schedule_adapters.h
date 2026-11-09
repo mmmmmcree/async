@@ -1,7 +1,7 @@
 #pragma once
 
-#include <async/core/scheduling/WorkItem.h>
-#include <async/core/scheduling/DispatchRequest.h>
+#include <async/core/executable/declarations/concepts.h>
+#include <async/core/scheduling/dispatcher/DispatchRequest.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/execution/operations.h>
 #include <async/execution/queries.h>
@@ -14,9 +14,10 @@ namespace lcf::async::details {
 
 using ScheduleCompletions = protocols::completion_signatures<exec::set_value_t(), exec::set_stopped_t()>;
 
-template <std::copyable Handle, receiver_of_c<ScheduleCompletions> Receiver>
+template <std::copyable Handle, callback_executable_c Executable, receiver_of_c<ScheduleCompletions> Receiver>
 class ScheduleOperation
 {
+    using DispatchRequest = ::lcf::async::DispatchRequest<Executable>;
 public:
     using operation_state_concept = protocols::operation_state_t;
 private:
@@ -41,7 +42,7 @@ public:
     ScheduleOperation(Handle handle, Receiver receiver) noexcept(
         std::is_nothrow_copy_constructible_v<Handle> and std::is_nothrow_move_constructible_v<Receiver>) :
         m_handle(handle), m_receiver(std::move(receiver)),
-        m_work_item(this, &execute, &cancel), m_request {m_work_item} {}
+        m_executable(this, &execute, &cancel), m_request {m_executable} {}
     ScheduleOperation(const ScheduleOperation &) = delete;
     ScheduleOperation & operator=(const ScheduleOperation &) = delete;
     ScheduleOperation(ScheduleOperation &&) = delete;
@@ -55,13 +56,14 @@ public:
 private:
     Handle m_handle;
     Receiver m_receiver;
-    WorkItem m_work_item;
+    Executable m_executable;
     DispatchRequest m_request;
 };
 
-template <std::copyable Handle>
+template <std::copyable Handle, callback_executable_c Executable>
 struct ScheduleSender
 {
+    using DispatchRequest = ::lcf::async::DispatchRequest<Executable>;
     using sender_concept = protocols::sender_t;
     using completion_signatures = ScheduleCompletions;
     struct Environment
@@ -95,9 +97,9 @@ public:
     Environment get_env() const noexcept { return Environment{m_scheduler}; }
     template <receiver_of_c<ScheduleCompletions> Receiver>
     requires record_submitter_c<Handle, DispatchRequest>
-    ScheduleOperation<Handle, Receiver> connect(Receiver receiver) const
+    ScheduleOperation<Handle, Executable, Receiver> connect(Receiver receiver) const
     {
-        return ScheduleOperation<Handle, Receiver> {m_scheduler, std::move(receiver)};
+        return ScheduleOperation<Handle, Executable, Receiver> {m_scheduler, std::move(receiver)};
     }
 private:
     Handle m_scheduler;

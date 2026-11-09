@@ -13,9 +13,12 @@ LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 // One driver at a time; inputs and outputs must outlive dispatching.
-template <dispatch_source_c Inputs, dispatch_router_c Router>
+template <dispatch_source_c Inputs, typename Router>
+requires dispatch_router_c<Router, typename Inputs::Value>
 class BasicDispatcher
 {
+    using DispatchRequest = typename Inputs::Value;
+    using Executable = std::remove_reference_t<decltype(std::declval<DispatchRequest &>().getExecutable())>;
 public:
     ~BasicDispatcher() noexcept = default;
     BasicDispatcher() = delete;
@@ -60,7 +63,7 @@ public:
         return not m_has_pending.load(std::memory_order_acquire) and m_inputs.isEmpty();
     }
     // Producers and the dispatcher driver must be quiescent.
-    void cancelPending() noexcept
+    void cancelPending() noexcept requires cancellable_executable_c<Executable>
     {
         while (auto * request_p = m_pending_head_p) {
             m_pending_head_p = request_p->getNext();

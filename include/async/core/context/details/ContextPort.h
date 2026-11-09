@@ -1,10 +1,9 @@
 #pragma once
 
-#include <async/core/scheduling/WorkItem.h>
+#include <async/core/executable/declarations/concepts.h>
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
-#include <async/core/scheduling/DispatchRequest.h>
+#include <async/core/scheduling/dispatcher/DispatchRequest.h>
 #include <async/core/scheduling/executor/BasicExecutor.h>
-#include <async/core/notify/SignalNotifier.h>
 #include <async/core/notify/declarations/concepts.h>
 
 #include <cstddef>
@@ -12,12 +11,15 @@
 
 namespace lcf::async::details {
 
-template <std::size_t queue_capacity, typename Notifier = notify::SignalNotifier<>>
+template <std::size_t queue_capacity, typename Notifier, cancellable_executable_c Executable>
 requires (queue_capacity > 0) and notify::notifier_c<Notifier>
 class ContextPort
 {
+public:
+    using DispatchRequest = ::lcf::async::DispatchRequest<Executable>;
+private:
     using SubmissionQueue = queue::non_intrusive::spsc::Queue<DispatchRequest, queue_capacity>;
-    using ExecutionQueue = queue::non_intrusive::spsc::Queue<WorkItem, queue_capacity>;
+    using ExecutionQueue = queue::non_intrusive::spsc::Queue<Executable, queue_capacity>;
 public:
     ~ContextPort() noexcept = default;
     ContextPort() = delete;
@@ -37,7 +39,7 @@ public:
     DispatchRequest * tryPopSubmission() noexcept { return m_submission_queue.tryPop(); }
     bool areSubmissionsEmpty() const noexcept { return m_submission_queue.isEmpty(); }
     void closeSubmissions() noexcept { m_submission_queue.close(); }
-    std::error_code tryEnqueueExecution(WorkItem & executable) noexcept { return m_execution_queue.tryEnqueue(executable); }
+    std::error_code tryEnqueueExecution(Executable & executable) noexcept { return m_execution_queue.tryEnqueue(executable); }
     bool executeOne() noexcept { return m_executor.executeOne(); }
     bool areExecutionsEmpty() const noexcept { return m_execution_queue.isEmpty(); }
     void cancelPendingExecutions() noexcept

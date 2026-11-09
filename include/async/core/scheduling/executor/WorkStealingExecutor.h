@@ -1,10 +1,8 @@
 #pragma once
 
 #include <async/core/queue/declarations/concepts.h>
-#include <async/core/notify/NoopNotifier.h>
 #include <async/core/notify/declarations/concepts.h>
 #include <async/core/scheduling/executor/BasicExecutor.h>
-#include <async/core/scheduling/executor/selectors/RoundRobinVictimSelector.h>
 
 #include <cstddef>
 #include <type_traits>
@@ -14,8 +12,7 @@ LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <work_queue_c Inbox, stealable_work_queue_c ReadyQueue,
-    stealable_work_source_c VictimSelector = RoundRobinVictimSelector<ReadyQueue>,
-    notify::notifier_c Notifier = notify::NoopNotifier>
+    stealable_work_source_c VictimSelector, notify::notifier_c Notifier>
 requires std::same_as<typename Inbox::Value, typename ReadyQueue::Value>
     and std::same_as<typename Inbox::Value, typename VictimSelector::Value>
 class WorkStealingExecutor

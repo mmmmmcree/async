@@ -3,10 +3,14 @@
 #include "ContextInfo.h"
 #include "SubmissionPort.h"
 #include <async/core/context/declarations/poll_structs.h>
+#include <async/core/executable/ExecutableNode.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/context/details/OwnerThreadState.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
+#include <async/core/scheduling/executor/WorkStealingExecutor.h>
+#include <async/core/scheduling/executor/selectors/RoundRobinVictimSelector.h>
+#include <async/core/worker/thread/ThreadLauncher.h>
 
 #include <algorithm>
 #include <cassert>
@@ -28,18 +32,19 @@ template <join_handle_c ThreadHandle = std::thread, std::size_t queue_capacity =
     template <typename, typename, typename, typename> class Executor = WorkStealingExecutor,
     template <typename> class VictimSelector = RoundRobinVictimSelector,
     notify::signal_c Signal = notify::AtomicSequenceSignal,
-    typename Notifier = notify::SignalNotifier<Signal>>
+    typename Notifier = notify::SignalNotifier<Signal>,
+    cancellable_executable_c Executable = ExecutableNode>
 requires (queue_capacity > 0) and
     std::is_nothrow_default_constructible_v<Signal> and
-    notify::signal_notifier_c<Notifier, Signal>
+    notify::signal_notifier_c<Notifier, Signal> and linked_node_c<Executable>
 class BasicContext
 {
 private:
-    using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, Executor, VictimSelector, Signal, Notifier>;
+    using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, Executor, VictimSelector, Signal, Notifier, Executable>;
     using WorkerPool = WorkerPool<typename SchedulingRuntime::WorkerProgress, ThreadHandle, Signal>;
-    using SubmissionPort = ::lcf::async::SubmissionPort<SchedulingRuntime>;
+    using SubmissionPort = ::lcf::async::SubmissionPort<SchedulingRuntime, Executable>;
     using PortSubmitter = std::remove_reference_t<decltype(std::declval<SchedulingRuntime &>().getPort(0))>;
-    using DedicatedSubmissionPort = ::lcf::async::SubmissionPort<PortSubmitter>;
+    using DedicatedSubmissionPort = ::lcf::async::SubmissionPort<PortSubmitter, Executable>;
 public:
     BasicContext() = default;
     ~BasicContext() noexcept
