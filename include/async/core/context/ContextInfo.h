@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <exception>
+#include <expected>
 #include <limits>
 #include <memory_resource>
 #include <thread>
@@ -68,7 +69,7 @@ public:
     }
     std::pmr::memory_resource & getRuntimeMemoryResource() const noexcept { return *m_runtime_resource_p; }
     std::pmr::memory_resource & getWorkerMemoryResource() const noexcept { return *m_worker_resource_p; }
-    template <join_handle_c ThreadHandle = std::thread, std::size_t queue_capacity = 256,
+    template <join_handle_c ThreadHandle = std::thread, std::uint64_t queue_capacity = 256,
         template <typename, typename, typename, typename> class Executor = WorkStealingExecutor,
         template <typename> class VictimSelector = RoundRobinVictimSelector,
         notify::signal_c Signal = notify::AtomicSequenceSignal,
@@ -80,8 +81,9 @@ public:
     {
         using SchedulingRuntime = details::ContextSchedulingRuntime<queue_capacity, Executor, VictimSelector, Signal, Notifier, Executable>;
         using Worker = typename WorkerPool<typename SchedulingRuntime::WorkerProgress, ThreadHandle, Signal>::Worker;
-        const auto max_size = std::numeric_limits<std::size_t>::max();
-        const auto expected_runtime_requirements = SchedulingRuntime::calc_storage_requirements(m_worker_count, m_dispatcher_count, m_port_count);
+        const std::size_t max_size = std::numeric_limits<std::size_t>::max();
+        const auto expected_runtime_requirements =
+            SchedulingRuntime::calc_storage_requirements(m_worker_count, m_dispatcher_count, m_port_count);
         const bool is_worker_size_overflow = m_worker_count > max_size / sizeof(Worker);
         const bool is_runtime_size_overflow = not expected_runtime_requirements;
         if (is_runtime_size_overflow or is_worker_size_overflow) { std::terminate(); }

@@ -3,7 +3,7 @@
 #include <async/config/macros.h>
 
 #include <array>
-#include <cstddef>
+#include <cstdint>
 #include <mutex>
 #include <system_error>
 
@@ -11,7 +11,7 @@ LCF_ASYNC_EXPORT
 namespace lcf::async::queue::non_intrusive::spmc {
 
 // One owner pushes/pops the back; thieves remove from the front.
-template <typename Item, std::size_t queue_capacity = 256>
+template <typename Item, std::uint64_t queue_capacity = 256>
 requires (queue_capacity > 0)
 class Deque
 {
@@ -64,8 +64,8 @@ public:
 private:
     mutable std::mutex m_mutex;
     std::array<Value *, queue_capacity> m_slots{};
-    std::size_t m_front = 0;
-    std::size_t m_size = 0;
+    std::uint64_t m_front = 0;
+    std::uint64_t m_size = 0;
     bool m_closed = false;
 };
 

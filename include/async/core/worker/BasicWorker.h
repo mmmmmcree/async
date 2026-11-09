@@ -18,7 +18,7 @@ class BasicWorker
 {
     static void run_worker(void * state_p) noexcept
     {
-        auto & worker = *static_cast<BasicWorker *>(state_p);
+        BasicWorker & worker = *static_cast<BasicWorker *>(state_p);
         while (worker.waitAndExecuteOne()) {}
     }
 public:

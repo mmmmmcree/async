@@ -28,13 +28,13 @@ void * aligned_storage(std::vector<std::byte> & bytes, std::size_t alignment, st
 
 struct BranchResult
 {
-    int m_value;
+    std::int32_t m_value;
     std::thread::id m_worker_thread;
 };
 
 struct GraphResult
 {
-    int m_value;
+    std::int32_t m_value;
     std::thread::id m_left_thread;
     std::thread::id m_right_thread;
     std::thread::id m_continuation_thread;
@@ -177,7 +177,7 @@ int main()
             bool caller_completed = false;
             auto operation = ex::connect(std::move(graph), Receiver{&context, &outcome, &caller_completed, caller_thread});
             ex::start(operation);
-            std::size_t heartbeat_count = 0;
+            std::uint64_t heartbeat_count = 0;
             auto time = std::chrono::steady_clock::now();
             while (not caller_completed) {
                 auto elapsed = std::chrono::steady_clock::now() - time;

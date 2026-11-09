@@ -30,7 +30,7 @@
 
 namespace lcf::async::details {
 
-template <std::size_t queue_capacity,
+template <std::uint64_t queue_capacity,
     template <typename, typename, typename, typename> class ExecutorPolicy,
     template <typename> class VictimSelector, notify::signal_c Signal,
     typename Notifier, cancellable_executable_c Executable>
@@ -51,7 +51,7 @@ private:
     {
         DispatchReport report;
         for (auto & dispatcher : dispatchers) {
-            const auto dispatched = dispatcher.dispatch();
+            const DispatchReport dispatched = dispatcher.dispatch();
             report.m_received += dispatched.m_received;
             report.m_dispatched += dispatched.m_dispatched;
         }
@@ -59,17 +59,17 @@ private:
     }
 public:
     static StorageRequirementsResult calc_storage_requirements(
-        std::size_t worker_count, std::size_t dispatcher_count, std::size_t port_count) noexcept
+        std::uint64_t worker_count, std::uint64_t dispatcher_count, std::uint64_t port_count) noexcept
     {
         struct StorageSegment
         {
-            std::size_t m_count;
+            std::uint64_t m_count;
             std::size_t m_element_size;
             std::size_t m_alignment;
         };
-        const auto max_size = std::numeric_limits<std::size_t>::max();
-        const auto executor_count = std::max<std::size_t>(worker_count, 1);
-        const auto executor_view_count = executor_count + 1;
+        const std::size_t max_size = std::numeric_limits<std::size_t>::max();
+        const std::uint64_t executor_count = std::max<std::uint64_t>(worker_count, 1);
+        const std::uint64_t executor_view_count = executor_count + 1;
         bool size_overflow = executor_count == max_size;
         const std::array<StorageSegment, 4> segments {{
             {executor_count, sizeof(Executor), alignof(Executor)},
@@ -80,12 +80,12 @@ public:
         std::size_t size_in_bytes = 0;
         std::size_t storage_alignment = 1;
         for (const auto & [count, element_size, alignment] : segments) {
-            const auto padding = (alignment - size_in_bytes % alignment) % alignment;
-            const auto padded_size = size_in_bytes + padding;
+            const std::size_t padding = (alignment - size_in_bytes % alignment) % alignment;
+            const std::size_t padded_size = size_in_bytes + padding;
             const bool padding_overflow = size_in_bytes > max_size - padding;
             const bool segment_overflow = count > (max_size - padded_size) / element_size;
             size_overflow |= padding_overflow or segment_overflow;
-            size_in_bytes = padded_size + count * element_size;
+            size_in_bytes = padded_size + static_cast<std::size_t>(count) * element_size;
             storage_alignment = std::max(storage_alignment, alignment);
         }
         if (size_overflow) { return std::unexpected {std::make_error_code(std::errc::value_too_large)}; }
@@ -119,26 +119,26 @@ public:
     ContextSchedulingRuntime & operator=(const ContextSchedulingRuntime &) = delete;
     ContextSchedulingRuntime & operator=(ContextSchedulingRuntime &&) = delete;
 public:
-    void create(std::uint32_t scheduler_count, std::size_t worker_count,
-        std::size_t dispatcher_count, std::size_t port_count, std::pmr::memory_resource & resource)
+    void create(std::uint32_t scheduler_count, std::uint64_t worker_count,
+        std::uint64_t dispatcher_count, std::uint64_t port_count, std::pmr::memory_resource & resource)
     {
-        const auto executor_count = std::max<std::size_t>(worker_count, 1);
+        const std::uint64_t executor_count = std::max<std::uint64_t>(worker_count, 1);
         FixedCapacityVector<Executor> worker_executors {executor_count, {&resource}};
         FixedCapacityVector<Port> ports {port_count, {&resource}};
         FixedCapacityVector<Dispatcher> dispatchers {dispatcher_count, {&resource}};
         FixedCapacityVector<ExecutorView> executor_views {executor_count + 1, {&resource}};
-        const auto executor_span = std::span {worker_executors.data(), executor_count};
-        for (std::size_t executor_index = 0; executor_index < executor_count; ++executor_index) {
+        const std::span<Executor> executor_span {worker_executors.data(), executor_count};
+        for (std::uint64_t executor_index = 0; executor_index < executor_count; ++executor_index) {
             worker_executors.emplace_back(executor_span, executor_index, m_notifier);
         }
-        for (std::size_t port_index = 0; port_index < port_count; ++port_index) {
+        for (std::uint64_t port_index = 0; port_index < port_count; ++port_index) {
             ports.emplace_back(m_notifier);
         }
-        const auto ports_per_dispatcher = std::max<std::size_t>(
+        const std::uint64_t ports_per_dispatcher = std::max<std::uint64_t>(
             port_count / dispatcher_count + (port_count % dispatcher_count != 0), 1);
-        auto remaining_ports = std::span {ports};
-        for (std::size_t dispatcher_index = 0; dispatcher_index < dispatcher_count; ++dispatcher_index) {
-            const auto assigned_port_count = std::min(ports_per_dispatcher, remaining_ports.size());
+        std::span<Port> remaining_ports {ports};
+        for (std::uint64_t dispatcher_index = 0; dispatcher_index < dispatcher_count; ++dispatcher_index) {
+            const std::uint64_t assigned_port_count = std::min<std::uint64_t>(ports_per_dispatcher, remaining_ports.size());
             dispatchers.emplace_back(*this, dispatcher_index, remaining_ports.first(assigned_port_count));
             remaining_ports = remaining_ports.subspan(assigned_port_count);
         }
@@ -155,18 +155,18 @@ public:
     std::error_code submit(DispatchRequest & request) noexcept
     {
         if (this->areSubmissionsClosed()) { return std::make_error_code(std::errc::operation_canceled); }
-        const auto dispatcher_index = m_next_dispatcher_index.fetch_add(1, std::memory_order_relaxed) % m_dispatchers.size();
-        const auto error = m_dispatchers[dispatcher_index].accept(request);
-        if (not error) { m_signal.notifyAll(); }
-        return error;
+        const std::uint64_t dispatcher_index = m_next_dispatcher_index.fetch_add(1, std::memory_order_relaxed) % m_dispatchers.size();
+        const std::error_code error_code = m_dispatchers[dispatcher_index].accept(request);
+        if (not error_code) { m_signal.notifyAll(); }
+        return error_code;
     }
-    WorkerProgress getWorkerProgress(std::size_t worker_index) noexcept
+    WorkerProgress getWorkerProgress(std::uint64_t worker_index) noexcept
     {
-        const auto executor_count = m_worker_executors.size();
-        const auto dispatchers_per_worker = m_dispatchers.size() / executor_count;
-        const auto extra_dispatchers = m_dispatchers.size() % executor_count;
-        const auto first_dispatcher_index = worker_index * dispatchers_per_worker + std::min(worker_index, extra_dispatchers);
-        const auto assigned_dispatcher_count = dispatchers_per_worker + (worker_index < extra_dispatchers);
+        const std::uint64_t executor_count = m_worker_executors.size();
+        const std::uint64_t dispatchers_per_worker = m_dispatchers.size() / executor_count;
+        const std::uint64_t extra_dispatchers = m_dispatchers.size() % executor_count;
+        const std::uint64_t first_dispatcher_index = worker_index * dispatchers_per_worker + std::min(worker_index, extra_dispatchers);
+        const std::uint64_t assigned_dispatcher_count = dispatchers_per_worker + (worker_index < extra_dispatchers);
         return {*this, m_worker_executors[worker_index],
             std::span {m_dispatchers}.subspan(first_dispatcher_index, assigned_dispatcher_count)};
     }
@@ -177,11 +177,11 @@ public:
                 return include_worker_work ? this->executeNext() : m_owner_executor.executeOne();
             });
     }
-    PollReport pollPortOne(std::size_t port_index) noexcept
+    PollReport pollPortOne(std::uint64_t port_index) noexcept
     {
         return this->pollOnce({}, [this, port_index]() noexcept { return m_ports[port_index].executeOne(); });
     }
-    Port & getPort(std::size_t port_index) noexcept { return m_ports[port_index]; }
+    Port & getPort(std::uint64_t port_index) noexcept { return m_ports[port_index]; }
     void closeSubmissions() noexcept
     {
         m_submissions_closed.store(true, std::memory_order_release);
@@ -192,7 +192,7 @@ public:
     void cancelPending() noexcept
     {
         std::ranges::for_each(m_dispatchers, &Dispatcher::cancelPending);
-        while (auto * executable_p = m_owner_queue.tryPop()) { executable_p->cancel(); }
+        while (Executable * executable_p = m_owner_queue.tryPop()) { executable_p->cancel(); }
         std::ranges::for_each(m_worker_executors, &Executor::cancelPending);
         std::ranges::for_each(m_ports, &Port::cancelPendingExecutions);
     }
@@ -212,20 +212,20 @@ public:
     Signal & getSignal() noexcept { return m_signal; }
 private:
     std::error_code tryRoute(
-        std::size_t dispatcher_index,
+        std::uint64_t dispatcher_index,
         RoundRobinTargetSelector & executor_selector,
         DispatchRequest & request) noexcept
     {
-        const auto target_index = request.getTargetIndex();
+        const std::uint32_t target_index = request.getTargetIndex();
         if (target_index == k_owner_scheduler_index) {
             return m_owner_queue.tryEnqueue(request.getExecutable());
         }
         if (target_index < m_scheduler_count) {
-            const auto executor_index = executor_selector.select(m_worker_executors.size());
+            const std::uint64_t executor_index = executor_selector.select(m_worker_executors.size());
             return m_worker_executors[executor_index].tryEnqueue(request.getExecutable());
         }
-        const auto port_index = target_index - m_scheduler_count;
-        const auto port_dispatcher_index = port_index / m_ports_per_dispatcher;
+        const std::uint64_t port_index = target_index - m_scheduler_count;
+        const std::uint64_t port_dispatcher_index = port_index / m_ports_per_dispatcher;
         if (port_dispatcher_index == dispatcher_index) {
             return m_ports[port_index].tryEnqueueExecution(request.getExecutable());
         }
@@ -241,7 +241,7 @@ private:
     {
         PollReport report;
         m_active_poll_count.fetch_add(1, std::memory_order_acq_rel);
-        const auto dispatched = dispatch_requests(dispatchers);
+        const DispatchReport dispatched = dispatch_requests(dispatchers);
         report.m_records = execute_one();
         report.m_result = report.m_records ? PollResult::eExecuted
             : dispatched.hasProgress() ? PollResult::eDispatched : PollResult::eIdle;
@@ -251,8 +251,8 @@ private:
     }
     bool executeNext() noexcept
     {
-        for (std::size_t attempt = 0; attempt < m_executor_views.size(); ++attempt) {
-            auto & executor = m_executor_views[m_next_executor_index];
+        for (std::uint64_t attempt = 0; attempt < m_executor_views.size(); ++attempt) {
+            ExecutorView & executor = m_executor_views[m_next_executor_index];
             if (++m_next_executor_index == m_executor_views.size()) { m_next_executor_index = 0; }
             if (executor.executeOne()) { return true; }
         }
@@ -267,12 +267,12 @@ private:
     FixedCapacityVector<Port> m_ports;
     FixedCapacityVector<Dispatcher> m_dispatchers;
     FixedCapacityVector<ExecutorView> m_executor_views;
-    std::atomic<std::size_t> m_next_dispatcher_index {0};
-    std::atomic<std::size_t> m_active_poll_count {0};
+    std::atomic<std::uint64_t> m_next_dispatcher_index {0};
+    std::atomic<std::uint64_t> m_active_poll_count {0};
     std::atomic<bool> m_submissions_closed {true};
-    std::size_t m_scheduler_count = 0;
-    std::size_t m_ports_per_dispatcher = 1;
-    std::size_t m_next_executor_index = 0;
+    std::uint64_t m_scheduler_count = 0;
+    std::uint64_t m_ports_per_dispatcher = 1;
+    std::uint64_t m_next_executor_index = 0;
 };
 
 template <typename SchedulingRuntime, dispatch_record_c DispatchRequest>

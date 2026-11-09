@@ -4,14 +4,14 @@
 
 #include <array>
 #include <atomic>
-#include <cstddef>
+#include <cstdint>
 #include <system_error>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async::queue::non_intrusive::spsc {
 
 // close() requires the producer to be quiescent.
-template <typename Item, std::size_t queue_capacity = 256>
+template <typename Item, std::uint64_t queue_capacity = 256>
 requires (queue_capacity > 0)
 class Queue
 {
@@ -29,8 +29,8 @@ public:
     std::error_code tryEnqueue(Value & value) noexcept
     {
         if (m_closed.load(std::memory_order_acquire)) { return std::make_error_code(std::errc::operation_canceled); }
-        const auto write = m_write.load(std::memory_order_relaxed);
-        const auto next = advance(write);
+        const std::uint64_t write = m_write.load(std::memory_order_relaxed);
+        const std::uint64_t next = advance(write);
         if (next == m_read.load(std::memory_order_acquire)) { return std::make_error_code(std::errc::no_buffer_space); }
         m_slots[write] = &value;
         m_write.store(next, std::memory_order_release);
@@ -38,7 +38,7 @@ public:
     }
     Value * tryPop() noexcept
     {
-        const auto read = m_read.load(std::memory_order_relaxed);
+        const std::uint64_t read = m_read.load(std::memory_order_relaxed);
         if (read == m_write.load(std::memory_order_acquire)) { return nullptr; }
         auto * value_p = m_slots[read];
         m_read.store(advance(read), std::memory_order_release);
@@ -49,13 +49,13 @@ public:
     {
         return m_read.load(std::memory_order_acquire) == m_write.load(std::memory_order_acquire);
     }
-    static constexpr std::size_t capacity() noexcept { return queue_capacity; }
+    static constexpr std::uint64_t capacity() noexcept { return queue_capacity; }
 private:
-    static constexpr std::size_t advance(std::size_t index) noexcept { return index == queue_capacity ? 0 : index + 1; }
+    static constexpr std::uint64_t advance(std::uint64_t index) noexcept { return index == queue_capacity ? 0 : index + 1; }
 private:
     std::array<Value *, queue_capacity + 1> m_slots{};
-    alignas(64) std::atomic<std::size_t> m_write{0};
-    alignas(64) std::atomic<std::size_t> m_read{0};
+    alignas(64) std::atomic<std::uint64_t> m_write{0};
+    alignas(64) std::atomic<std::uint64_t> m_read{0};
     std::atomic<bool> m_closed{false};
 };
 

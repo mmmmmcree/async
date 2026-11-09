@@ -25,12 +25,12 @@ public:
 private:
     static void cancel(void * state_p) noexcept
     {
-        auto & operation = *static_cast<ScheduleOperation *>(state_p);
+        ScheduleOperation & operation = *static_cast<ScheduleOperation *>(state_p);
         exec::set_stopped(std::move(operation.m_receiver));
     }
     static void execute(void * state_p) noexcept
     {
-        auto & operation = *static_cast<ScheduleOperation *>(state_p);
+        ScheduleOperation & operation = *static_cast<ScheduleOperation *>(state_p);
         const auto & environment = exec::get_env(operation.m_receiver);
         if (exec::get_stop_token(environment).stop_requested()) {
             cancel(state_p);
@@ -53,7 +53,7 @@ public:
     void start() & noexcept
     requires record_submitter_c<Handle, DispatchRequest>
     {
-        const auto ec = m_handle.submit(m_request);
+        const std::error_code ec = m_handle.submit(m_request);
         if (not ec) { return; }
         if (ec == std::errc::operation_canceled) { exec::set_stopped(std::move(m_receiver)); }
         else { exec::set_error(std::move(m_receiver), ec); }

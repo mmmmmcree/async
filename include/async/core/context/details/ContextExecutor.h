@@ -5,14 +5,14 @@
 #include <async/core/queue/non_intrusive/spmc/Deque.h>
 #include <async/core/notify/declarations/concepts.h>
 
-#include <cstddef>
+#include <cstdint>
 #include <span>
 #include <system_error>
 #include <utility>
 
 namespace lcf::async::details {
 
-template <std::size_t queue_capacity,
+template <std::uint64_t queue_capacity,
     template <typename, typename, typename, typename> class ExecutorPolicy,
     template <typename> class VictimSelector, typename Notifier,
     cancellable_executable_c Executable>
@@ -35,7 +35,7 @@ private:
 public:
     ~ContextExecutor() noexcept = default;
     ContextExecutor() = delete;
-    ContextExecutor(std::span<Self> executors, std::size_t executor_index, Notifier notifier) :
+    ContextExecutor(std::span<Self> executors, std::uint64_t executor_index, Notifier notifier) :
         m_executor(m_inbox, m_ready_queue, Selector {executors, executor_index}, std::move(notifier)) {}
     ContextExecutor(const ContextExecutor &) = delete;
     ContextExecutor(ContextExecutor &&) = delete;

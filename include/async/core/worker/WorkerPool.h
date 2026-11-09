@@ -6,6 +6,7 @@
 #include <async/core/notify/declarations/concepts.h>
 
 #include <algorithm>
+#include <cstdint>
 #include <utility>
 
 LCF_ASYNC_EXPORT
@@ -34,7 +35,7 @@ public:
         if (m_started) { return; }
         m_started = true;
         try {
-            for (std::size_t index = 0; index < m_workers.capacity(); ++index) {
+            for (std::uint64_t index = 0; index < m_workers.capacity(); ++index) {
                 m_workers.emplace_back(launcher, make_progress(index), m_control);
             }
         } catch (...) {

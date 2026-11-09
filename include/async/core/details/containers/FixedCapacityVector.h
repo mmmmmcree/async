@@ -93,7 +93,7 @@ public:
     void pop_back() noexcept
     {
         assert(not this->empty());
-        const auto new_size = this->size() - 1;
+        const size_type new_size = this->size() - 1;
         m_elements = m_elements.first(new_size);
         if constexpr (not std::is_trivially_destructible_v<Value>) {
             std::destroy_at(this->data() + new_size);
@@ -123,7 +123,7 @@ private:
 private:
     std::pmr::memory_resource * m_resource_p = std::pmr::null_memory_resource();
     std::span<Value> m_elements;
-    std::size_t m_capacity = 0;
+    size_type m_capacity = 0;
 };
 
 } // namespace lcf::async::details

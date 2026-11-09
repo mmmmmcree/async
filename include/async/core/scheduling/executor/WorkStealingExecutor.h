@@ -4,7 +4,7 @@
 #include <async/core/notify/declarations/concepts.h>
 #include <async/core/scheduling/executor/BasicExecutor.h>
 
-#include <cstddef>
+#include <cstdint>
 #include <type_traits>
 #include <utility>
 
@@ -32,7 +32,7 @@ public:
     {
         if (BasicExecutor{*m_ready_p}.executeOne()) { return true; }
         bool published = false;
-        for (std::size_t count = 0; count < 16; ++count) {
+        for (std::uint64_t count = 0; count < 16; ++count) {
             auto * incoming_p = m_inbox_p->tryPop();
             if (not incoming_p) { break; }
             if (m_ready_p->tryEnqueue(*incoming_p)) {

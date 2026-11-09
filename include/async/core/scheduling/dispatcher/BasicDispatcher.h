@@ -5,7 +5,7 @@
 #include <async/core/scheduling/dispatcher/declarations/structs.h>
 
 #include <atomic>
-#include <cstddef>
+#include <cstdint>
 #include <system_error>
 #include <utility>
 #include <type_traits>
@@ -32,14 +32,14 @@ public:
     BasicDispatcher & operator=(const BasicDispatcher &) = delete;
     BasicDispatcher & operator=(BasicDispatcher &&) = delete;
 public:
-    DispatchReport dispatch(std::size_t max_attempts = 64) noexcept
+    DispatchReport dispatch(std::uint64_t max_attempts = 64) noexcept
     {
         DispatchReport report;
-        for (std::size_t attempt = 0; attempt < max_attempts; ++attempt) {
-            auto * request_p = this->takeRequest(report);
+        for (std::uint64_t attempt = 0; attempt < max_attempts; ++attempt) {
+            DispatchRequest * request_p = this->takeRequest(report);
             if (not request_p) { break; }
             m_retry_pending = not m_retry_pending;
-            const auto error_code = m_router.route(*request_p);
+            const std::error_code error_code = m_router.route(*request_p);
             // Publication may destroy the operation. Do not touch request on success.
             if (not error_code) {
                 ++report.m_dispatched;
@@ -60,9 +60,9 @@ public:
     // Producers and the dispatcher driver must be quiescent.
     void cancelPending() noexcept requires cancellable_executable_c<Executable>
     {
-        while (auto * request_p = m_pending_queue.popFront()) { request_p->getExecutable().cancel(); }
+        while (DispatchRequest * request_p = m_pending_queue.popFront()) { request_p->getExecutable().cancel(); }
         m_has_pending.store(false, std::memory_order_release);
-        while (auto * request_p = m_inputs.tryPop()) {
+        while (DispatchRequest * request_p = m_inputs.tryPop()) {
             request_p->getExecutable().cancel();
         }
     }
@@ -70,7 +70,7 @@ private:
     DispatchRequest * takeRequest(DispatchReport & report) noexcept
     {
         if (m_retry_pending and not m_pending_queue.isEmpty()) { return m_pending_queue.popFront(); }
-        if (auto * request_p = m_inputs.tryPop()) {
+        if (DispatchRequest * request_p = m_inputs.tryPop()) {
             ++report.m_received;
             request_p->setNext(nullptr);
             return request_p;

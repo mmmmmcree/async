@@ -6,12 +6,12 @@
 #include <async/core/scheduling/executor/BasicExecutor.h>
 #include <async/core/notify/declarations/concepts.h>
 
-#include <cstddef>
+#include <cstdint>
 #include <system_error>
 
 namespace lcf::async::details {
 
-template <std::size_t queue_capacity, typename Notifier, cancellable_executable_c Executable>
+template <std::uint64_t queue_capacity, typename Notifier, cancellable_executable_c Executable>
 requires (queue_capacity > 0) and notify::notifier_c<Notifier>
 class ContextPort
 {
@@ -32,9 +32,9 @@ public:
 public:
     std::error_code submit(DispatchRequest & request) noexcept
     {
-        const auto error = m_submission_queue.tryEnqueue(request);
-        if (not error) { m_notifier_p->notifyAll(); }
-        return error;
+        const std::error_code error_code = m_submission_queue.tryEnqueue(request);
+        if (not error_code) { m_notifier_p->notifyAll(); }
+        return error_code;
     }
     DispatchRequest * tryPopSubmission() noexcept { return m_submission_queue.tryPop(); }
     bool areSubmissionsEmpty() const noexcept { return m_submission_queue.isEmpty(); }
@@ -44,7 +44,7 @@ public:
     bool areExecutionsEmpty() const noexcept { return m_execution_queue.isEmpty(); }
     void cancelPendingExecutions() noexcept
     {
-        while (auto * executable_p = m_execution_queue.tryPop()) { executable_p->cancel(); }
+        while (Executable * executable_p = m_execution_queue.tryPop()) { executable_p->cancel(); }
     }
 private:
     SubmissionQueue m_submission_queue;

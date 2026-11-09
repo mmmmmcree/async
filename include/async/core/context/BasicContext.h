@@ -15,7 +15,6 @@
 #include <algorithm>
 #include <cassert>
 #include <chrono>
-#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <new>
@@ -28,7 +27,7 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <join_handle_c ThreadHandle = std::thread, std::size_t queue_capacity = 256,
+template <join_handle_c ThreadHandle = std::thread, std::uint64_t queue_capacity = 256,
     template <typename, typename, typename, typename> class Executor = WorkStealingExecutor,
     template <typename> class VictimSelector = RoundRobinVictimSelector,
     notify::signal_c Signal = notify::AtomicSequenceSignal,
@@ -67,7 +66,7 @@ public:
             return std::make_error_code(std::errc::invalid_argument);
         }
         try {
-            const std::size_t thread_count = info.getWorkerCount();
+            const std::uint64_t thread_count = info.getWorkerCount();
             typename WorkerPool::WorkerList workers {thread_count, {&info.getWorkerMemoryResource()}};
             m_scheduling_runtime.create(info.getSchedulerCount(), info.getWorkerCount(),
                 info.getDispatcherCount(), info.getSubmissionPortCount(), info.getRuntimeMemoryResource());
@@ -102,18 +101,18 @@ public:
     {
         const details::OwnerThreadGuard guard {m_owner_state};
         try {
-            m_worker_pool.start([this](std::size_t index) noexcept {
+            m_worker_pool.start([this](std::uint64_t index) noexcept {
                 return m_scheduling_runtime.getWorkerProgress(index);
             }, std::move(launcher));
         } catch (...) {
             this->requestStopProcessing();
             throw;
         }
-        auto & signal = m_scheduling_runtime.getSignal();
+        Signal & signal = m_scheduling_runtime.getSignal();
         for (;;) {
             const auto observed = signal.observe();
             if (m_worker_pool.isStopRequested()) { break; }
-            const auto report = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
+            const PollReport report = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
             if (report.hasProgress()) { continue; }
             if (m_scheduling_runtime.areSubmissionsClosed()) {
                 if (m_scheduling_runtime.isIdle()) { break; }
@@ -131,11 +130,11 @@ public:
     {
         using Clock = std::chrono::steady_clock;
         const details::OwnerThreadGuard guard {m_owner_state};
-        const auto started = Clock::now();
+        const Clock::time_point started = Clock::now();
         PollReport report;
         while (report.m_records < budget.m_max_records) {
             if (Clock::now() - started >= budget.m_max_duration) { break; }
-            const auto polled = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
+            const PollReport polled = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
             report.m_records += polled.m_records;
             report.m_result = std::max(report.m_result, polled.getResult());
             if (not polled.hasProgress()) { break; }

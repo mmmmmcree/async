@@ -2,7 +2,7 @@
 
 #include <async/config/macros.h>
 
-#include <cstddef>
+#include <cstdint>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
@@ -10,15 +10,15 @@ namespace lcf::async {
 class RoundRobinTargetSelector
 {
 public:
-    explicit RoundRobinTargetSelector(std::size_t start_index = 0) noexcept : m_next_index(start_index) {}
-    std::size_t select(std::size_t target_count) noexcept
+    explicit RoundRobinTargetSelector(std::uint64_t start_index = 0) noexcept : m_next_index(start_index) {}
+    std::uint64_t select(std::uint64_t target_count) noexcept
     {
-        const auto index = m_next_index % target_count;
+        const std::uint64_t index = m_next_index % target_count;
         m_next_index = index + 1;
         return index;
     }
 private:
-    std::size_t m_next_index;
+    std::uint64_t m_next_index;
 };
 
 } // namespace lcf::async

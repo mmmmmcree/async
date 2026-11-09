@@ -5,7 +5,7 @@
 #include <async/core/scheduling/dispatcher/selectors/RoundRobinTargetSelector.h>
 
 #include <algorithm>
-#include <cstddef>
+#include <cstdint>
 #include <ranges>
 #include <span>
 #include <system_error>
@@ -18,7 +18,7 @@ class ContextTargetRouter
 public:
     ~ContextTargetRouter() noexcept = default;
     ContextTargetRouter() = delete;
-    ContextTargetRouter(SchedulingRuntime & runtime, std::size_t dispatcher_index) noexcept :
+    ContextTargetRouter(SchedulingRuntime & runtime, std::uint64_t dispatcher_index) noexcept :
         m_runtime_p(&runtime), m_dispatcher_index(dispatcher_index), m_executor_selector(dispatcher_index) {}
     ContextTargetRouter(const ContextTargetRouter &) noexcept = default;
     ContextTargetRouter(ContextTargetRouter &&) noexcept = default;
@@ -27,7 +27,7 @@ public:
     std::error_code route(DispatchRequest & request) noexcept;
 private:
     SchedulingRuntime * m_runtime_p;
-    std::size_t m_dispatcher_index;
+    std::uint64_t m_dispatcher_index;
     RoundRobinTargetSelector m_executor_selector;
 };
 
@@ -53,10 +53,10 @@ class ContextDispatcher
     public:
         DispatchRequest * tryPop() noexcept
         {
-            for (std::size_t attempt = 0; attempt <= m_ports.size(); ++attempt) {
-                const auto input_index = m_next_input_index;
+            for (std::uint64_t attempt = 0; attempt <= m_ports.size(); ++attempt) {
+                const std::uint64_t input_index = m_next_input_index;
                 if (++m_next_input_index > m_ports.size()) { m_next_input_index = 0; }
-                auto * request_p = input_index == m_ports.size() ? m_ingress_p->tryPop()
+                DispatchRequest * request_p = input_index == m_ports.size() ? m_ingress_p->tryPop()
                     : m_ports[input_index].tryPopSubmission();
                 if (request_p) { return request_p; }
             }
@@ -69,12 +69,12 @@ class ContextDispatcher
     private:
         Ingress * m_ingress_p;
         PortSpan m_ports;
-        std::size_t m_next_input_index = 0;
+        std::uint64_t m_next_input_index = 0;
     };
 public:
     ~ContextDispatcher() noexcept = default;
     ContextDispatcher() = delete;
-    ContextDispatcher(SchedulingRuntime & runtime, std::size_t dispatcher_index, PortSpan ports) :
+    ContextDispatcher(SchedulingRuntime & runtime, std::uint64_t dispatcher_index, PortSpan ports) :
         m_dispatcher(InputSource {m_ingress, ports}, Router {runtime, dispatcher_index}) {}
     ContextDispatcher(const ContextDispatcher &) = delete;
     ContextDispatcher(ContextDispatcher &&) = delete;
