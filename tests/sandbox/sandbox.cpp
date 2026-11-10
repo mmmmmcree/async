@@ -138,7 +138,6 @@ int main()
     }
 
     const auto shared_port = context.getSubmissionPort();
-    const auto owner_scheduler = shared_port.getOwnerSchedulerHandle();
 
     Outcome outcome;
 
@@ -169,9 +168,10 @@ int main()
                         lhs.m_worker_thread,
                         rhs.m_worker_thread,
                         std::this_thread::get_id()};
-                }) | ex::continues_on(owner_scheduler) |
-                ex::then([main_thread](GraphResult result) noexcept {
-                    if (std::this_thread::get_id() != main_thread) { std::terminate(); }
+                }) | ex::then([](GraphResult result) noexcept {
+                    std::cout << "graph result: " << result.m_value
+                        << " left scheduler thread id: " << result.m_left_thread
+                        << " right scheduler thread id: " << result.m_right_thread << '\n';
                     return result;
                 }) | ex::continues_on(caller_scheduler);
             bool caller_completed = false;

@@ -56,7 +56,7 @@ private:
     Inbox * m_inbox_p;
     ReadyQueue * m_ready_p;
     VictimSelector m_victim_selector;
-    [[no_unique_address]] Notifier m_notifier;
+    Notifier m_notifier;
 };
 
 } // namespace lcf::async

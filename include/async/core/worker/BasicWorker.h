@@ -16,9 +16,10 @@ namespace lcf::async {
 template <worker_progress_c Progress, worker_waiter_c Waiter, join_handle_c ThreadHandle>
 class BasicWorker
 {
+    using Self = BasicWorker<Progress, Waiter, ThreadHandle>;
     static void run_worker(void * state_p) noexcept
     {
-        BasicWorker & worker = *static_cast<BasicWorker *>(state_p);
+        Self & worker = *static_cast<Self *>(state_p);
         while (worker.waitAndExecuteOne()) {}
     }
 public:
@@ -42,7 +43,6 @@ public:
         assert(not m_thread_handle.joinable());
         run_worker(this);
     }
-    // Progress calls must not overlap.
     bool executeOne() noexcept
     {
         m_state.store(WorkerState::eExecuting, std::memory_order_relaxed);
@@ -52,7 +52,7 @@ public:
     }
     bool waitAndExecuteOne() noexcept
     {
-        for (;;) {
+        while (true) {
             const auto observed = m_waiter_p->observe();
             if (m_waiter_p->isStopRequested()) { break; }
             if (this->executeOne()) { return true; }
@@ -70,7 +70,7 @@ private:
     Progress m_progress;
     Waiter * m_waiter_p;
     std::atomic<WorkerState> m_state {WorkerState::eIdle};
-    [[no_unique_address]] ThreadHandle m_thread_handle;
+    ThreadHandle m_thread_handle;
 };
 
 } // namespace lcf::async
