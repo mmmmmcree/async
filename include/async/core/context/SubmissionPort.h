@@ -29,17 +29,12 @@ public:
 public:
     SchedulerHandle getSchedulerHandle(SchedulerToken token) const noexcept
     {
-        assert(token.getDomainId() == m_domain_id);
+        assert(token.getDomainId() == m_domain_id and token.getIndex() < m_scheduler_count);
         return SchedulerHandle {*m_submitter_p, m_domain_id, token.getIndex()};
     }
-    SchedulerHandle getOwnerSchedulerHandle() const noexcept
+    SchedulerHandle getSchedulerHandle(PortToken token) const noexcept
     {
-        return SchedulerHandle {*m_submitter_p, m_domain_id, details::k_owner_scheduler_index};
-    }
-    SchedulerHandle getPortSchedulerHandle(PortToken token) const noexcept
-    {
-        assert(token.getDomainId() == m_domain_id);
-        return SchedulerHandle {*m_submitter_p, m_domain_id, m_scheduler_count + token.getIndex()};
+        return this->getSchedulerHandle(token.getSchedulerToken());
     }
 private:
     Submitter * m_submitter_p;

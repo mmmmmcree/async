@@ -15,6 +15,7 @@ struct DispatchReport
 
     std::uint64_t m_received = 0;
     std::uint64_t m_dispatched = 0;
+    std::uint64_t m_attempted = 0;
     std::error_code m_error_code {};
 };
 

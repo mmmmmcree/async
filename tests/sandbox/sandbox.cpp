@@ -1,4 +1,4 @@
-#include "library_under_test.h"
+#include <async/config/execution_provider.h>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -10,6 +10,7 @@
 #include <thread>
 #include <utility>
 #include <vector>
+#include "library_under_test.h"
 
 
 namespace async = lcf::async;
@@ -62,9 +63,9 @@ struct Receiver
 public:
     ~Receiver() noexcept = default;
     Receiver() = delete;
-    Receiver(ExampleContext * context_p, Outcome * outcome_p, bool * caller_completed_p,
+    Receiver(Outcome * outcome_p, bool * caller_completed_p,
         std::thread::id caller_thread) noexcept
-        : m_context_p(context_p), m_outcome_p(outcome_p),
+        : m_outcome_p(outcome_p),
           m_caller_completed_p(caller_completed_p), m_caller_thread(caller_thread) {}
     Receiver(const Receiver &) noexcept = default;
     Receiver(Receiver &&) noexcept = default;
@@ -87,7 +88,6 @@ public:
         this->finish(Completion::eStopped);
     }
 
-    ExampleContext * m_context_p;
     Outcome * m_outcome_p;
     bool * m_caller_completed_p;
     std::thread::id m_caller_thread;
@@ -106,9 +106,54 @@ private:
         m_outcome_p->m_receiver_thread = std::this_thread::get_id();
 
         *m_caller_completed_p = true;
-        m_context_p->requestStopProcessing();
     }
 };
+
+template <async::scheduler_c SharedScheduler, async::scheduler_c CallerScheduler,
+    async::work_executor_c TargetExecutor, async::notify::notifier_c Notifier>
+void run_caller(SharedScheduler shared_scheduler_handle, CallerScheduler caller_scheduler_handle,
+    async::ExecutionPort<TargetExecutor, Notifier> caller_execution_port, Outcome & outcome)
+{
+    const auto caller_thread = std::this_thread::get_id();
+    outcome.m_caller_thread = caller_thread;
+
+    auto left = ex::schedule(shared_scheduler_handle) |
+        ex::then([] {
+            std::this_thread::sleep_for(1s);
+            return BranchResult{20, std::this_thread::get_id()};
+        });
+    auto right = ex::schedule(shared_scheduler_handle) |
+        ex::then([] {
+            std::this_thread::sleep_for(1s);
+            return BranchResult{22, std::this_thread::get_id()};
+        });
+    auto graph = ex::when_all(std::move(left), std::move(right)) |
+        ex::then([](BranchResult lhs, BranchResult rhs) noexcept {
+            return GraphResult{
+                lhs.m_value + rhs.m_value,
+                lhs.m_worker_thread,
+                rhs.m_worker_thread,
+                std::this_thread::get_id()};
+        }) | ex::then([](GraphResult result) noexcept {
+            std::cout << "graph result: " << result.m_value
+                << " left execution thread id: " << result.m_left_thread
+                << " right execution thread id: " << result.m_right_thread << '\n';
+            return result;
+        }) | ex::continues_on(caller_scheduler_handle);
+    bool caller_completed = false;
+    auto operation = ex::connect(std::move(graph), Receiver{&outcome, &caller_completed, caller_thread});
+    ex::start(operation);
+    std::uint64_t heartbeat_count = 0;
+    auto time = std::chrono::steady_clock::now();
+    while (not caller_completed) {
+        auto elapsed = std::chrono::steady_clock::now() - time;
+        std::cout << "heartbeat: " << heartbeat_count++ << " elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
+        caller_execution_port.pollOne();
+        if (not caller_completed) {
+            std::this_thread::sleep_for(100ms);
+        }
+    }
+}
 
 int main()
 {
@@ -117,10 +162,9 @@ int main()
 
     async::ContextInfo context_info;
     context_info.setWorkerCount(k_worker_count).setDispatcherCount(2);
-    const auto caller_port_token = context_info.addSubmissionPort();
+    const async::PortToken caller_port_token = context_info.addPort();
 
-    const auto left_token = context_info.addScheduler();
-    const auto right_token = context_info.addScheduler();
+    const async::SchedulerToken shared_scheduler_token = context_info.addSharedScheduler();
 
     const auto [runtime_size_in_bytes, runtime_alignment, workers_size_in_bytes, workers_alignment] = context_info.getStorageRequirements<>();
     std::vector<std::byte> worker_bytes(workers_size_in_bytes + workers_alignment - 1);
@@ -137,56 +181,17 @@ int main()
         return 1;
     }
 
-    const auto shared_port = context.getSubmissionPort();
-
+    const auto caller_submission_port = context.getSubmissionPort(caller_port_token);
+    const auto shared_scheduler_handle = caller_submission_port.getSchedulerHandle(shared_scheduler_token);
+    const auto caller_scheduler_handle = context.getSubmissionPort().getSchedulerHandle(caller_port_token);
+    const auto caller_execution_port = context.getExecutionPort(caller_port_token);
     Outcome outcome;
 
     std::thread caller;
     try {
         caller = std::thread{[&] {
-            const auto caller_thread = std::this_thread::get_id();
-            outcome.m_caller_thread = caller_thread;
-
-            const auto caller_port = context.getSubmissionPort(caller_port_token);
-            const auto left_scheduler = caller_port.getSchedulerHandle(left_token);
-            const auto right_scheduler = caller_port.getSchedulerHandle(right_token);
-            const auto caller_scheduler = shared_port.getPortSchedulerHandle(caller_port_token);
-            auto left = ex::schedule(left_scheduler) |
-                ex::then([] {
-                    std::this_thread::sleep_for(1s);
-                    return BranchResult{20, std::this_thread::get_id()};
-                });
-            auto right = ex::schedule(right_scheduler) |
-                ex::then([] {
-                    std::this_thread::sleep_for(1s);
-                    return BranchResult{22, std::this_thread::get_id()};
-                });
-            auto graph = ex::when_all(std::move(left), std::move(right)) |
-                ex::then([](BranchResult lhs, BranchResult rhs) noexcept {
-                    return GraphResult{
-                        lhs.m_value + rhs.m_value,
-                        lhs.m_worker_thread,
-                        rhs.m_worker_thread,
-                        std::this_thread::get_id()};
-                }) | ex::then([](GraphResult result) noexcept {
-                    std::cout << "graph result: " << result.m_value
-                        << " left scheduler thread id: " << result.m_left_thread
-                        << " right scheduler thread id: " << result.m_right_thread << '\n';
-                    return result;
-                }) | ex::continues_on(caller_scheduler);
-            bool caller_completed = false;
-            auto operation = ex::connect(std::move(graph), Receiver{&context, &outcome, &caller_completed, caller_thread});
-            ex::start(operation);
-            std::uint64_t heartbeat_count = 0;
-            auto time = std::chrono::steady_clock::now();
-            while (not caller_completed) {
-                auto elapsed = std::chrono::steady_clock::now() - time;
-                std::cout << "heartbeat: " << heartbeat_count++ << " elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
-                context.pollPortOne(caller_port_token);
-                if (not caller_completed) {
-                    std::this_thread::sleep_for(100ms);
-                }
-            }
+            run_caller(shared_scheduler_handle, caller_scheduler_handle, caller_execution_port, outcome);
+            context.requestStopProcessing();
         }};
     } catch (...) {
         context.closeSubmissions();

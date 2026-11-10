@@ -2,6 +2,7 @@
 
 #include <async/core/declarations/concepts.h>
 #include <async/core/queue/declarations/concepts.h>
+#include <async/core/scheduling/dispatcher/declarations/structs.h>
 
 #include <concepts>
 #include <cstdint>
@@ -17,19 +18,20 @@ concept dispatch_record_c = work_record_c<Record> and requires(
     { record.setTargetIndex(target_index) } noexcept -> std::same_as<void>;
 };
 
-template <typename Source>
-concept dispatch_source_c = requires {
-    typename Source::Value;
-    requires dispatch_record_c<typename Source::Value>;
-    requires linked_node_c<typename Source::Value>;
-} and requires(Source & source, const Source & const_source) {
-    { source.tryPop() } noexcept -> std::same_as<typename Source::Value *>;
-    { const_source.isEmpty() } noexcept -> std::same_as<bool>;
-};
+template <typename RequestInput>
+concept dispatch_request_input_c = queue_consumer_c<RequestInput>
+    and dispatch_record_c<typename RequestInput::Value>
+    and linked_node_c<typename RequestInput::Value>;
 
 template <typename Router, typename DispatchRequest>
 concept dispatch_router_c = dispatch_record_c<DispatchRequest> and requires(Router & router, DispatchRequest & request) {
-    { router.route(request) } noexcept -> std::same_as<std::error_code>;
+    { router.tryRoute(request) } noexcept -> std::same_as<std::error_code>;
+};
+
+template <typename Dispatcher>
+concept request_dispatcher_c = requires(Dispatcher & dispatcher, const Dispatcher & const_dispatcher) {
+    { dispatcher.dispatchOne() } noexcept -> std::same_as<DispatchReport>;
+    { const_dispatcher.isEmpty() } noexcept -> std::same_as<bool>;
 };
 
 } // namespace lcf::async

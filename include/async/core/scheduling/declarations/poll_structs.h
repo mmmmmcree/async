@@ -1,7 +1,7 @@
 #pragma once
 
 #include <async/config/macros.h>
-#include <async/core/context/declarations/enums.h>
+#include <async/core/scheduling/declarations/enums.h>
 
 #include <chrono>
 #include <cstdint>
