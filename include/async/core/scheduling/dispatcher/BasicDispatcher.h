@@ -1,10 +1,12 @@
 #pragma once
 
 #include <async/core/queue/intrusive/Queue.h>
+#include <async/core/queue/utils/drain.h>
 #include <async/core/scheduling/dispatcher/declarations/concepts.h>
 #include <async/core/scheduling/dispatcher/declarations/structs.h>
 #include <async/core/scheduling/policy/declarations/concepts.h>
 
+#include <algorithm>
 #include <atomic>
 #include <cstdint>
 #include <system_error>
@@ -59,11 +61,10 @@ public:
     // Producers and the dispatcher driver must be quiescent.
     void cancelPending() noexcept requires cancellable_executable_c<Executable>
     {
-        while (DispatchRequest * request_p = m_pending_queue.popFront()) { request_p->getExecutable().cancel(); }
+        const auto cancel_request = [](DispatchRequest & request) noexcept { request.getExecutable().cancel(); };
+        std::ranges::for_each(queue::utils::drain(m_pending_queue), cancel_request);
         m_has_pending.store(false, std::memory_order_release);
-        while (DispatchRequest * request_p = m_request_input.tryPop()) {
-            request_p->getExecutable().cancel();
-        }
+        std::ranges::for_each(queue::utils::drain(m_request_input), cancel_request);
     }
 private:
     DispatchRequest * takeRequest(DispatchReport & report) noexcept
@@ -74,7 +75,7 @@ private:
     }
     DispatchRequest * takeRequestFrom(std::uint64_t input_index, DispatchReport & report) noexcept
     {
-        if (input_index == 1) { return m_pending_queue.popFront(); }
+        if (input_index == 1) { return m_pending_queue.tryPop(); }
         if (DispatchRequest * request_p = m_request_input.tryPop()) {
             ++report.m_received;
             return request_p;

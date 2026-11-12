@@ -3,6 +3,7 @@
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/queue/intrusive/mpmc/Queue.h>
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
+#include <async/core/queue/utils/drain.h>
 #include <async/core/scheduling/QueueSubmitter.h>
 #include <async/core/scheduling/SchedulingRuntime.h>
 #include <async/core/scheduling/dispatcher/BasicDispatcher.h>
@@ -11,6 +12,7 @@
 #include <async/core/scheduling/router/TargetRouter.h>
 #include <async/core/scheduling/selector/WorkStealingSelector.h>
 
+#include <algorithm>
 #include <array>
 #include <cstddef>
 #include <expected>
@@ -132,10 +134,10 @@ struct ContextResources
     {
         for (auto & state : m_dispatchers) { state.m_dispatcher.cancelPending(); }
         for (auto & execution_queue : m_shared_execution_queues) {
-            while (auto * executable_p = execution_queue.tryPop()) { executable_p->cancel(); }
+            std::ranges::for_each(queue::utils::drain(execution_queue), &Executable::cancel);
         }
         for (auto & execution_queue : m_thread_execution_queues) {
-            while (auto * executable_p = execution_queue.tryPop()) { executable_p->cancel(); }
+            std::ranges::for_each(queue::utils::drain(execution_queue), &Executable::cancel);
         }
     }
 

@@ -19,9 +19,11 @@ concept dispatch_record_c = work_record_c<Record> and requires(
 };
 
 template <typename RequestInput>
-concept dispatch_request_input_c = queue_consumer_c<RequestInput>
+concept dispatch_request_input_c = queue_c<RequestInput>
     and dispatch_record_c<typename RequestInput::Value>
-    and linked_node_c<typename RequestInput::Value>;
+    and linked_node_c<typename RequestInput::Value> and requires(RequestInput & input) {
+        { input.tryPop() } noexcept -> std::same_as<typename RequestInput::Value *>;
+    };
 
 template <typename Router, typename DispatchRequest>
 concept dispatch_router_c = dispatch_record_c<DispatchRequest> and requires(Router & router, DispatchRequest & request) {

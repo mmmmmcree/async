@@ -39,7 +39,7 @@ public:
     Node * tryPop() noexcept
     {
         std::lock_guard lock{m_mutex};
-        return m_queue.popFront();
+        return m_queue.tryPop();
     }
     Node * waitPop() noexcept
     {
@@ -48,7 +48,7 @@ public:
             return m_stop_requested or m_closed or not m_queue.isEmpty();
         });
         if (m_stop_requested) { return nullptr; }
-        return m_queue.popFront();
+        return m_queue.tryPop();
     }
     void requestStop() noexcept
     {

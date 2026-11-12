@@ -18,7 +18,7 @@ public:
     Queue & operator=(Queue &&) = delete;
 public:
     bool isEmpty() const noexcept { return not m_tail_p; }
-    Node * popFront() noexcept
+    Node * tryPop() noexcept
     {
         if (not m_tail_p) { return nullptr; }
         auto * node_p = m_tail_p->getNext();

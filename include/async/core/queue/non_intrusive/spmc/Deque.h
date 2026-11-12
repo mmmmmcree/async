@@ -35,14 +35,14 @@ public:
         ++m_size;
         return {};
     }
-    Value * tryPop() noexcept
+    Value * tryPopBack() noexcept
     {
         std::lock_guard lock{m_mutex};
         if (m_size == 0) { return nullptr; }
         --m_size;
         return m_slots[(m_front + m_size) % queue_capacity];
     }
-    Value * trySteal() noexcept
+    Value * tryPopFront() noexcept
     {
         std::lock_guard lock{m_mutex};
         if (m_size == 0) { return nullptr; }

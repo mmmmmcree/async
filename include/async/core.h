@@ -13,6 +13,7 @@
 #include <async/core/queue/intrusive/spmc/Queue.h>
 #include <async/core/queue/non_intrusive/spsc/Queue.h>
 #include <async/core/queue/non_intrusive/spmc/Deque.h>
+#include <async/core/queue/utils/drain.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/core/scheduling/declarations/enums.h>
 #include <async/core/scheduling/declarations/poll_structs.h>
