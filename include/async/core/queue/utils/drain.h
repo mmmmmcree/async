@@ -22,7 +22,7 @@ using enum DrainDirection;
 namespace details {
 
 // begin() pops the first value; each increment pops the next. The queue must outlive iteration.
-template <queue_c Queue, DrainDirection direction = from_back>
+template <queue_c Queue, DrainDirection direction = from_front>
 class DrainView : public std::ranges::view_interface<DrainView<Queue, direction>>
 {
     using Value = typename Queue::Value;
@@ -74,7 +74,7 @@ private:
 
 } // namespace details
 
-template <DrainDirection direction = from_back, queue_c Queue>
+template <DrainDirection direction = from_front, queue_c Queue>
 details::DrainView<Queue, direction> drain(Queue & queue) noexcept { return details::DrainView<Queue, direction> {queue}; }
 
 } // namespace lcf::async::queue::utils
