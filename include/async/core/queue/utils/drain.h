@@ -3,8 +3,8 @@
 #include <async/core/queue/declarations/concepts.h>
 
 #include <cstddef>
-#include <functional>
 #include <iterator>
+#include <memory>
 #include <ranges>
 #include <utility>
 
@@ -36,7 +36,7 @@ class DrainView : public std::ranges::view_interface<DrainView<Queue, direction>
     public:
         ~Iterator() noexcept = default;
         Iterator() = delete;
-        explicit Iterator(Queue & queue) noexcept : m_queue(queue) {}
+        explicit Iterator(Queue & queue) noexcept : m_queue_p(std::addressof(queue)) {}
         Iterator(const Iterator &) = delete;
         Iterator(Iterator &&) noexcept = default;
         Iterator & operator=(const Iterator &) = delete;
@@ -46,30 +46,30 @@ class DrainView : public std::ranges::view_interface<DrainView<Queue, direction>
         Iterator & operator++() noexcept
         {
             if constexpr (deque_c<Queue>) {
-                if constexpr (direction == from_front) { m_value_p = m_queue.get().tryPopFront(); }
-                else { m_value_p = m_queue.get().tryPopBack(); }
-            } else { m_value_p = m_queue.get().tryPop(); }
+                if constexpr (direction == from_front) { m_value_p = m_queue_p->tryPopFront(); }
+                else { m_value_p = m_queue_p->tryPopBack(); }
+            } else { m_value_p = m_queue_p->tryPop(); }
             return *this;
         }
         void operator++(int) noexcept { ++*this; }
         bool operator==(std::default_sentinel_t) const noexcept { return not m_value_p; }
     private:
-        std::reference_wrapper<Queue> m_queue;
+        Queue * m_queue_p;
         Value * m_value_p = nullptr;
     };
 public:
     ~DrainView() noexcept = default;
     DrainView() = delete;
-    explicit DrainView(Queue & queue) noexcept : m_queue(queue) {}
+    explicit DrainView(Queue & queue) noexcept : m_queue_p(std::addressof(queue)) {}
     DrainView(const DrainView &) noexcept = default;
     DrainView(DrainView &&) noexcept = default;
     DrainView & operator=(const DrainView &) noexcept = default;
     DrainView & operator=(DrainView &&) noexcept = default;
 public:
-    Iterator begin() const noexcept { return std::move(++Iterator {m_queue.get()}); }
+    Iterator begin() const noexcept { return std::move(++Iterator {*m_queue_p}); }
     std::default_sentinel_t end() const noexcept { return {}; }
 private:
-    std::reference_wrapper<Queue> m_queue;
+    Queue * m_queue_p;
 };
 
 } // namespace details
