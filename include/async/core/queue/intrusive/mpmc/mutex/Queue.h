@@ -15,7 +15,7 @@ class Queue<Node, AlgorithmTag::eMutex>
 {
     using NodeQueue = queue::intrusive::Queue<Node>;
 public:
-    using Value = Node;
+    using value_t = Node;
     static constexpr bool k_supports_multiple_producers = true;
     static constexpr bool k_supports_multiple_consumers = true;
 public:

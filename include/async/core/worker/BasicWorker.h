@@ -1,5 +1,6 @@
 #pragma once
 
+#include <async/core/details/concepts/constructible.h>
 #include <async/core/worker/thread/declarations/concepts.h>
 #include <async/core/worker/declarations/concepts.h>
 #include <async/core/worker/declarations/enums.h>
@@ -7,7 +8,6 @@
 #include <atomic>
 #include <cassert>
 #include <concepts>
-#include <type_traits>
 #include <utility>
 
 LCF_ASYNC_EXPORT
@@ -26,7 +26,7 @@ public:
     ~BasicWorker() noexcept { this->join(); }
     BasicWorker() = delete;
     BasicWorker(Progress progress, Waiter & waiter) noexcept(
-        std::is_nothrow_move_constructible_v<Progress> and std::is_nothrow_default_constructible_v<ThreadHandle>)
+        details::all_nothrow_move_constructible<Progress> and details::all_nothrow_default_constructible<ThreadHandle>)
     requires std::default_initializable<ThreadHandle> :
         m_progress(std::move(progress)), m_waiter_p(&waiter) {}
     template <thread_launcher_c<ThreadHandle> Launcher>

@@ -2,10 +2,8 @@
 
 #include <async/core/queue/declarations/concepts.h>
 
-#include <cstddef>
 #include <iterator>
 #include <memory>
-#include <ranges>
 #include <utility>
 
 LCF_ASYNC_EXPORT
@@ -21,12 +19,10 @@ using enum DrainDirection;
 
 namespace details {
 
-// begin() pops the first value; each increment pops the next. The queue must outlive iteration.
 template <queue_c Queue, DrainDirection direction = from_front>
 class DrainView : public std::ranges::view_interface<DrainView<Queue, direction>>
 {
-    using Value = typename Queue::Value;
-
+    using Value = typename Queue::value_t;
     class Iterator
     {
     public:

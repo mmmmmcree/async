@@ -9,7 +9,7 @@ template <linked_node_c Node>
 class Queue
 {
 public:
-    using Value = Node;
+    using value_t = Node;
 public:
     Queue() noexcept = default;
     Queue(const Queue &) = delete;

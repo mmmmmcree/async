@@ -2,6 +2,7 @@
 
 #include <async/core/context/declarations/tokens.h>
 #include <async/core/context/details/ContextResources.h>
+#include <async/core/details/concepts/constructible.h>
 #include <async/core/executable/ExecutableNode.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/SignalNotifier.h>
@@ -80,14 +81,14 @@ public:
         index_selection_policy_c StealSelectionPolicy = RoundRobin,
         index_selection_policy_c DispatchSelectionPolicy = RoundRobin,
         template <typename> class Executor = BasicExecutor>
-    requires (queue_capacity > 0) and std::is_nothrow_default_constructible_v<Signal>
+    requires (queue_capacity > 0) and details::all_nothrow_default_constructible<Signal>
         and notify::signal_notifier_c<Notifier, Signal> and linked_node_c<Executable>
     ContextStorageRequirements getStorageRequirements() const noexcept
     {
         using Resources = details::ContextResources<queue_capacity, Executable, Signal, Notifier,
             InputSelectionPolicy, RequestSelectionPolicy, PlacementPolicy, StealSelectionPolicy, DispatchSelectionPolicy, Executor>;
-        using Worker = typename WorkerPool<typename Resources::Runtime::WorkerProgress, ThreadHandle, Signal>::Worker;
-        const typename Resources::StorageRequirementsResult requirements = Resources::calc_storage_requirements(
+        using Worker = typename WorkerPool<typename Resources::runtime_t::WorkerProgress, ThreadHandle, Signal>::worker_t;
+        const typename Resources::storage_requirements_result_t requirements = Resources::calc_storage_requirements(
             m_worker_count, m_dispatcher_count, m_port_count, m_scheduler_kinds.size(), m_thread_scheduler_count);
         if (not requirements or m_worker_count > std::numeric_limits<std::size_t>::max() / sizeof(Worker)) { std::terminate(); }
         const auto [runtime_size, runtime_alignment] = *requirements;

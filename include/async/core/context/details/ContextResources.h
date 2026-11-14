@@ -30,62 +30,62 @@ template <std::uint64_t queue_capacity, cancellable_executable_c Executable,
 requires linked_node_c<Executable>
 struct ContextResources
 {
-    using DispatchRequest = ::lcf::async::DispatchRequest<Executable>;
-    using SharedExecutionQueue = queue::intrusive::mpmc::Queue<Executable>;
-    using ThreadExecutionQueue = queue::non_intrusive::spsc::Queue<Executable, queue_capacity>;
-    using RequestQueue = queue::intrusive::mpmc::Queue<DispatchRequest>;
-    using SubmissionQueue = queue::non_intrusive::spsc::Queue<DispatchRequest, queue_capacity>;
-    using SharedSubmitter = QueueSubmitter<RequestQueue, Notifier>;
-    using DedicatedSubmitter = QueueSubmitter<SubmissionQueue, Notifier>;
-    using WorkSelector = WorkStealingSelector<SharedExecutionQueue, StealSelectionPolicy>;
-    using SharedExecutor = Executor<WorkSelector>;
-    using ThreadExecutor = Executor<ThreadExecutionQueue>;
-    using Router = TargetRouter<SharedExecutionQueue, ThreadExecutionQueue, RequestQueue, PlacementPolicy>;
+    using dispatch_request_t = ::lcf::async::DispatchRequest<Executable>;
+    using shared_execution_queue_t = queue::intrusive::mpmc::Queue<Executable>;
+    using thread_execution_queue_t = queue::non_intrusive::spsc::Queue<Executable, queue_capacity>;
+    using request_queue_t = queue::intrusive::mpmc::Queue<dispatch_request_t>;
+    using submission_queue_t = queue::non_intrusive::spsc::Queue<dispatch_request_t, queue_capacity>;
+    using shared_submitter_t = QueueSubmitter<request_queue_t, Notifier>;
+    using dedicated_submitter_t = QueueSubmitter<submission_queue_t, Notifier>;
+    using work_selector_t = WorkStealingSelector<shared_execution_queue_t, StealSelectionPolicy>;
+    using shared_executor_t = Executor<work_selector_t>;
+    using thread_executor_t = Executor<thread_execution_queue_t>;
+    using router_t = TargetRouter<shared_execution_queue_t, thread_execution_queue_t, request_queue_t, PlacementPolicy>;
 
-    class DispatchRequestInput
+    class DispatchRequestStream
     {
     public:
-        using Value = DispatchRequest;
+        using value_t = dispatch_request_t;
 
-        DispatchRequestInput(RequestQueue & shared_requests, RequestQueue & forwarded_requests,
-            std::span<SubmissionQueue> submission_queues, InputSelectionPolicy input_selection_policy) :
+        DispatchRequestStream(request_queue_t & shared_requests, request_queue_t & forwarded_requests,
+            std::span<submission_queue_t> submission_queues, InputSelectionPolicy input_selection_policy) :
             m_shared_requests_p(&shared_requests), m_forwarded_requests_p(&forwarded_requests),
             m_submission_queues(submission_queues), m_input_selection_policy(std::move(input_selection_policy)) {}
 
-        DispatchRequest * tryPop() noexcept
+        dispatch_request_t * tryPop() noexcept
         {
             const std::uint64_t input_count = m_submission_queues.size() + 2;
             const std::uint64_t first_input_index = m_input_selection_policy.select(input_count);
             for (std::uint64_t attempt = 0; attempt < input_count; ++attempt) {
                 const std::uint64_t input_index = (first_input_index + attempt) % input_count;
-                if (DispatchRequest * request_p = this->tryPopFrom(input_index)) { return request_p; }
+                if (dispatch_request_t * request_p = this->tryPopFrom(input_index)) { return request_p; }
             }
             return nullptr;
         }
         bool isEmpty() const noexcept
         {
             return m_shared_requests_p->isEmpty() and m_forwarded_requests_p->isEmpty()
-                and std::ranges::all_of(m_submission_queues, &SubmissionQueue::isEmpty);
+                and std::ranges::all_of(m_submission_queues, &submission_queue_t::isEmpty);
         }
     private:
-        DispatchRequest * tryPopFrom(std::uint64_t input_index) noexcept
+        dispatch_request_t * tryPopFrom(std::uint64_t input_index) noexcept
         {
             if (input_index < m_submission_queues.size()) { return m_submission_queues[input_index].tryPop(); }
             if (input_index == m_submission_queues.size()) { return m_forwarded_requests_p->tryPop(); }
             return m_shared_requests_p->tryPop();
         }
-        RequestQueue * m_shared_requests_p;
-        RequestQueue * m_forwarded_requests_p;
-        std::span<SubmissionQueue> m_submission_queues;
+        request_queue_t * m_shared_requests_p;
+        request_queue_t * m_forwarded_requests_p;
+        std::span<submission_queue_t> m_submission_queues;
         InputSelectionPolicy m_input_selection_policy;
     };
 
-    using Dispatcher = BasicDispatcher<DispatchRequestInput, Router, RequestSelectionPolicy>;
-    using Runtime = SchedulingRuntime<Dispatcher, SharedExecutor, ThreadExecutor, Signal, DispatchSelectionPolicy>;
-    using DispatcherState = typename Runtime::DispatcherState;
-    using StorageRequirementsResult = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
+    using dispatcher_t = BasicDispatcher<DispatchRequestStream, router_t, RequestSelectionPolicy>;
+    using runtime_t = SchedulingRuntime<dispatcher_t, shared_executor_t, thread_executor_t, Signal, DispatchSelectionPolicy>;
+    using dispatcher_state_t = typename runtime_t::DispatcherState;
+    using storage_requirements_result_t = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
 
-    static StorageRequirementsResult calc_storage_requirements(std::uint64_t worker_count,
+    static storage_requirements_result_t calc_storage_requirements(std::uint64_t worker_count,
         std::uint64_t dispatcher_count, std::uint64_t port_count, std::uint64_t scheduler_count,
         std::uint64_t thread_scheduler_count) noexcept
     {
@@ -97,16 +97,16 @@ struct ContextResources
         };
         const std::uint64_t shared_queue_count = std::max<std::uint64_t>(worker_count, 1);
         const std::array<StorageSegment, 11> segments {{
-            {shared_queue_count, sizeof(SharedExecutionQueue), alignof(SharedExecutionQueue)},
-            {thread_scheduler_count, sizeof(ThreadExecutionQueue), alignof(ThreadExecutionQueue)},
-            {dispatcher_count + 1, sizeof(RequestQueue), alignof(RequestQueue)},
-            {port_count, sizeof(SubmissionQueue), alignof(SubmissionQueue)},
-            {1, sizeof(SharedSubmitter), alignof(SharedSubmitter)},
-            {port_count, sizeof(DedicatedSubmitter), alignof(DedicatedSubmitter)},
-            {shared_queue_count, sizeof(WorkSelector), alignof(WorkSelector)},
-            {shared_queue_count, sizeof(SharedExecutor), alignof(SharedExecutor)},
-            {thread_scheduler_count, sizeof(ThreadExecutor), alignof(ThreadExecutor)},
-            {dispatcher_count, sizeof(DispatcherState), alignof(DispatcherState)},
+            {shared_queue_count, sizeof(shared_execution_queue_t), alignof(shared_execution_queue_t)},
+            {thread_scheduler_count, sizeof(thread_execution_queue_t), alignof(thread_execution_queue_t)},
+            {dispatcher_count + 1, sizeof(request_queue_t), alignof(request_queue_t)},
+            {port_count, sizeof(submission_queue_t), alignof(submission_queue_t)},
+            {1, sizeof(shared_submitter_t), alignof(shared_submitter_t)},
+            {port_count, sizeof(dedicated_submitter_t), alignof(dedicated_submitter_t)},
+            {shared_queue_count, sizeof(work_selector_t), alignof(work_selector_t)},
+            {shared_queue_count, sizeof(shared_executor_t), alignof(shared_executor_t)},
+            {thread_scheduler_count, sizeof(thread_executor_t), alignof(thread_executor_t)},
+            {dispatcher_count, sizeof(dispatcher_state_t), alignof(dispatcher_state_t)},
             {scheduler_count, sizeof(TargetRoute), alignof(TargetRoute)}
         }};
         const std::size_t max_size = std::numeric_limits<std::size_t>::max();
@@ -127,7 +127,7 @@ struct ContextResources
     void closeSubmissions() noexcept
     {
         if (not m_request_queues.empty()) { m_request_queues.front().close(); }
-        std::ranges::for_each(m_submission_queues, &SubmissionQueue::close);
+        std::ranges::for_each(m_submission_queues, &submission_queue_t::close);
     }
     // All producers and runtime drivers must have stopped before cancellation.
     void cancelPending() noexcept
@@ -141,16 +141,16 @@ struct ContextResources
         }
     }
 
-    FixedCapacityVector<SharedExecutionQueue> m_shared_execution_queues;
-    FixedCapacityVector<ThreadExecutionQueue> m_thread_execution_queues;
-    FixedCapacityVector<RequestQueue> m_request_queues;
-    FixedCapacityVector<SubmissionQueue> m_submission_queues;
-    FixedCapacityVector<SharedSubmitter> m_shared_submitters;
-    FixedCapacityVector<DedicatedSubmitter> m_dedicated_submitters;
-    FixedCapacityVector<WorkSelector> m_work_selectors;
-    FixedCapacityVector<SharedExecutor> m_shared_executors;
-    FixedCapacityVector<ThreadExecutor> m_thread_executors;
-    FixedCapacityVector<DispatcherState> m_dispatchers;
+    FixedCapacityVector<shared_execution_queue_t> m_shared_execution_queues;
+    FixedCapacityVector<thread_execution_queue_t> m_thread_execution_queues;
+    FixedCapacityVector<request_queue_t> m_request_queues;
+    FixedCapacityVector<submission_queue_t> m_submission_queues;
+    FixedCapacityVector<shared_submitter_t> m_shared_submitters;
+    FixedCapacityVector<dedicated_submitter_t> m_dedicated_submitters;
+    FixedCapacityVector<work_selector_t> m_work_selectors;
+    FixedCapacityVector<shared_executor_t> m_shared_executors;
+    FixedCapacityVector<thread_executor_t> m_thread_executors;
+    FixedCapacityVector<dispatcher_state_t> m_dispatchers;
     FixedCapacityVector<TargetRoute> m_target_routes;
 };
 

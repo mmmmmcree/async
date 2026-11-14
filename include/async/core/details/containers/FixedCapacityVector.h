@@ -1,5 +1,7 @@
 #pragma once
 
+#include <async/core/details/concepts/constructible.h>
+
 #include <cassert>
 #include <concepts>
 #include <cstddef>
@@ -83,7 +85,7 @@ public:
 public:
     template <typename... Args>
     requires std::constructible_from<Value, Args...>
-    reference emplace_back(Args &&... args) noexcept(std::is_nothrow_constructible_v<Value, Args...>)
+    reference emplace_back(Args &&... args) noexcept(nothrow_constructible_from<Value, Args...>)
     {
         assert(this->size() < m_capacity);
         auto * value_p = std::construct_at(this->data() + this->size(), std::forward<Args>(args)...);

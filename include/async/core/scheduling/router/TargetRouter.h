@@ -12,13 +12,13 @@ namespace lcf::async {
 
 template <queue_producer_c SharedExecutionQueue, queue_producer_c ThreadExecutionQueue,
     queue_producer_c ForwardRequestQueue, index_selection_policy_c PlacementPolicy>
-requires dispatch_record_c<typename ForwardRequestQueue::Value>
-    and std::same_as<typename SharedExecutionQueue::Value, typename ThreadExecutionQueue::Value>
-    and std::same_as<typename SharedExecutionQueue::Value,
-        std::remove_reference_t<decltype(std::declval<typename ForwardRequestQueue::Value &>().getExecutable())>>
+requires dispatch_record_c<typename ForwardRequestQueue::value_t>
+    and std::same_as<typename SharedExecutionQueue::value_t, typename ThreadExecutionQueue::value_t>
+    and std::same_as<typename SharedExecutionQueue::value_t,
+        typename ForwardRequestQueue::value_t::executable_t>
 class TargetRouter
 {
-    using DispatchRequest = typename ForwardRequestQueue::Value;
+    using DispatchRequest = typename ForwardRequestQueue::value_t;
 public:
     TargetRouter(RouteTable route_table, std::span<SharedExecutionQueue> shared_execution_queues,
         std::span<ThreadExecutionQueue> thread_execution_queues, std::span<ForwardRequestQueue> forward_request_queues,

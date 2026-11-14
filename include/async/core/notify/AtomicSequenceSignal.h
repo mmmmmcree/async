@@ -11,7 +11,7 @@ namespace lcf::async::notify {
 class AtomicSequenceSignal
 {
 public:
-    using Observation = std::uint64_t;
+    using observation_t = std::uint64_t;
 public:
     ~AtomicSequenceSignal() noexcept = default;
     AtomicSequenceSignal() noexcept = default;
@@ -20,8 +20,8 @@ public:
     AtomicSequenceSignal & operator=(const AtomicSequenceSignal &) = delete;
     AtomicSequenceSignal & operator=(AtomicSequenceSignal &&) = delete;
 public:
-    Observation observe() const noexcept { return m_sequence.load(std::memory_order_acquire); }
-    void wait(Observation observed) const noexcept { m_sequence.wait(observed, std::memory_order_acquire); }
+    observation_t observe() const noexcept { return m_sequence.load(std::memory_order_acquire); }
+    void wait(observation_t observed) const noexcept { m_sequence.wait(observed, std::memory_order_acquire); }
     void notifyOne() noexcept
     {
         m_sequence.fetch_add(1, std::memory_order_release);
@@ -33,7 +33,7 @@ public:
         m_sequence.notify_all();
     }
 private:
-    std::atomic<Observation> m_sequence {0};
+    std::atomic<observation_t> m_sequence {0};
 };
 
 } // namespace lcf::async::notify

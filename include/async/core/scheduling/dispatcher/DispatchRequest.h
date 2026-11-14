@@ -11,6 +11,8 @@ template <executable_c Executable>
 class DispatchRequest
 {
 public:
+    using executable_t = Executable;
+public:
     ~DispatchRequest() noexcept = default;
     DispatchRequest() = delete;
     explicit DispatchRequest(Executable & executable) noexcept : m_executable(executable) {}

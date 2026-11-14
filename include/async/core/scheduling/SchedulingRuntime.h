@@ -15,8 +15,11 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <request_dispatcher_c Dispatcher, work_executor_c SharedExecutor, work_executor_c ThreadExecutor,
-    notify::signal_c Signal, index_selection_policy_c DispatchSelectionPolicy>
+template <request_dispatcher_c Dispatcher,
+    work_executor_c SharedExecutor,
+    work_executor_c ThreadExecutor,
+    notify::signal_c Signal,
+    index_selection_policy_c DispatchSelectionPolicy>
 class SchedulingRuntime
 {
 public:
@@ -82,7 +85,7 @@ public:
     }
     bool isIdle() const noexcept
     {
-        const typename Signal::Observation observed = m_signal_p->observe();
+        const typename Signal::observation_t observed = m_signal_p->observe();
         return m_active_poll_count.load(std::memory_order_acquire) == 0 and this->isEmpty()
             and m_active_poll_count.load(std::memory_order_acquire) == 0 and m_signal_p->observe() == observed;
     }

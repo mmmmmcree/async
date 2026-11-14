@@ -1,5 +1,6 @@
 #pragma once
 
+#include <async/core/details/concepts/constructible.h>
 #include <async/core/executable/declarations/concepts.h>
 #include <async/core/scheduling/dispatcher/DispatchRequest.h>
 #include <async/core/scheduling/declarations/concepts.h>
@@ -8,7 +9,6 @@
 
 #include <concepts>
 #include <system_error>
-#include <type_traits>
 #include <utility>
 
 namespace lcf::async::details {
@@ -42,7 +42,7 @@ public:
     ~ScheduleOperation() noexcept = default;
     ScheduleOperation() = delete;
     ScheduleOperation(Handle handle, Receiver receiver) noexcept(
-        std::is_nothrow_copy_constructible_v<Handle> and std::is_nothrow_move_constructible_v<Receiver>) :
+        all_nothrow_copy_constructible<Handle> and all_nothrow_move_constructible<Receiver>) :
         m_handle(handle), m_receiver(std::move(receiver)),
         m_executable(this, &execute, &cancel), m_request {m_executable} {}
     ScheduleOperation(const ScheduleOperation &) = delete;
@@ -68,14 +68,16 @@ private:
 template <std::copyable Handle, callback_executable_c Executable>
 struct ScheduleSender
 {
+private:
     using DispatchRequest = ::lcf::async::DispatchRequest<Executable>;
+public:
     using sender_concept = protocols::sender_t;
     using completion_signatures = ScheduleCompletions;
     struct Environment
     {
         ~Environment() noexcept = default;
         Environment() = delete;
-        explicit Environment(Handle scheduler) noexcept(std::is_nothrow_move_constructible_v<Handle>)
+        explicit Environment(Handle scheduler) noexcept(all_nothrow_move_constructible<Handle>)
             : m_scheduler(std::move(scheduler)) {}
         Environment(const Environment &) = default;
         Environment(Environment &&) = default;
@@ -92,7 +94,7 @@ struct ScheduleSender
 public:
     ~ScheduleSender() noexcept = default;
     ScheduleSender() = delete;
-    explicit ScheduleSender(Handle scheduler) noexcept(std::is_nothrow_move_constructible_v<Handle>) :
+    explicit ScheduleSender(Handle scheduler) noexcept(all_nothrow_move_constructible<Handle>) :
         m_scheduler(std::move(scheduler)) {}
     ScheduleSender(const ScheduleSender &) = default;
     ScheduleSender(ScheduleSender &&) = default;

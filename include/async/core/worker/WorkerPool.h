@@ -16,12 +16,12 @@ template <worker_progress_c Progress, join_handle_c ThreadHandle, notify::signal
 class WorkerPool
 {
 public:
-    using Worker = BasicWorker<Progress, details::WorkerControl<Signal>, ThreadHandle>;
-    using WorkerList = details::FixedCapacityVector<Worker>;
+    using worker_t = BasicWorker<Progress, details::WorkerControl<Signal>, ThreadHandle>;
+    using worker_list_t = details::FixedCapacityVector<worker_t>;
 public:
     WorkerPool() = delete;
     explicit WorkerPool(Signal & signal) noexcept : m_control(signal) {}
-    WorkerPool(Signal & signal, WorkerList workers) noexcept :
+    WorkerPool(Signal & signal, worker_list_t workers) noexcept :
         m_control(signal), m_workers(std::move(workers)) {}
     ~WorkerPool() noexcept { this->requestStop(); this->join(); }
     WorkerPool(const WorkerPool &) = delete;
@@ -43,21 +43,21 @@ public:
             this->join();
             throw;
         }
-        m_running = std::ranges::any_of(m_workers, &Worker::isJoinable);
+        m_running = std::ranges::any_of(m_workers, &worker_t::isJoinable);
     }
     void requestStop() noexcept { m_control.requestStop(); }
     // Only use after producers and upstream stages can no longer add work.
     void close() noexcept { m_control.close(); }
     void join() noexcept
     {
-        std::ranges::for_each(m_workers, &Worker::join);
+        std::ranges::for_each(m_workers, &worker_t::join);
         m_running = false;
     }
     bool isRunning() const noexcept { return m_running; }
     bool isStopRequested() const noexcept { return m_control.isStopRequested(); }
 private:
     details::WorkerControl<Signal> m_control;
-    WorkerList m_workers;
+    worker_list_t m_workers;
     bool m_started = false;
     bool m_running = false;
 };

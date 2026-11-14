@@ -18,11 +18,11 @@ concept dispatch_record_c = work_record_c<Record> and requires(
     { record.setTargetIndex(target_index) } noexcept -> std::same_as<void>;
 };
 
-template <typename RequestInput>
-concept dispatch_request_input_c = queue_c<RequestInput>
-    and dispatch_record_c<typename RequestInput::Value>
-    and linked_node_c<typename RequestInput::Value> and requires(RequestInput & input) {
-        { input.tryPop() } noexcept -> std::same_as<typename RequestInput::Value *>;
+template <typename RequestStream>
+concept dispatch_request_stream_c = queue_c<RequestStream>
+    and dispatch_record_c<typename RequestStream::value_t>
+    and linked_node_c<typename RequestStream::value_t> and requires(RequestStream & stream) {
+        { stream.tryPop() } noexcept -> std::same_as<typename RequestStream::value_t *>;
     };
 
 template <typename Router, typename DispatchRequest>

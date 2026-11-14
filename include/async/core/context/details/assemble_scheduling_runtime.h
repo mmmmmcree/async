@@ -12,7 +12,7 @@ template <std::uint64_t queue_capacity, cancellable_executable_c Executable,
 void assemble_scheduling_runtime(
     ContextResources<queue_capacity, Executable, Signal, Notifier, InputSelectionPolicy, RequestSelectionPolicy,
         PlacementPolicy, StealSelectionPolicy, DispatchSelectionPolicy, Executor> & destination,
-    typename std::remove_reference_t<decltype(destination)>::Runtime & runtime,
+    typename std::remove_reference_t<decltype(destination)>::runtime_t & runtime,
     std::uint32_t worker_count, std::uint32_t dispatcher_count, std::uint32_t port_count,
     std::span<const SchedulingTargetKind> scheduler_kinds, Notifier & notifier, std::pmr::memory_resource & resource)
 {
@@ -56,9 +56,9 @@ void assemble_scheduling_runtime(
     for (std::uint64_t index = 0; index < dispatcher_count; ++index) {
         const std::uint64_t assigned_port_count = std::min<std::uint64_t>(ports_per_dispatcher, remaining_submissions.size());
         resources.m_dispatchers.emplace_back(
-            typename Resources::DispatchRequestInput{resources.m_request_queues.front(), resources.m_request_queues[index + 1],
+            typename Resources::DispatchRequestStream {resources.m_request_queues.front(), resources.m_request_queues[index + 1],
                 remaining_submissions.first(assigned_port_count), InputSelectionPolicy{}},
-            typename Resources::Router{RouteTable{std::span{resources.m_target_routes}},
+            typename Resources::router_t {RouteTable{std::span{resources.m_target_routes}},
                 std::span{resources.m_shared_execution_queues}, std::span{resources.m_thread_execution_queues},
                 std::span{resources.m_request_queues}.subspan(1), index, PlacementPolicy{}},
             RequestSelectionPolicy{});

@@ -16,7 +16,7 @@ requires (queue_capacity > 0)
 class Deque
 {
 public:
-    using Value = Item;
+    using value_t = Item;
     static constexpr bool k_supports_multiple_producers = false;
     static constexpr bool k_supports_multiple_consumers = true;
 public:
@@ -26,7 +26,7 @@ public:
     Deque & operator=(const Deque &) = delete;
     Deque & operator=(Deque &&) = delete;
 public:
-    std::error_code tryEnqueue(Value & value) noexcept
+    std::error_code tryEnqueue(value_t & value) noexcept
     {
         std::lock_guard lock{m_mutex};
         if (m_closed) { return std::make_error_code(std::errc::operation_canceled); }
@@ -35,14 +35,14 @@ public:
         ++m_size;
         return {};
     }
-    Value * tryPopBack() noexcept
+    value_t * tryPopBack() noexcept
     {
         std::lock_guard lock{m_mutex};
         if (m_size == 0) { return nullptr; }
         --m_size;
         return m_slots[(m_front + m_size) % queue_capacity];
     }
-    Value * tryPopFront() noexcept
+    value_t * tryPopFront() noexcept
     {
         std::lock_guard lock{m_mutex};
         if (m_size == 0) { return nullptr; }
@@ -63,7 +63,7 @@ public:
     }
 private:
     mutable std::mutex m_mutex;
-    std::array<Value *, queue_capacity> m_slots{};
+    std::array<value_t *, queue_capacity> m_slots{};
     std::uint64_t m_front = 0;
     std::uint64_t m_size = 0;
     bool m_closed = false;

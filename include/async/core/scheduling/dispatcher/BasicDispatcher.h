@@ -1,5 +1,6 @@
 #pragma once
 
+#include <async/core/details/concepts/constructible.h>
 #include <async/core/queue/intrusive/Queue.h>
 #include <async/core/queue/utils/drain.h>
 #include <async/core/scheduling/dispatcher/declarations/concepts.h>
@@ -11,27 +12,25 @@
 #include <cstdint>
 #include <system_error>
 #include <utility>
-#include <type_traits>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-// One driver at a time; inputs and outputs must outlive dispatching.
-template <dispatch_request_input_c RequestInput, typename Router,
+template <dispatch_request_stream_c RequestStream, typename Router,
     index_selection_policy_c RequestSelectionPolicy>
-requires dispatch_router_c<Router, typename RequestInput::Value>
+requires dispatch_router_c<Router, typename RequestStream::value_t>
 class BasicDispatcher
 {
-    using DispatchRequest = typename RequestInput::Value;
-    using Executable = std::remove_reference_t<decltype(std::declval<DispatchRequest &>().getExecutable())>;
+    using DispatchRequest = typename RequestStream::value_t;
+    using Executable = typename DispatchRequest::executable_t;
     using DispatchRequestPendingQueue = queue::intrusive::Queue<DispatchRequest>;
 public:
     ~BasicDispatcher() noexcept = default;
     BasicDispatcher() = delete;
-    BasicDispatcher(RequestInput request_input, Router router, RequestSelectionPolicy request_selection_policy) noexcept(
-        std::is_nothrow_move_constructible_v<RequestInput> and std::is_nothrow_move_constructible_v<Router>
-        and std::is_nothrow_move_constructible_v<RequestSelectionPolicy>) :
-        m_request_input(std::move(request_input)), m_router(std::move(router)),
+    BasicDispatcher(RequestStream request_stream, Router router, RequestSelectionPolicy request_selection_policy) noexcept(
+        details::all_nothrow_move_constructible<RequestStream, Router, RequestSelectionPolicy>) :
+        m_request_stream(std::move(request_stream)),
+        m_router(std::move(router)),
         m_request_selection_policy(std::move(request_selection_policy)) {}
     BasicDispatcher(const BasicDispatcher &) = delete;
     BasicDispatcher(BasicDispatcher &&) = delete;
@@ -45,7 +44,6 @@ public:
         if (not request_p) { return report; }
         report.m_attempted = 1;
         const std::error_code error_code = m_router.tryRoute(*request_p);
-        // Successful publication may destroy the request.
         if (not error_code) { report.m_dispatched = 1; }
         else {
             m_pending_queue.pushBack(*request_p);
@@ -56,34 +54,33 @@ public:
     }
     bool isEmpty() const noexcept
     {
-        return not m_has_pending.load(std::memory_order_acquire) and m_request_input.isEmpty();
+        return not m_has_pending.load(std::memory_order_acquire) and m_request_stream.isEmpty();
     }
-    // Producers and the dispatcher driver must be quiescent.
     void cancelPending() noexcept requires cancellable_executable_c<Executable>
     {
         const auto cancel_request = [](DispatchRequest & request) noexcept { request.getExecutable().cancel(); };
         std::ranges::for_each(queue::utils::drain(m_pending_queue), cancel_request);
         m_has_pending.store(false, std::memory_order_release);
-        std::ranges::for_each(queue::utils::drain(m_request_input), cancel_request);
+        std::ranges::for_each(queue::utils::drain(m_request_stream), cancel_request);
     }
 private:
     DispatchRequest * takeRequest(DispatchReport & report) noexcept
     {
-        const std::uint64_t first_request_input_index = m_request_selection_policy.select(2);
-        if (DispatchRequest * request_p = this->takeRequestFrom(first_request_input_index, report)) { return request_p; }
-        return this->takeRequestFrom(1 - first_request_input_index, report);
+        const std::uint64_t first_source_index = m_request_selection_policy.select(2);
+        if (DispatchRequest * request_p = this->takeRequestFrom(first_source_index, report)) { return request_p; }
+        return this->takeRequestFrom(1 - first_source_index, report);
     }
-    DispatchRequest * takeRequestFrom(std::uint64_t input_index, DispatchReport & report) noexcept
+    DispatchRequest * takeRequestFrom(std::uint64_t source_index, DispatchReport & report) noexcept
     {
-        if (input_index == 1) { return m_pending_queue.tryPop(); }
-        if (DispatchRequest * request_p = m_request_input.tryPop()) {
+        if (source_index == 1) { return m_pending_queue.tryPop(); }
+        if (DispatchRequest * request_p = m_request_stream.tryPop()) {
             ++report.m_received;
             return request_p;
         }
         return nullptr;
     }
 private:
-    RequestInput m_request_input;
+    RequestStream m_request_stream;
     Router m_router;
     RequestSelectionPolicy m_request_selection_policy;
     DispatchRequestPendingQueue m_pending_queue;

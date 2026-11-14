@@ -3,6 +3,7 @@
 #include "ContextInfo.h"
 #include "SubmissionPort.h"
 #include "ExecutionPort.h"
+#include <async/core/details/concepts/constructible.h>
 #include <async/core/scheduling/declarations/poll_structs.h>
 #include <async/core/executable/ExecutableNode.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
@@ -22,7 +23,6 @@
 #include <stdexcept>
 #include <system_error>
 #include <thread>
-#include <type_traits>
 #include <utility>
 
 LCF_ASYNC_EXPORT
@@ -39,18 +39,18 @@ template <join_handle_c ThreadHandle = std::thread, std::uint64_t queue_capacity
     index_selection_policy_c DispatchSelectionPolicy = RoundRobin,
     template <typename> class Executor = BasicExecutor>
 requires (queue_capacity > 0) and
-    std::is_nothrow_default_constructible_v<Signal> and
+    details::all_nothrow_default_constructible<Signal> and
     notify::signal_notifier_c<Notifier, Signal> and linked_node_c<Executable>
 class BasicContext
 {
 private:
     using Resources = details::ContextResources<queue_capacity, Executable, Signal, Notifier,
         InputSelectionPolicy, RequestSelectionPolicy, PlacementPolicy, StealSelectionPolicy, DispatchSelectionPolicy, Executor>;
-    using SchedulingRuntime = typename Resources::Runtime;
+    using SchedulingRuntime = typename Resources::runtime_t;
     using WorkerPool = WorkerPool<typename SchedulingRuntime::WorkerProgress, ThreadHandle, Signal>;
-    using SubmissionPort = ::lcf::async::SubmissionPort<typename Resources::SharedSubmitter, Executable>;
-    using DedicatedSubmissionPort = ::lcf::async::SubmissionPort<typename Resources::DedicatedSubmitter, Executable>;
-    using ThreadExecutionPort = ::lcf::async::ExecutionPort<typename Resources::ThreadExecutor, Notifier>;
+    using SubmissionPort = ::lcf::async::SubmissionPort<typename Resources::shared_submitter_t, Executable>;
+    using DedicatedSubmissionPort = ::lcf::async::SubmissionPort<typename Resources::dedicated_submitter_t, Executable>;
+    using ThreadExecutionPort = ::lcf::async::ExecutionPort<typename Resources::thread_executor_t, Notifier>;
 public:
     BasicContext() = default;
     ~BasicContext() noexcept
@@ -74,7 +74,7 @@ public:
         }
         try {
             const std::uint64_t thread_count = info.getWorkerCount();
-            typename WorkerPool::WorkerList workers {thread_count, {&info.getWorkerMemoryResource()}};
+            typename WorkerPool::worker_list_t workers {thread_count, {&info.getWorkerMemoryResource()}};
             details::assemble_scheduling_runtime(m_resources, m_scheduling_runtime, info.getWorkerCount(),
                 info.getDispatcherCount(), info.getSubmissionPortCount(), info.getSchedulerKinds(), m_notifier,
                 info.getRuntimeMemoryResource());
@@ -117,8 +117,8 @@ public:
             throw;
         }
         Signal & signal = m_signal;
-        for (;;) {
-            const typename Signal::Observation observed = signal.observe();
+        while (true) {
+            const typename Signal::observation_t observed = signal.observe();
             if (m_worker_pool.isStopRequested()) { break; }
             const PollReport report = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
             if (report.hasProgress()) { continue; }

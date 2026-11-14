@@ -10,15 +10,15 @@ namespace lcf::async {
 class ExecutableNode
 {
 public:
-    using ExecuteFunction = void (*)(void *) noexcept;
-    using CancelFunction = void (*)(void *) noexcept;
+    using execute_function_t = void (*)(void *) noexcept;
+    using cancel_function_t = void (*)(void *) noexcept;
 public:
     ~ExecutableNode() noexcept = default;
     ExecutableNode() = delete;
     ExecutableNode(
         void * state_p,
-        ExecuteFunction execute_f,
-        CancelFunction cancel_f) noexcept :
+        execute_function_t execute_f,
+        cancel_function_t cancel_f) noexcept :
         m_state_p(state_p),
         m_execute_f(execute_f),
         m_cancel_f(cancel_f) {}
@@ -34,8 +34,8 @@ public:
 private:
     std::atomic<ExecutableNode *> m_next_p {nullptr};
     void * m_state_p;
-    ExecuteFunction m_execute_f;
-    CancelFunction m_cancel_f;
+    execute_function_t m_execute_f;
+    cancel_function_t m_cancel_f;
 };
 
 } // namespace lcf::async

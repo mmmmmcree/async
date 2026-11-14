@@ -13,7 +13,7 @@ public:
     QueueSubmitter(SubmissionQueue & submission_queue, Notifier & notifier) noexcept :
         m_submission_queue_p(&submission_queue), m_notifier_p(&notifier) {}
 
-    std::error_code submit(typename SubmissionQueue::Value & request) noexcept
+    std::error_code submit(typename SubmissionQueue::value_t & request) noexcept
     {
         const std::error_code error_code = m_submission_queue_p->tryEnqueue(request);
         if (not error_code) { m_notifier_p->notifyAll(); }

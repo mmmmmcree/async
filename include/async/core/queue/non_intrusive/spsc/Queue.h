@@ -16,7 +16,7 @@ requires (queue_capacity > 0)
 class Queue
 {
 public:
-    using Value = Item;
+    using value_t = Item;
     static constexpr bool k_supports_multiple_producers = false;
     static constexpr bool k_supports_multiple_consumers = false;
 public:
@@ -26,7 +26,7 @@ public:
     Queue & operator=(const Queue &) = delete;
     Queue & operator=(Queue &&) = delete;
 public:
-    std::error_code tryEnqueue(Value & value) noexcept
+    std::error_code tryEnqueue(value_t & value) noexcept
     {
         if (m_closed.load(std::memory_order_acquire)) { return std::make_error_code(std::errc::operation_canceled); }
         const std::uint64_t write = m_write.load(std::memory_order_relaxed);
@@ -36,7 +36,7 @@ public:
         m_write.store(next, std::memory_order_release);
         return {};
     }
-    Value * tryPop() noexcept
+    value_t * tryPop() noexcept
     {
         const std::uint64_t read = m_read.load(std::memory_order_relaxed);
         if (read == m_write.load(std::memory_order_acquire)) { return nullptr; }
@@ -53,7 +53,7 @@ public:
 private:
     static constexpr std::uint64_t advance(std::uint64_t index) noexcept { return index == queue_capacity ? 0 : index + 1; }
 private:
-    std::array<Value *, queue_capacity + 1> m_slots{};
+    std::array<value_t *, queue_capacity + 1> m_slots{};
     alignas(64) std::atomic<std::uint64_t> m_write{0};
     alignas(64) std::atomic<std::uint64_t> m_read{0};
     std::atomic<bool> m_closed{false};

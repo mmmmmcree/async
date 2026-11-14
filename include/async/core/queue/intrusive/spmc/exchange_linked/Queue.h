@@ -1,5 +1,6 @@
 #pragma once
 
+#include <async/core/details/concepts/constructible.h>
 #include <async/core/queue/intrusive/spmc/queue_declarations.h>
 
 #include <atomic>
@@ -7,7 +8,6 @@
 #include <exception>
 #include <mutex>
 #include <system_error>
-#include <type_traits>
 #include <utility>
 
 LCF_ASYNC_EXPORT
@@ -18,7 +18,7 @@ template <linked_node_c Node>
 class Queue<Node, AlgorithmTag::eExchangeLinked>
 {
 public:
-    using Value = Node;
+    using value_t = Node;
     static constexpr bool k_supports_multiple_producers = false;
     static constexpr bool k_supports_multiple_consumers = true;
 
@@ -33,12 +33,12 @@ private:
     static constexpr std::uint32_t k_producer_active_bit = 2u;
 public:
     ~Queue() noexcept = default;
-    Queue() noexcept(std::is_nothrow_default_constructible_v<Node>)
+    Queue() noexcept(details::all_nothrow_default_constructible<Node>)
     requires std::default_initializable<Node> :
         m_stub {} { m_stub.setNext(nullptr); }
     template <typename... Arguments>
     requires std::constructible_from<Node, Arguments...>
-    explicit Queue(std::in_place_t, Arguments &&... arguments) noexcept(std::is_nothrow_constructible_v<Node, Arguments...>) :
+    explicit Queue(std::in_place_t, Arguments &&... arguments) noexcept(details::nothrow_constructible_from<Node, Arguments...>) :
         m_stub(std::forward<Arguments>(arguments)...) { m_stub.setNext(nullptr); }
     Queue(const Queue &) = delete;
     Queue(Queue &&) = delete;

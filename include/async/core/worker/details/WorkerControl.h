@@ -10,7 +10,7 @@ template <notify::signal_c Signal>
 class WorkerControl
 {
 public:
-    using Observation = typename Signal::Observation;
+    using observation_t = typename Signal::observation_t;
 public:
     ~WorkerControl() noexcept = default;
     WorkerControl() = delete;
@@ -20,8 +20,8 @@ public:
     WorkerControl & operator=(const WorkerControl &) = delete;
     WorkerControl & operator=(WorkerControl &&) = delete;
 public:
-    Observation observe() const noexcept { return m_signal_p->observe(); }
-    void wait(Observation observed) const noexcept { m_signal_p->wait(observed); }
+    observation_t observe() const noexcept { return m_signal_p->observe(); }
+    void wait(observation_t observed) const noexcept { m_signal_p->wait(observed); }
     bool isStopRequested() const noexcept { return m_stop_requested.load(std::memory_order_acquire); }
     bool isClosed() const noexcept { return m_closed.load(std::memory_order_acquire); }
     void requestStop() noexcept

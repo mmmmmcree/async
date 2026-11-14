@@ -15,7 +15,7 @@ requires ExecutionQueue::k_supports_multiple_consumers
 class WorkStealingSelector
 {
 public:
-    using Value = typename ExecutionQueue::Value;
+    using value_t = typename ExecutionQueue::value_t;
 
     template <std::size_t queue_extent>
     WorkStealingSelector(std::span<ExecutionQueue, queue_extent> execution_queues, std::uint64_t local_queue_index,
@@ -23,7 +23,7 @@ public:
         m_execution_queues(execution_queues), m_local_queue_index(local_queue_index),
         m_steal_selection_policy(std::move(steal_selection_policy)) {}
 
-    Value * tryPop() noexcept
+    value_t * tryPop() noexcept
     {
         if (auto * executable_p = m_execution_queues[m_local_queue_index].tryPop()) { return executable_p; }
         const std::uint64_t candidate_count = m_execution_queues.size() - 1;
