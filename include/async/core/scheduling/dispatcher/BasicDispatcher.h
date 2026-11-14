@@ -40,16 +40,18 @@ public:
     DispatchReport dispatchOne() noexcept
     {
         DispatchReport report;
-        DispatchRequest * request_p = this->takeRequest(report);
-        if (not request_p) { return report; }
-        report.m_attempted = 1;
-        const std::error_code error_code = m_router.tryRoute(*request_p);
-        if (not error_code) { report.m_dispatched = 1; }
-        else {
-            m_pending_queue.pushBack(*request_p);
-            if (error_code != std::errc::no_buffer_space) { report.m_error_code = error_code; }
+        if (m_dispatching.test_and_set(std::memory_order_acquire)) { return report; }
+        if (DispatchRequest * request_p = this->takeRequest(report)) {
+            report.m_attempted = 1;
+            const std::error_code error_code = m_router.tryRoute(*request_p);
+            if (not error_code) { report.m_dispatched = 1; }
+            else {
+                m_pending_queue.pushBack(*request_p);
+                if (error_code != std::errc::no_buffer_space) { report.m_error_code = error_code; }
+            }
+            m_has_pending.store(not m_pending_queue.isEmpty(), std::memory_order_release);
         }
-        m_has_pending.store(not m_pending_queue.isEmpty(), std::memory_order_release);
+        m_dispatching.clear(std::memory_order_release);
         return report;
     }
     bool isEmpty() const noexcept
@@ -84,6 +86,7 @@ private:
     Router m_router;
     RequestSelectionPolicy m_request_selection_policy;
     DispatchRequestPendingQueue m_pending_queue;
+    std::atomic_flag m_dispatching {};
     std::atomic<bool> m_has_pending{false};
 };
 

@@ -47,10 +47,10 @@ private:
     using Resources = details::ContextResources<queue_capacity, Executable, Signal, Notifier,
         InputSelectionPolicy, RequestSelectionPolicy, PlacementPolicy, StealSelectionPolicy, DispatchSelectionPolicy, Executor>;
     using SchedulingRuntime = typename Resources::runtime_t;
-    using WorkerPool = WorkerPool<typename SchedulingRuntime::WorkerProgress, ThreadHandle, Signal>;
+    using WorkerPool = WorkerPool<typename SchedulingRuntime::WorkerPoller, ThreadHandle, Signal>;
     using SubmissionPort = ::lcf::async::SubmissionPort<typename Resources::shared_submitter_t, Executable>;
     using DedicatedSubmissionPort = ::lcf::async::SubmissionPort<typename Resources::dedicated_submitter_t, Executable>;
-    using ThreadExecutionPort = ::lcf::async::ExecutionPort<typename Resources::thread_executor_t, Notifier>;
+    using ThreadExecutionPort = ::lcf::async::ExecutionPort<typename Resources::thread_local_executor_t, Notifier>;
 public:
     BasicContext() = default;
     ~BasicContext() noexcept
@@ -110,7 +110,7 @@ public:
         const details::OwnerThreadGuard guard {m_owner_state};
         try {
             m_worker_pool.start([this](std::uint64_t index) {
-                return m_scheduling_runtime.getWorkerProgress(index, DispatchSelectionPolicy{});
+                return m_scheduling_runtime.makeWorkerPoller(index, DispatchSelectionPolicy{});
             }, std::move(launcher));
         } catch (...) {
             this->requestStopProcessing();
@@ -157,7 +157,7 @@ public:
         assert(token.getDomainId() == m_domain_id and token.getIndex() < m_resources.m_target_routes.size());
         const TargetRoute & route = m_resources.m_target_routes[token.getIndex()];
         assert(route.m_kind == SchedulingTargetKind::eThread);
-        return {m_resources.m_thread_executors[route.m_queue_index],
+        return {m_resources.m_thread_local_executors[route.m_queue_index],
             m_scheduling_runtime.getActivePollCount(), m_notifier};
     }
     ThreadExecutionPort getExecutionPort(PortToken token) noexcept

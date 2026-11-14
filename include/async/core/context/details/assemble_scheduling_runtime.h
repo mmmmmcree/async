@@ -27,8 +27,8 @@ void assemble_scheduling_runtime(
     resources.m_shared_submitters = {1, {&resource}};
     resources.m_dedicated_submitters = {port_count, {&resource}};
     resources.m_work_selectors = {shared_queue_count, {&resource}};
-    resources.m_shared_executors = {shared_queue_count, {&resource}};
-    resources.m_thread_executors = {thread_queue_count, {&resource}};
+    resources.m_thread_shared_executors = {shared_queue_count, {&resource}};
+    resources.m_thread_local_executors = {thread_queue_count, {&resource}};
     resources.m_dispatchers = {dispatcher_count, {&resource}};
     resources.m_target_routes = {scheduler_kinds.size(), {&resource}};
 
@@ -43,8 +43,8 @@ void assemble_scheduling_runtime(
     for (std::uint64_t index = 0; index < shared_queue_count; ++index) {
         resources.m_work_selectors.emplace_back(std::span{resources.m_shared_execution_queues}, index, StealSelectionPolicy{});
     }
-    for (auto & selector : resources.m_work_selectors) { resources.m_shared_executors.emplace_back(selector); }
-    for (auto & execution_queue : resources.m_thread_execution_queues) { resources.m_thread_executors.emplace_back(execution_queue); }
+    for (auto & selector : resources.m_work_selectors) { resources.m_thread_shared_executors.emplace_back(selector); }
+    for (auto & execution_queue : resources.m_thread_execution_queues) { resources.m_thread_local_executors.emplace_back(execution_queue); }
 
     std::uint64_t next_thread_queue = 0;
     for (const SchedulingTargetKind kind : scheduler_kinds) {
@@ -65,8 +65,8 @@ void assemble_scheduling_runtime(
         remaining_submissions = remaining_submissions.subspan(assigned_port_count);
     }
     destination = std::move(resources);
-    runtime.attach(std::span{destination.m_dispatchers}, std::span{destination.m_shared_executors},
-        std::span{destination.m_thread_executors});
+    runtime.attach(std::span{destination.m_dispatchers}, std::span{destination.m_thread_shared_executors},
+        std::span{destination.m_thread_local_executors});
 }
 
 } // namespace lcf::async::details

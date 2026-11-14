@@ -38,8 +38,8 @@ struct ContextResources
     using shared_submitter_t = QueueSubmitter<request_queue_t, Notifier>;
     using dedicated_submitter_t = QueueSubmitter<submission_queue_t, Notifier>;
     using work_selector_t = WorkStealingSelector<shared_execution_queue_t, StealSelectionPolicy>;
-    using shared_executor_t = Executor<work_selector_t>;
-    using thread_executor_t = Executor<thread_execution_queue_t>;
+    using thread_shared_executor_t = Executor<work_selector_t>;
+    using thread_local_executor_t = Executor<thread_execution_queue_t>;
     using router_t = TargetRouter<shared_execution_queue_t, thread_execution_queue_t, request_queue_t, PlacementPolicy>;
 
     class DispatchRequestStream
@@ -81,8 +81,7 @@ struct ContextResources
     };
 
     using dispatcher_t = BasicDispatcher<DispatchRequestStream, router_t, RequestSelectionPolicy>;
-    using runtime_t = SchedulingRuntime<dispatcher_t, shared_executor_t, thread_executor_t, Signal, DispatchSelectionPolicy>;
-    using dispatcher_state_t = typename runtime_t::DispatcherState;
+    using runtime_t = SchedulingRuntime<dispatcher_t, thread_shared_executor_t, thread_local_executor_t, Signal, DispatchSelectionPolicy>;
     using storage_requirements_result_t = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
 
     static storage_requirements_result_t calc_storage_requirements(std::uint64_t worker_count,
@@ -104,9 +103,9 @@ struct ContextResources
             {1, sizeof(shared_submitter_t), alignof(shared_submitter_t)},
             {port_count, sizeof(dedicated_submitter_t), alignof(dedicated_submitter_t)},
             {shared_queue_count, sizeof(work_selector_t), alignof(work_selector_t)},
-            {shared_queue_count, sizeof(shared_executor_t), alignof(shared_executor_t)},
-            {thread_scheduler_count, sizeof(thread_executor_t), alignof(thread_executor_t)},
-            {dispatcher_count, sizeof(dispatcher_state_t), alignof(dispatcher_state_t)},
+            {shared_queue_count, sizeof(thread_shared_executor_t), alignof(thread_shared_executor_t)},
+            {thread_scheduler_count, sizeof(thread_local_executor_t), alignof(thread_local_executor_t)},
+            {dispatcher_count, sizeof(dispatcher_t), alignof(dispatcher_t)},
             {scheduler_count, sizeof(TargetRoute), alignof(TargetRoute)}
         }};
         const std::size_t max_size = std::numeric_limits<std::size_t>::max();
@@ -132,7 +131,7 @@ struct ContextResources
     // All producers and runtime drivers must have stopped before cancellation.
     void cancelPending() noexcept
     {
-        for (auto & state : m_dispatchers) { state.m_dispatcher.cancelPending(); }
+        std::ranges::for_each(m_dispatchers, &dispatcher_t::cancelPending);
         for (auto & execution_queue : m_shared_execution_queues) {
             std::ranges::for_each(queue::utils::drain(execution_queue), &Executable::cancel);
         }
@@ -148,9 +147,9 @@ struct ContextResources
     FixedCapacityVector<shared_submitter_t> m_shared_submitters;
     FixedCapacityVector<dedicated_submitter_t> m_dedicated_submitters;
     FixedCapacityVector<work_selector_t> m_work_selectors;
-    FixedCapacityVector<shared_executor_t> m_shared_executors;
-    FixedCapacityVector<thread_executor_t> m_thread_executors;
-    FixedCapacityVector<dispatcher_state_t> m_dispatchers;
+    FixedCapacityVector<thread_shared_executor_t> m_thread_shared_executors;
+    FixedCapacityVector<thread_local_executor_t> m_thread_local_executors;
+    FixedCapacityVector<dispatcher_t> m_dispatchers;
     FixedCapacityVector<TargetRoute> m_target_routes;
 };
 

@@ -87,7 +87,7 @@ public:
     {
         using Resources = details::ContextResources<queue_capacity, Executable, Signal, Notifier,
             InputSelectionPolicy, RequestSelectionPolicy, PlacementPolicy, StealSelectionPolicy, DispatchSelectionPolicy, Executor>;
-        using Worker = typename WorkerPool<typename Resources::runtime_t::WorkerProgress, ThreadHandle, Signal>::worker_t;
+        using Worker = typename WorkerPool<typename Resources::runtime_t::WorkerPoller, ThreadHandle, Signal>::worker_t;
         const typename Resources::storage_requirements_result_t requirements = Resources::calc_storage_requirements(
             m_worker_count, m_dispatcher_count, m_port_count, m_scheduler_kinds.size(), m_thread_scheduler_count);
         if (not requirements or m_worker_count > std::numeric_limits<std::size_t>::max() / sizeof(Worker)) { std::terminate(); }

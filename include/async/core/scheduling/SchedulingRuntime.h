@@ -16,58 +16,56 @@ LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <request_dispatcher_c Dispatcher,
-    work_executor_c SharedExecutor,
-    work_executor_c ThreadExecutor,
+    work_executor_c ThreadSharedExecutor,
+    work_executor_c ThreadLocalExecutor,
     notify::signal_c Signal,
     index_selection_policy_c DispatchSelectionPolicy>
 class SchedulingRuntime
 {
 public:
-    struct DispatcherState
-    {
-        template <typename... Args>
-        explicit DispatcherState(Args &&... args) : m_dispatcher(std::forward<Args>(args)...) {}
-
-        Dispatcher m_dispatcher;
-        std::atomic_flag m_driving {};
-    };
-
-    class WorkerProgress
+    class WorkerPoller
     {
     public:
-        WorkerProgress(SchedulingRuntime & runtime, SharedExecutor & executor,
+        ~WorkerPoller() = default;
+        WorkerPoller() = delete;
+        WorkerPoller(SchedulingRuntime & runtime, ThreadSharedExecutor & executor,
             DispatchSelectionPolicy dispatch_selection_policy) :
             m_runtime_p(&runtime), m_executor_p(&executor),
             m_dispatch_selection_policy(std::move(dispatch_selection_policy)) {}
+        WorkerPoller(const WorkerPoller &) = default;
+        WorkerPoller(WorkerPoller &&) = default;
+        WorkerPoller & operator=(const WorkerPoller &) = default;
+        WorkerPoller & operator=(WorkerPoller &&) = default;
+    public:
         bool operator()() noexcept
         {
             return m_runtime_p->pollOnce(m_dispatch_selection_policy, m_executor_p).hasProgress();
         }
     private:
         SchedulingRuntime * m_runtime_p;
-        SharedExecutor * m_executor_p;
+        ThreadSharedExecutor * m_executor_p;
         DispatchSelectionPolicy m_dispatch_selection_policy;
     };
 
     explicit SchedulingRuntime(Signal & signal, DispatchSelectionPolicy owner_dispatch_selection_policy) :
         m_signal_p(&signal), m_owner_dispatch_selection_policy(std::move(owner_dispatch_selection_policy)) {}
 
-    void attach(std::span<DispatcherState> dispatchers, std::span<SharedExecutor> shared_executors,
-        std::span<ThreadExecutor> thread_executors) noexcept
+    void attach(std::span<Dispatcher> dispatchers, std::span<ThreadSharedExecutor> thread_shared_executors,
+        std::span<ThreadLocalExecutor> thread_local_executors) noexcept
     {
         m_dispatchers = dispatchers;
-        m_shared_executors = shared_executors;
-        m_thread_executors = thread_executors;
+        m_thread_shared_executors = thread_shared_executors;
+        m_thread_local_executors = thread_local_executors;
         m_submissions_closed.store(false, std::memory_order_release);
     }
-    WorkerProgress getWorkerProgress(std::uint64_t worker_index, DispatchSelectionPolicy dispatch_selection_policy)
+    WorkerPoller makeWorkerPoller(std::uint64_t worker_index, DispatchSelectionPolicy dispatch_selection_policy)
     {
-        return {*this, m_shared_executors[worker_index], std::move(dispatch_selection_policy)};
+        return {*this, m_thread_shared_executors[worker_index], std::move(dispatch_selection_policy)};
     }
     PollReport pollOwner(bool execute_shared_work) noexcept
     {
-        SharedExecutor * executor_p = execute_shared_work and not m_shared_executors.empty()
-            ? &m_shared_executors.front() : nullptr;
+        ThreadSharedExecutor * executor_p = execute_shared_work and not m_thread_shared_executors.empty()
+            ? &m_thread_shared_executors.front() : nullptr;
         return this->pollOnce(m_owner_dispatch_selection_policy, executor_p);
     }
     void closeSubmissions() noexcept
@@ -79,9 +77,9 @@ public:
     std::atomic<std::uint64_t> & getActivePollCount() noexcept { return m_active_poll_count; }
     bool isEmpty() const noexcept
     {
-        return std::ranges::all_of(m_dispatchers, [](const DispatcherState & state) { return state.m_dispatcher.isEmpty(); })
-            and std::ranges::all_of(m_shared_executors, &SharedExecutor::isEmpty)
-            and std::ranges::all_of(m_thread_executors, &ThreadExecutor::isEmpty);
+        return std::ranges::all_of(m_dispatchers, &Dispatcher::isEmpty)
+            and std::ranges::all_of(m_thread_shared_executors, &ThreadSharedExecutor::isEmpty)
+            and std::ranges::all_of(m_thread_local_executors, &ThreadLocalExecutor::isEmpty);
     }
     bool isIdle() const noexcept
     {
@@ -97,10 +95,7 @@ private:
         const std::uint64_t first_dispatcher_index = dispatch_selection_policy.select(m_dispatchers.size());
         for (std::uint64_t attempt = 0; attempt < m_dispatchers.size(); ++attempt) {
             const std::uint64_t dispatcher_index = (first_dispatcher_index + attempt) % m_dispatchers.size();
-            DispatcherState & state = m_dispatchers[dispatcher_index];
-            if (state.m_driving.test_and_set(std::memory_order_acquire)) { continue; }
-            const DispatchReport dispatched = state.m_dispatcher.dispatchOne();
-            state.m_driving.clear(std::memory_order_release);
+            const DispatchReport dispatched = m_dispatchers[dispatcher_index].dispatchOne();
             if (const std::error_code error_code = dispatched) { std::terminate(); }
             report.m_received += dispatched.m_received;
             report.m_dispatched += dispatched.m_dispatched;
@@ -109,7 +104,7 @@ private:
         }
         return report;
     }
-    PollReport pollOnce(DispatchSelectionPolicy & dispatch_selection_policy, SharedExecutor * executor_p) noexcept
+    PollReport pollOnce(DispatchSelectionPolicy & dispatch_selection_policy, ThreadSharedExecutor * executor_p) noexcept
     {
         m_active_poll_count.fetch_add(1, std::memory_order_acq_rel);
         const DispatchReport dispatched = this->dispatchNext(dispatch_selection_policy);
@@ -125,9 +120,9 @@ private:
 private:
     Signal * m_signal_p;
     DispatchSelectionPolicy m_owner_dispatch_selection_policy;
-    std::span<DispatcherState> m_dispatchers;
-    std::span<SharedExecutor> m_shared_executors;
-    std::span<ThreadExecutor> m_thread_executors;
+    std::span<Dispatcher> m_dispatchers;
+    std::span<ThreadSharedExecutor> m_thread_shared_executors;
+    std::span<ThreadLocalExecutor> m_thread_local_executors;
     std::atomic<std::uint64_t> m_active_poll_count {0};
     std::atomic<bool> m_submissions_closed {true};
 };
