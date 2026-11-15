@@ -4,20 +4,22 @@
 #include "SubmissionPort.h"
 #include "ExecutionPort.h"
 #include <async/core/details/concepts/constructible.h>
-#include <async/core/scheduling/declarations/poll_structs.h>
 #include <async/core/executable/ExecutableNode.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
 #include <async/core/notify/SignalNotifier.h>
+#include <async/core/context/details/DispatchRequestSink.h>
 #include <async/core/context/details/OwnerThreadState.h>
+#include <async/core/context/details/WorkerPoller.h>
 #include <async/core/context/details/assemble_scheduling_runtime.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
 #include <async/core/scheduling/policy/RoundRobin.h>
+#include <async/core/worker/WorkerPool.h>
 #include <async/core/worker/thread/ThreadLauncher.h>
 
-#include <algorithm>
 #include <cassert>
-#include <chrono>
 #include <cstdint>
+#include <exception>
+#include <limits>
 #include <memory>
 #include <new>
 #include <stdexcept>
@@ -28,29 +30,45 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
+namespace details {
+
+template <typename Queue>
+using DefaultExecutableStream = WorkStealingStream<Queue, policy::RoundRobin>;
+template <typename Queue>
+using DefaultRequestStream = DispatchRequestStream<Queue, policy::RoundRobin, policy::RoundRobin>;
+template <typename SharedQueue, typename ThreadQueue, typename RequestQueue>
+using DefaultRequestSink = DispatchRequestSink<SharedQueue, ThreadQueue, RequestQueue, policy::RoundRobin>;
+template <typename RequestStream, typename RequestSink>
+using DefaultDispatcher = BasicDispatcher<RequestStream, RequestSink>;
+template <typename Dispatcher, typename SharedExecutor, typename LocalExecutor, typename Signal>
+using DefaultSchedulingRuntime = SchedulingRuntime<Dispatcher, SharedExecutor, LocalExecutor, Signal, policy::RoundRobin>;
+
+} // namespace details
+
 template <join_handle_c ThreadHandle = std::thread, std::uint64_t queue_capacity = 256,
     cancellable_executable_c Executable = ExecutableNode,
     notify::signal_c Signal = notify::AtomicSequenceSignal,
     typename Notifier = notify::SignalNotifier<Signal>,
-    index_selection_policy_c InputSelectionPolicy = RoundRobin,
-    index_selection_policy_c RequestSelectionPolicy = RoundRobin,
-    index_selection_policy_c PlacementPolicy = RoundRobin,
-    index_selection_policy_c StealSelectionPolicy = RoundRobin,
-    index_selection_policy_c DispatchSelectionPolicy = RoundRobin,
-    template <typename> class Executor = BasicExecutor>
+    template <typename> class Executor = BasicExecutor,
+    template <typename> class ExecutableStream = details::DefaultExecutableStream,
+    template <typename> class RequestStream = details::DefaultRequestStream,
+    template <typename, typename, typename> class RequestSink = details::DefaultRequestSink,
+    template <typename, typename> class Dispatcher = details::DefaultDispatcher,
+    template <typename, typename, typename, typename> class Runtime = details::DefaultSchedulingRuntime>
 requires (queue_capacity > 0) and
     details::all_nothrow_default_constructible<Signal> and
     notify::signal_notifier_c<Notifier, Signal> and linked_node_c<Executable>
 class BasicContext
 {
+    friend class ContextInfo;
 private:
     using Resources = details::ContextResources<queue_capacity, Executable, Signal, Notifier,
-        InputSelectionPolicy, RequestSelectionPolicy, PlacementPolicy, StealSelectionPolicy, DispatchSelectionPolicy, Executor>;
+        Executor, ExecutableStream, RequestStream, RequestSink, Dispatcher, Runtime>;
     using SchedulingRuntime = typename Resources::runtime_t;
-    using WorkerPool = WorkerPool<typename SchedulingRuntime::WorkerPoller, ThreadHandle, Signal>;
+    using WorkerPoller = details::WorkerPoller<SchedulingRuntime, typename Resources::thread_shared_executor_t>;
+    using WorkerPool = WorkerPool<WorkerPoller, ThreadHandle, Signal>;
     using SubmissionPort = ::lcf::async::SubmissionPort<typename Resources::shared_submitter_t, Executable>;
     using DedicatedSubmissionPort = ::lcf::async::SubmissionPort<typename Resources::dedicated_submitter_t, Executable>;
-    using ThreadExecutionPort = ::lcf::async::ExecutionPort<typename Resources::thread_local_executor_t, Notifier>;
 public:
     BasicContext() = default;
     ~BasicContext() noexcept
@@ -92,17 +110,30 @@ public:
             return std::make_error_code(std::errc::io_error);
         }
         m_domain_id = info.getDomainId();
-        m_scheduler_count = info.getSchedulerCount();
         return {};
     }
     SubmissionPort getSubmissionPort() noexcept
     {
-        return SubmissionPort {m_resources.m_shared_submitters.front(), m_domain_id, m_scheduler_count};
+        return SubmissionPort {m_resources.m_shared_submitters.front(), m_domain_id};
     }
     DedicatedSubmissionPort getSubmissionPort(PortToken token) noexcept
     {
-        assert(token.getDomainId() == m_domain_id and token.getIndex() < m_resources.m_dedicated_submitters.size());
-        return DedicatedSubmissionPort {m_resources.m_dedicated_submitters[token.getIndex()], m_domain_id, m_scheduler_count};
+        assert(token.getDomainId() == m_domain_id);
+        return DedicatedSubmissionPort {m_resources.m_dedicated_submitters[token.getIndex()], m_domain_id};
+    }
+    auto getExecutionPort() noexcept
+    {
+        return ExecutionPort {[this]() noexcept -> PollResult {
+            const details::OwnerThreadGuard guard {m_owner_state};
+            return details::require_poll_result(m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning()));
+        }};
+    }
+    auto getExecutionPort(PortToken token) noexcept
+    {
+        assert(token.getDomainId() == m_domain_id);
+        return ExecutionPort {[this, executor_p = &m_resources.m_thread_local_executors[token.getIndex()]]() noexcept -> PollResult {
+            return m_scheduling_runtime.pollLocal(*executor_p);
+        }};
     }
     template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
     void run(Launcher launcher = {})
@@ -110,7 +141,7 @@ public:
         const details::OwnerThreadGuard guard {m_owner_state};
         try {
             m_worker_pool.start([this](std::uint64_t index) {
-                return m_scheduling_runtime.makeWorkerPoller(index, DispatchSelectionPolicy{});
+                return WorkerPoller {m_scheduling_runtime, m_resources.m_thread_shared_executors[index]};
             }, std::move(launcher));
         } catch (...) {
             this->requestStopProcessing();
@@ -120,49 +151,13 @@ public:
         while (true) {
             const typename Signal::observation_t observed = signal.observe();
             if (m_worker_pool.isStopRequested()) { break; }
-            const PollReport report = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
-            if (report.hasProgress()) { continue; }
+            if (details::require_poll_result(m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning()))) { continue; }
             if (m_scheduling_runtime.areSubmissionsClosed()) {
                 if (m_scheduling_runtime.isIdle()) { break; }
                 std::this_thread::yield();
             } else { signal.wait(observed); }
         }
         this->stopAndJoinWorkers();
-    }
-    PollReport pollOne() noexcept
-    {
-        const details::OwnerThreadGuard guard {m_owner_state};
-        return m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
-    }
-    PollReport poll(PollBudget budget = {}) noexcept
-    {
-        using Clock = std::chrono::steady_clock;
-        const details::OwnerThreadGuard guard {m_owner_state};
-        const Clock::time_point started = Clock::now();
-        PollReport report;
-        while (report.m_records < budget.m_max_records) {
-            if (Clock::now() - started >= budget.m_max_duration) { break; }
-            const PollReport polled = m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning());
-            report.m_records += polled.m_records;
-            report.m_result = std::max(report.m_result, polled.getResult());
-            if (not polled.hasProgress()) { break; }
-        }
-        report.m_elapsed = Clock::now() - started;
-        report.m_count_limit_reached = report.m_records == budget.m_max_records;
-        report.m_time_limit_reached = report.m_elapsed >= budget.m_max_duration;
-        return report;
-    }
-    ThreadExecutionPort getExecutionPort(SchedulerToken token) noexcept
-    {
-        assert(token.getDomainId() == m_domain_id and token.getIndex() < m_resources.m_target_routes.size());
-        const TargetRoute & route = m_resources.m_target_routes[token.getIndex()];
-        assert(route.m_kind == SchedulingTargetKind::eThread);
-        return {m_resources.m_thread_local_executors[route.m_queue_index],
-            m_scheduling_runtime.getActivePollCount(), m_notifier};
-    }
-    ThreadExecutionPort getExecutionPort(PortToken token) noexcept
-    {
-        return this->getExecutionPort(token.getSchedulerToken());
     }
     void closeSubmissions() noexcept
     {
@@ -181,13 +176,26 @@ private:
     Signal m_signal;
     Notifier m_notifier {m_signal};
     Resources m_resources;
-    SchedulingRuntime m_scheduling_runtime {m_signal, DispatchSelectionPolicy{}};
+    SchedulingRuntime m_scheduling_runtime {m_signal};
     WorkerPool m_worker_pool {m_signal};
     details::OwnerThreadState m_owner_state;
     std::uint32_t m_domain_id = details::k_unbound_domain_id;
-    std::uint32_t m_scheduler_count = 0;
 };
 
 using Context = BasicContext<>;
+
+template <typename ContextType = Context>
+ContextStorageRequirements ContextInfo::getStorageRequirements() const noexcept
+{
+    using Resources = typename ContextType::Resources;
+    using Worker = typename ContextType::WorkerPool::worker_t;
+    const typename Resources::storage_requirements_result_t requirements = Resources::calc_storage_requirements(
+        m_worker_count, m_dispatcher_count, m_port_count, this->getSchedulerCount());
+    if (not requirements or m_worker_count > std::numeric_limits<std::size_t>::max() / sizeof(Worker)) {
+        std::terminate();
+    }
+    const auto [runtime_size, runtime_alignment] = *requirements;
+    return {runtime_size, runtime_alignment, m_worker_count * sizeof(Worker), alignof(Worker)};
+}
 
 } // namespace lcf::async

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/core/declarations/concepts.h>
+#include <async/core/scheduling/declarations/enums.h>
 #include <async/protocol.h>
 
 #include <concepts>
@@ -41,5 +42,10 @@ concept waiting_work_executor_c = work_executor_c<Executor> and
     requires(Executor & executor) {
         { executor.waitAndExecuteOne() } noexcept -> std::same_as<bool>;
     };
+
+template <typename Poller>
+concept work_poller_c = requires(Poller & poller) {
+    { poller() } noexcept -> std::same_as<PollResult>;
+};
 
 } // namespace lcf::async

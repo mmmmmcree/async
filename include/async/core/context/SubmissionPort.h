@@ -20,8 +20,8 @@ class SubmissionPort
 public:
     ~SubmissionPort() noexcept = default;
     SubmissionPort() = delete;
-    SubmissionPort(Submitter & submitter, std::uint32_t domain_id, std::uint32_t scheduler_count) noexcept :
-        m_submitter_p(&submitter), m_domain_id(domain_id), m_scheduler_count(scheduler_count) {}
+    SubmissionPort(Submitter & submitter, std::uint32_t domain_id) noexcept :
+        m_submitter_p(&submitter), m_domain_id(domain_id) {}
     SubmissionPort(const SubmissionPort &) noexcept = default;
     SubmissionPort(SubmissionPort &&) noexcept = default;
     SubmissionPort & operator=(const SubmissionPort &) noexcept = default;
@@ -29,17 +29,13 @@ public:
 public:
     SchedulerHandle getSchedulerHandle(SchedulerToken token) const noexcept
     {
-        assert(token.getDomainId() == m_domain_id and token.getIndex() < m_scheduler_count);
+        assert(token.getDomainId() == m_domain_id);
         return SchedulerHandle {*m_submitter_p, m_domain_id, token.getIndex()};
     }
-    SchedulerHandle getSchedulerHandle(PortToken token) const noexcept
-    {
-        return this->getSchedulerHandle(token.getSchedulerToken());
-    }
+    SchedulerHandle getSchedulerHandle(PortToken token) const noexcept { return this->getSchedulerHandle(token.getSchedulerToken()); }
 private:
     Submitter * m_submitter_p;
     std::uint32_t m_domain_id;
-    std::uint32_t m_scheduler_count;
 };
 
 } // namespace lcf::async

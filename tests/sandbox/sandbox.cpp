@@ -110,9 +110,9 @@ private:
 };
 
 template <async::scheduler_c SharedScheduler, async::scheduler_c CallerScheduler,
-    async::work_executor_c TargetExecutor, async::notify::notifier_c Notifier>
+    async::work_poller_c Poller>
 void run_caller(SharedScheduler shared_scheduler_handle, CallerScheduler caller_scheduler_handle,
-    async::ExecutionPort<TargetExecutor, Notifier> caller_execution_port, Outcome & outcome)
+    async::ExecutionPort<Poller> caller_execution_port, Outcome & outcome)
 {
     const auto caller_thread = std::this_thread::get_id();
     outcome.m_caller_thread = caller_thread;

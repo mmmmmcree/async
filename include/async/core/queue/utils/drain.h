@@ -19,7 +19,7 @@ using enum DrainDirection;
 
 namespace details {
 
-template <queue_c Queue, DrainDirection direction = from_front>
+template <consumer_queue_c Queue, DrainDirection direction = from_front>
 class DrainView : public std::ranges::view_interface<DrainView<Queue, direction>>
 {
     using Value = typename Queue::value_t;
@@ -41,7 +41,7 @@ class DrainView : public std::ranges::view_interface<DrainView<Queue, direction>
         Value & operator*() const noexcept { return *m_value_p; }
         Iterator & operator++() noexcept
         {
-            if constexpr (deque_c<Queue>) {
+            if constexpr (consumer_deque_c<Queue>) {
                 if constexpr (direction == from_front) { m_value_p = m_queue_p->tryPopFront(); }
                 else { m_value_p = m_queue_p->tryPopBack(); }
             } else { m_value_p = m_queue_p->tryPop(); }
@@ -70,7 +70,7 @@ private:
 
 } // namespace details
 
-template <DrainDirection direction = from_front, queue_c Queue>
+template <DrainDirection direction = from_front, consumer_queue_c Queue>
 details::DrainView<Queue, direction> drain(Queue & queue) noexcept { return details::DrainView<Queue, direction> {queue}; }
 
 } // namespace lcf::async::queue::utils

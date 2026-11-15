@@ -6,7 +6,7 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <queue_producer_c SubmissionQueue, notify::notifier_c Notifier>
+template <producer_queue_c SubmissionQueue, notify::notifier_c Notifier>
 class QueueSubmitter
 {
 public:
