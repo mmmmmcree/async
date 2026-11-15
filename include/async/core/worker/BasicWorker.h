@@ -1,76 +1,45 @@
 #pragma once
-
-#include <async/core/details/concepts/constructible.h>
-#include <async/core/worker/thread/declarations/concepts.h>
-#include <async/core/worker/declarations/concepts.h>
-#include <async/core/worker/declarations/enums.h>
-
-#include <atomic>
-#include <cassert>
-#include <concepts>
-#include <utility>
-
+#include <async/config/macros.h>
+#include <async/core/details/ActivityGate.h>
+#include <async/core/scheduling/declarations/concepts.h>
+#include <async/core/worker/thread/ThreadLauncher.h>
 LCF_ASYNC_EXPORT
 namespace lcf::async {
-
-template <worker_progress_c Progress, worker_waiter_c Waiter, join_handle_c ThreadHandle>
+template <work_executor_c ExecutionPath, typename Coordinator, join_handle_c ThreadHandle>
 class BasicWorker
 {
-    using Self = BasicWorker<Progress, Waiter, ThreadHandle>;
-    static void run_worker(void * state_p) noexcept
-    {
-        Self & worker = *static_cast<Self *>(state_p);
-        while (worker.waitAndExecuteOne()) {}
-    }
+    static void runWorker(void * p) noexcept { static_cast<BasicWorker *>(p)->run(); }
 public:
     ~BasicWorker() noexcept { this->join(); }
     BasicWorker() = delete;
-    BasicWorker(Progress progress, Waiter & waiter) noexcept(
-        details::all_nothrow_move_constructible<Progress> and details::all_nothrow_default_constructible<ThreadHandle>)
-    requires std::default_initializable<ThreadHandle> :
-        m_progress(std::move(progress)), m_waiter_p(&waiter) {}
-    template <thread_launcher_c<ThreadHandle> Launcher>
-    BasicWorker(Launcher & launcher, Progress progress, Waiter & waiter) :
-        m_progress(std::move(progress)), m_waiter_p(&waiter),
-        m_thread_handle(launcher(&run_worker, this)) {}
+    BasicWorker(ExecutionPath path, Coordinator & coordinator) : m_path(std::move(path)), m_coordinator_p(&coordinator) {}
     BasicWorker(const BasicWorker &) = delete;
     BasicWorker(BasicWorker &&) = delete;
     BasicWorker & operator=(const BasicWorker &) = delete;
     BasicWorker & operator=(BasicWorker &&) = delete;
-public:
+    template <thread_launcher_c<ThreadHandle> Launcher>
+    void start(Launcher & launcher) { m_thread = launcher(&runWorker, this); }
     void run() noexcept
     {
-        assert(not m_thread_handle.joinable());
-        run_worker(this);
-    }
-    bool executeOne() noexcept
-    {
-        m_state.store(WorkerState::eExecuting, std::memory_order_relaxed);
-        const bool progressed = m_progress();
-        m_state.store(WorkerState::eIdle, std::memory_order_relaxed);
-        return progressed;
-    }
-    bool waitAndExecuteOne() noexcept
-    {
         while (true) {
-            const auto observed = m_waiter_p->observe();
-            if (m_waiter_p->isStopRequested()) { break; }
-            if (this->executeOne()) { return true; }
-            if (m_waiter_p->isClosed()) { break; }
-            m_state.store(WorkerState::eWaiting, std::memory_order_relaxed);
-            m_waiter_p->wait(observed);
+            const auto observed = m_coordinator_p->observe();
+            ExecutionReport report;
+            {
+                const details::ExecutionGuard guard {*m_coordinator_p};
+                if (not guard) { return; }
+                report = m_path.executeOne();
+            }
+            if (report.m_error_code) { m_coordinator_p->reportErrorCode(report.m_error_code); return; }
+            if (report.isStopped()) { return; }
+            if (report.hasProgress()) { continue; }
+            if (m_coordinator_p->isFinished()) { return; }
+            m_coordinator_p->wait(observed);
         }
-        m_state.store(WorkerState::eStopped, std::memory_order_relaxed);
-        return false;
     }
-    void join() noexcept { if (m_thread_handle.joinable()) { m_thread_handle.join(); } }
-    bool isJoinable() const noexcept { return m_thread_handle.joinable(); }
-    WorkerState getState() const noexcept { return m_state.load(std::memory_order_relaxed); }
+    void join() noexcept { if (m_thread.joinable()) { m_thread.join(); } }
 private:
-    Progress m_progress;
-    Waiter * m_waiter_p;
-    std::atomic<WorkerState> m_state {WorkerState::eIdle};
-    ThreadHandle m_thread_handle;
+    ExecutionPath m_path;
+    Coordinator * m_coordinator_p;
+    ThreadHandle m_thread;
 };
-
-} // namespace lcf::async
+}

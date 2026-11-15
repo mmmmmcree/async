@@ -45,7 +45,7 @@ public:
     Queue & operator=(const Queue &) = delete;
     Queue & operator=(Queue &&) = delete;
 public:
-    std::error_code tryEnqueue(Node & node) noexcept
+    std::error_code enqueue(Node & node) noexcept
     {
         std::uint32_t state = m_lifecycle.load(std::memory_order_acquire);
         if ((state & k_closed_bit) != 0) { return std::make_error_code(std::errc::operation_canceled); }
@@ -71,7 +71,7 @@ public:
         m_lifecycle.notify_all();
         return {};
     }
-    Node * tryPop() noexcept
+    Node * pop() noexcept
     {
         std::lock_guard lock{m_consumer_mutex};
 #if defined(LCF_ASYNC_ENABLE_TEST_HOOKS)
@@ -85,11 +85,11 @@ public:
     {
         for (;;) {
             if (m_stop_requested.load(std::memory_order_acquire)) { return nullptr; }
-            if (Node * node_p = this->tryPop()) { return node_p; }
+            if (Node * node_p = this->pop()) { return node_p; }
             if (this->isClosedAndQuiescent() and this->isEmpty()) { return nullptr; }
             const std::uint64_t observed = m_wake_sequence.load(std::memory_order_acquire);
             if (m_stop_requested.load(std::memory_order_acquire)) { return nullptr; }
-            if (Node * node_p = this->tryPop()) { return node_p; }
+            if (Node * node_p = this->pop()) { return node_p; }
             if (this->isClosedAndQuiescent() and this->isEmpty()) { return nullptr; }
             m_wake_sequence.wait(observed, std::memory_order_acquire);
         }

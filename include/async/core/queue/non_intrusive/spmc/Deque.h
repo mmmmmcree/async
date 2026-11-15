@@ -20,13 +20,14 @@ public:
     static constexpr bool k_supports_multiple_producers = false;
     static constexpr bool k_supports_multiple_consumers = true;
 public:
+    ~Deque() noexcept = default;
     Deque() = default;
     Deque(const Deque &) = delete;
     Deque(Deque &&) = delete;
     Deque & operator=(const Deque &) = delete;
     Deque & operator=(Deque &&) = delete;
 public:
-    std::error_code tryEnqueue(value_t & value) noexcept
+    std::error_code enqueue(value_t & value) noexcept
     {
         std::lock_guard lock{m_mutex};
         if (m_closed) { return std::make_error_code(std::errc::operation_canceled); }
@@ -35,14 +36,14 @@ public:
         ++m_size;
         return {};
     }
-    value_t * tryPopBack() noexcept
+    value_t * popBack() noexcept
     {
         std::lock_guard lock{m_mutex};
         if (m_size == 0) { return nullptr; }
         --m_size;
         return m_slots[(m_front + m_size) % queue_capacity];
     }
-    value_t * tryPopFront() noexcept
+    value_t * popFront() noexcept
     {
         std::lock_guard lock{m_mutex};
         if (m_size == 0) { return nullptr; }

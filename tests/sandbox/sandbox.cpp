@@ -1,218 +1,111 @@
-#include <async/config/execution_provider.h>
+#include "library_under_test.h"
+#include <array>
+#include <atomic>
 #include <chrono>
-#include <cstddef>
-#include <cstdint>
-#include <exception>
 #include <iostream>
-#include <memory>
 #include <memory_resource>
 #include <optional>
 #include <thread>
-#include <utility>
 #include <vector>
-#include "library_under_test.h"
-
-
 namespace async = lcf::async;
 namespace ex = async::exec;
-namespace proto = async::protocols;
+using Clock = std::chrono::steady_clock;
 using namespace std::chrono_literals;
 
-using ExampleContext = async::Context;
-
-void * aligned_storage(std::vector<std::byte> & bytes, std::size_t alignment, std::size_t size_in_bytes) noexcept
+template <async::operation_state_c Operation>
+class OneShotTimer
 {
-    void * storage_p = bytes.data();
-    auto space = bytes.size();
-    return std::align(alignment, size_in_bytes, storage_p, space);
-}
-
-struct BranchResult
-{
-    std::int32_t m_value;
-    std::thread::id m_worker_thread;
+public:
+    ~OneShotTimer() noexcept = default;
+    OneShotTimer() = delete;
+    explicit OneShotTimer(Operation & operation) noexcept : m_operation_p(&operation) {}
+    OneShotTimer(const OneShotTimer &) = delete;
+    OneShotTimer(OneShotTimer &&) = delete;
+    OneShotTimer & operator=(const OneShotTimer &) = delete;
+    OneShotTimer & operator=(OneShotTimer &&) = delete;
+    std::error_code start(async::ServiceHandle handle) noexcept
+    { m_handle = handle; handle.setWakeTime(Clock::now() + 20ms); return {}; }
+    async::DriveReport driveOne() noexcept
+    { ex::start(*m_operation_p); m_handle->notifyStopped(); return {.m_has_progress = true}; }
+    void requestStop() noexcept { m_handle->notifyStopped(); }
+private:
+    Operation * m_operation_p;
+    std::optional<async::ServiceHandle> m_handle;
 };
-
-struct GraphResult
-{
-    std::int32_t m_value;
-    std::thread::id m_left_thread;
-    std::thread::id m_right_thread;
-    std::thread::id m_continuation_thread;
-};
-
-enum class Completion
-{
-    ePending,
-    eValue,
-    eError,
-    eStopped,
-};
-
 struct Outcome
 {
-    Completion m_completion = Completion::ePending;
-    std::optional<GraphResult> m_result;
-    std::thread::id m_caller_thread;
-    std::thread::id m_receiver_thread;
+    int m_value = 0;
+    std::thread::id m_left_thread, m_right_thread, m_receiver_thread;
+    Clock::time_point m_left_start, m_left_finish, m_right_start, m_right_finish;
+    std::atomic<bool> m_completed {false};
 };
-
-struct Receiver
+class Receiver
 {
-    using receiver_concept = proto::receiver_t;
 public:
+    using receiver_concept = async::protocols::receiver_t;
     ~Receiver() noexcept = default;
     Receiver() = delete;
-    Receiver(Outcome * outcome_p, bool * caller_completed_p,
-        std::thread::id caller_thread) noexcept
-        : m_outcome_p(outcome_p),
-          m_caller_completed_p(caller_completed_p), m_caller_thread(caller_thread) {}
+    explicit Receiver(Outcome & outcome) noexcept : m_outcome_p(&outcome) {}
     Receiver(const Receiver &) noexcept = default;
     Receiver(Receiver &&) noexcept = default;
     Receiver & operator=(const Receiver &) noexcept = default;
     Receiver & operator=(Receiver &&) noexcept = default;
-public:
-    void set_value(GraphResult result) && noexcept
+    void set_value(int value) && noexcept
     {
-        this->finish(Completion::eValue, std::move(result));
-    }
-
-    template <typename Error>
-    void set_error(Error &&) && noexcept
-    {
-        this->finish(Completion::eError);
-    }
-
-    void set_stopped() && noexcept
-    {
-        this->finish(Completion::eStopped);
-    }
-
-    Outcome * m_outcome_p;
-    bool * m_caller_completed_p;
-    std::thread::id m_caller_thread;
-
-private:
-    void finish(
-        Completion completion,
-        std::optional<GraphResult> result = std::nullopt) noexcept
-    {
-        if (std::this_thread::get_id() != m_caller_thread) {
-            std::terminate();
-        }
-
-        m_outcome_p->m_completion = completion;
-        m_outcome_p->m_result = std::move(result);
+        m_outcome_p->m_value = value;
         m_outcome_p->m_receiver_thread = std::this_thread::get_id();
-
-        *m_caller_completed_p = true;
+        m_outcome_p->m_completed.store(true, std::memory_order_release);
     }
+    template <typename Error> void set_error(Error &&) && noexcept { this->finish(); }
+    void set_stopped() && noexcept { this->finish(); }
+private:
+    void finish() noexcept { m_outcome_p->m_completed.store(true, std::memory_order_release); }
+    Outcome * m_outcome_p;
 };
-
-template <async::scheduler_c SharedScheduler, async::scheduler_c CallerScheduler,
-    async::work_poller_c Poller>
-void run_caller(SharedScheduler shared_scheduler_handle, CallerScheduler caller_scheduler_handle,
-    async::ExecutionPort<Poller> caller_execution_port, Outcome & outcome)
-{
-    const auto caller_thread = std::this_thread::get_id();
-    outcome.m_caller_thread = caller_thread;
-
-    auto left = ex::schedule(shared_scheduler_handle) |
-        ex::then([] {
-            std::this_thread::sleep_for(1s);
-            return BranchResult{20, std::this_thread::get_id()};
-        });
-    auto right = ex::schedule(shared_scheduler_handle) |
-        ex::then([] {
-            std::this_thread::sleep_for(1s);
-            return BranchResult{22, std::this_thread::get_id()};
-        });
-    auto graph = ex::when_all(std::move(left), std::move(right)) |
-        ex::then([](BranchResult lhs, BranchResult rhs) noexcept {
-            return GraphResult{
-                lhs.m_value + rhs.m_value,
-                lhs.m_worker_thread,
-                rhs.m_worker_thread,
-                std::this_thread::get_id()};
-        }) | ex::then([](GraphResult result) noexcept {
-            std::cout << "graph result: " << result.m_value
-                << " left execution thread id: " << result.m_left_thread
-                << " right execution thread id: " << result.m_right_thread << '\n';
-            return result;
-        }) | ex::continues_on(caller_scheduler_handle);
-    bool caller_completed = false;
-    auto operation = ex::connect(std::move(graph), Receiver{&outcome, &caller_completed, caller_thread});
-    ex::start(operation);
-    std::uint64_t heartbeat_count = 0;
-    auto time = std::chrono::steady_clock::now();
-    while (not caller_completed) {
-        auto elapsed = std::chrono::steady_clock::now() - time;
-        std::cout << "heartbeat: " << heartbeat_count++ << " elapsed: " << std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count() << '\n';
-        caller_execution_port.pollOne();
-        if (not caller_completed) {
-            std::this_thread::sleep_for(100ms);
-        }
-    }
-}
-
 int main()
 {
-    constexpr std::uint32_t k_worker_count = 2;
-    const auto main_thread = std::this_thread::get_id();
-
-    async::ContextInfo context_info;
-    context_info.setWorkerCount(k_worker_count).setDispatcherCount(2);
-    const async::PortToken caller_port_token = context_info.addPort();
-
-    const async::SchedulerToken shared_scheduler_token = context_info.addSharedScheduler();
-
-    const auto [runtime_size_in_bytes, runtime_alignment, workers_size_in_bytes, workers_alignment] = context_info.getStorageRequirements<>();
-    std::vector<std::byte> worker_bytes(workers_size_in_bytes + workers_alignment - 1);
-    std::vector<std::byte> runtime_bytes(runtime_size_in_bytes + runtime_alignment - 1);
-    std::pmr::monotonic_buffer_resource worker_arena{
-        aligned_storage(worker_bytes, workers_alignment, workers_size_in_bytes), workers_size_in_bytes, std::pmr::null_memory_resource()};
-    std::pmr::monotonic_buffer_resource runtime_arena{
-        aligned_storage(runtime_bytes, runtime_alignment, runtime_size_in_bytes), runtime_size_in_bytes, std::pmr::null_memory_resource()};
-
-    context_info.setMemoryResources(runtime_arena, worker_arena);
-    ExampleContext context;
-    if (const auto error = context.create(std::move(context_info))) {
-        std::cerr << "Context creation failed: " << error.message() << '\n';
-        return 1;
-    }
-
-    const auto caller_submission_port = context.getSubmissionPort(caller_port_token);
-    const auto shared_scheduler_handle = caller_submission_port.getSchedulerHandle(shared_scheduler_token);
-    const auto caller_scheduler_handle = context.getSubmissionPort().getSchedulerHandle(caller_port_token);
-    const auto caller_execution_port = context.getExecutionPort(caller_port_token);
+    std::array<std::byte, 4096> configuration_bytes;
+    std::pmr::monotonic_buffer_resource configuration {configuration_bytes.data(), configuration_bytes.size(), std::pmr::null_memory_resource()};
+    async::ContextInfo info {configuration};
+    info.setWorkerCount(2).setDispatcherCount(2).setServiceCapacity(1);
+    const auto caller = info.addPort(async::Priority::eHigh);
+    const auto shared = info.addSharedScheduler();
+    const auto [runtime_size, runtime_alignment, worker_size, worker_alignment] = info.getStorageRequirements<>();
+    std::vector<std::byte> runtime_bytes(runtime_size + runtime_alignment - 1), worker_bytes(worker_size + worker_alignment - 1);
+    std::pmr::monotonic_buffer_resource runtime {runtime_bytes.data(), runtime_bytes.size(), std::pmr::null_memory_resource()};
+    std::pmr::monotonic_buffer_resource workers {worker_bytes.data(), worker_bytes.size(), std::pmr::null_memory_resource()};
+    info.setMemoryResources(runtime, workers);
+    async::Context context;
+    if (const std::error_code ec = context.create(std::move(info))) { std::cerr << ec.message(); return 1; }
+    const auto port = context.getSubmissionPort(caller);
+    auto shared_scheduler = port.getSchedulerHandle(shared);
+    shared_scheduler.setPriority(async::Priority::eNormal);
+    const auto caller_scheduler = port.getPortSchedulerHandle();
     Outcome outcome;
-
-    std::thread caller;
-    try {
-        caller = std::thread{[&] {
-            run_caller(shared_scheduler_handle, caller_scheduler_handle, caller_execution_port, outcome);
-            context.requestStopProcessing();
-        }};
-    } catch (...) {
-        context.closeSubmissions();
-        throw;
+    const auto caller_thread = std::this_thread::get_id();
+    const auto branch = [shared_scheduler](int value, std::thread::id & thread, Clock::time_point & start, Clock::time_point & finish) {
+        return ex::schedule(shared_scheduler) | ex::then([value, &thread, &start, &finish]() noexcept {
+            thread = std::this_thread::get_id(); start = Clock::now();
+            std::this_thread::sleep_for(100ms); finish = Clock::now(); return value;
+        });
+    };
+    auto graph = ex::when_all(branch(20, outcome.m_left_thread, outcome.m_left_start, outcome.m_left_finish),
+        branch(22, outcome.m_right_thread, outcome.m_right_start, outcome.m_right_finish))
+        | ex::then([](int left, int right) noexcept { return left + right; }) | ex::continues_on(caller_scheduler);
+    auto operation = ex::connect(std::move(graph), Receiver {outcome});
+    OneShotTimer service {operation};
+    if (const std::error_code ec = context.registerService(service)) { std::cerr << ec.message(); return 1; }
+    std::error_code run_ec;
+    std::thread driver {[&] { run_ec = context.run(); }};
+    auto execution_port = context.getExecutionPort(caller);
+    while (not outcome.m_completed.load(std::memory_order_acquire)) {
+        if (const auto report = execution_port.waitAndExecuteOne(); report.isStopped()) { break; }
     }
-    context.run();
-    caller.join();
     context.closeSubmissions();
-    if (outcome.m_completion != Completion::eValue or not outcome.m_result) {
-        std::cerr << "work completed with error or stopped\n";
-        return 1;
-    }
-    const auto & result = *outcome.m_result;
-    const auto caller_thread = outcome.m_caller_thread;
-    const bool passed = result.m_value == 42 and
-       caller_thread != main_thread and
-       outcome.m_receiver_thread == caller_thread and
-       result.m_continuation_thread != caller_thread and
-       result.m_left_thread != caller_thread and
-       result.m_right_thread != caller_thread;
-    std::cout << "result: " << result.m_value << '\n';
-    std::cout << "acceptance: " << (passed ? "passed" : "failed") << '\n';
-    return passed ? 0 : 1;
+    driver.join();
+    const bool parallel = outcome.m_left_start < outcome.m_right_finish and outcome.m_right_start < outcome.m_left_finish;
+    const bool on_caller = outcome.m_receiver_thread == caller_thread;
+    std::cout << "result: " << outcome.m_value << ", branches overlap: " << parallel
+        << ", receiver on caller thread: " << on_caller << '\n';
+    return not run_ec and outcome.m_value == 42 and parallel and on_caller ? 0 : 1;
 }

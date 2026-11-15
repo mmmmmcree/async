@@ -19,22 +19,22 @@ concept linked_node_c = requires(Node & node, const Node & const_node, Node * ne
 template <typename Queue>
 concept consumer_deque_c = requires(Queue & queue, const Queue & const_queue) {
     typename Queue::value_t;
-    { queue.tryPopFront() } noexcept -> std::same_as<typename Queue::value_t *>;
-    { queue.tryPopBack() } noexcept -> std::same_as<typename Queue::value_t *>;
+    { queue.popFront() } noexcept -> std::same_as<typename Queue::value_t *>;
+    { queue.popBack() } noexcept -> std::same_as<typename Queue::value_t *>;
     { const_queue.isEmpty() } noexcept -> std::same_as<bool>;
 };
 
 template <typename Queue>
 concept consumer_queue_c = consumer_deque_c<Queue> or requires(Queue & queue, const Queue & const_queue) {
     typename Queue::value_t;
-    { queue.tryPop() } noexcept -> std::same_as<typename Queue::value_t *>;
+    { queue.pop() } noexcept -> std::same_as<typename Queue::value_t *>;
     { const_queue.isEmpty() } noexcept -> std::same_as<bool>;
 };
 
 template <typename Queue>
 concept producer_queue_c = requires { typename Queue::value_t; }
     and requires(Queue & queue, typename Queue::value_t & value) {
-        { queue.tryEnqueue(value) } noexcept -> std::same_as<std::error_code>;
+        { queue.enqueue(value) } noexcept -> std::same_as<std::error_code>;
     };
 
 template <typename Queue>

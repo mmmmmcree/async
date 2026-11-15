@@ -1,56 +1,39 @@
 #pragma once
-
-#include <async/core/executable/declarations/concepts.h>
-#include <async/core/scheduling/details/exec_schedule_adapters.h>
-#include <async/core/scheduling/details/dispatch_targets.h>
-#include <async/core/scheduling/declarations/concepts.h>
-#include <async/core/scheduling/dispatcher/declarations/concepts.h>
-
-#include <cstdint>
-
+#include <async/core/context/declarations/tokens.h>
+#include <async/core/scheduling/details/ScheduleSender.h>
+#include <async/core/sink/declarations/concepts.h>
 LCF_ASYNC_EXPORT
 namespace lcf::async {
-
-template <typename Submitter, cancellable_executable_c Executable>
+template <rejecting_sink_c Sink>
+requires scheduling_record_c<typename Sink::value_t>
 class SchedulerHandle
 {
+    using Sender = details::ScheduleSender<SchedulerHandle>;
 public:
     using scheduler_concept = protocols::scheduler_t;
-public:
+    using record_t = typename Sink::value_t;
+    using executable_t = typename record_t::executable_t;
     ~SchedulerHandle() noexcept = default;
     SchedulerHandle() = delete;
-    explicit SchedulerHandle(Submitter & submitter) noexcept :
-        m_submitter_p(&submitter),
-        m_domain_id(details::k_unbound_domain_id),
-        m_target_index(0) {}
-    SchedulerHandle(Submitter & submitter, std::uint32_t domain_id, std::uint32_t target_index) noexcept :
-        m_submitter_p(&submitter),
-        m_domain_id(domain_id),
-        m_target_index(target_index) {}
+    SchedulerHandle(Sink & sink, SchedulerToken token, Priority priority) noexcept :
+        m_sink_p(&sink), m_token(token), m_priority(priority) {}
     SchedulerHandle(const SchedulerHandle &) noexcept = default;
     SchedulerHandle(SchedulerHandle &&) noexcept = default;
     SchedulerHandle & operator=(const SchedulerHandle &) noexcept = default;
     SchedulerHandle & operator=(SchedulerHandle &&) noexcept = default;
     bool operator==(const SchedulerHandle &) const noexcept = default;
-public:
-    auto schedule() const noexcept requires callback_executable_c<Executable>;
-    template <typename Record>
-    requires record_submitter_c<Submitter, Record>
-    std::error_code submit(Record & record) const noexcept
+    Sender schedule() const noexcept { return Sender {*this}; }
+    std::error_code submit(record_t & record) const noexcept
     {
-        if constexpr (dispatch_record_c<Record>) { record.setTargetIndex(m_target_index); }
-        return m_submitter_p->submit(record);
+        record.setSchedulerIndex(m_token.getIndex());
+        record.setPriority(m_priority);
+        return m_sink_p->receive(record);
     }
+    SchedulerHandle & setPriority(Priority priority) noexcept { m_priority = priority; return *this; }
+    Priority getPriority() const noexcept { return m_priority; }
 private:
-    Submitter * m_submitter_p;
-    std::uint32_t m_domain_id;
-    std::uint32_t m_target_index;
+    Sink * m_sink_p;
+    SchedulerToken m_token;
+    Priority m_priority;
 };
-
-template <typename Submitter, cancellable_executable_c Executable>
-auto SchedulerHandle<Submitter, Executable>::schedule() const noexcept requires callback_executable_c<Executable>
-{
-    return details::ScheduleSender<SchedulerHandle, Executable>{*this};
 }
-
-} // namespace lcf::async

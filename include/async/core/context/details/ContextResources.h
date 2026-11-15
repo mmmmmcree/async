@@ -1,129 +1,201 @@
 #pragma once
 
-#include <async/core/context/details/DispatchRequestSink.h>
-#include <async/core/context/details/declarations/structs.h>
+#include <async/core/context/ContextInfo.h>
+#include <async/core/context/DefaultContextComponents.h>
+#include <async/core/context/details/ContextTracking.h>
+#include <async/core/details/StorageLayout.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
-#include <async/core/queue/intrusive/mpmc/Queue.h>
-#include <async/core/queue/QueueView.h>
-#include <async/core/queue/non_intrusive/spsc/Queue.h>
 #include <async/core/queue/utils/drain.h>
-#include <async/core/scheduling/QueueSubmitter.h>
-#include <async/core/scheduling/SchedulingRuntime.h>
-#include <async/core/scheduling/dispatcher/BasicDispatcher.h>
-#include <async/core/scheduling/dispatcher/DispatchRequest.h>
-#include <async/core/scheduling/dispatcher/DispatchRequestStream.h>
-#include <async/core/scheduling/executor/BasicExecutor.h>
-#include <async/core/scheduling/executor/WorkStealingStream.h>
 
-#include <algorithm>
 #include <array>
-#include <cstddef>
-#include <expected>
-#include <limits>
 
 namespace lcf::async::details {
 
-template <std::uint64_t queue_capacity, cancellable_executable_c Executable,
-    notify::signal_c Signal, notify::notifier_c Notifier,
-    template <typename> class Executor,
-    template <typename> class ExecutableStream,
-    template <typename> class RequestStream,
-    template <typename, typename, typename> class RequestSink,
-    template <typename, typename> class Dispatcher,
-    template <typename, typename, typename, typename> class Runtime>
-requires linked_node_c<Executable>
-struct ContextResources
+template <typename Components, typename Coordinator, typename Notifier>
+class ContextResources
 {
-    using dispatch_request_t = ::lcf::async::DispatchRequest<Executable>;
-    using shared_execution_queue_t = queue::intrusive::mpmc::Queue<Executable>;
-    using thread_execution_queue_t = queue::non_intrusive::spsc::Queue<Executable, queue_capacity>;
-    using request_queue_t = queue::intrusive::mpmc::Queue<dispatch_request_t>;
-    using submission_queue_t = queue::non_intrusive::spsc::Queue<dispatch_request_t, queue_capacity>;
-    using request_queue_view_t = queue::QueueView<dispatch_request_t>;
-    using shared_submitter_t = QueueSubmitter<request_queue_t, Notifier>;
-    using dedicated_submitter_t = QueueSubmitter<submission_queue_t, Notifier>;
-    using shared_executable_stream_t = ExecutableStream<shared_execution_queue_t>;
-    static_assert(consumer_queue_c<shared_executable_stream_t>
-        and std::same_as<typename shared_executable_stream_t::value_t, Executable>);
-    using thread_shared_executor_t = Executor<shared_executable_stream_t>;
-    using thread_local_executor_t = Executor<thread_execution_queue_t>;
-    using request_sink_t = RequestSink<shared_execution_queue_t, thread_execution_queue_t, request_queue_t>;
+    using Record = typename Components::record_t;
+    using SubmissionQueue = typename Components::submission_queue_t;
+    using ExecutionQueue = typename Components::execution_queue_t;
+    using Submission = typename Components::template submission_sink_t<SubmissionQueue, Notifier>;
+    using ExecutionTarget = typename Components::template submission_sink_t<ExecutionQueue, Notifier>;
+    using DispatchSink = typename Components::template dispatch_sink_t<ExecutionTarget>;
+    using RequestBand = typename Components::template request_stream_t<SubmissionQueue>;
+    using RequestStream = typename Components::template priority_stream_t<RequestBand>;
+    using ExecutionBand = typename Components::template execution_stream_t<ExecutionQueue>;
+    using ExecutionStream = typename Components::template priority_stream_t<ExecutionBand>;
+    using Execute = typename Components::template execute_sink_t<Record>;
+    using Cancel = typename Components::template cancel_sink_t<Record>;
+    using Completion = CompletionTracker<Execute, Coordinator>;
+    using Executor = typename Components::template executor_t<ExecutionStream, Completion>;
+    using Dispatcher = typename Components::template dispatcher_t<RequestStream, DispatchSink>;
 
-    using dispatch_request_stream_t = RequestStream<request_queue_view_t>;
-    static_assert(consumer_queue_c<dispatch_request_stream_t>
-        and std::same_as<typename dispatch_request_stream_t::value_t, dispatch_request_t>);
-    using dispatcher_t = Dispatcher<dispatch_request_stream_t, request_sink_t>;
-    using runtime_t = Runtime<dispatcher_t, thread_shared_executor_t, thread_local_executor_t, Signal>;
-    using storage_requirements_result_t = std::expected<std::pair<std::size_t, std::size_t>, std::error_code>;
+public:
+    using admission_t = SubmissionGate<Submission, Coordinator>;
 
-    static storage_requirements_result_t calc_storage_requirements(std::uint64_t worker_count,
-        std::uint64_t dispatcher_count, std::uint64_t port_count, std::uint64_t scheduler_count) noexcept
+private:
+    class SubmissionEndpoint
     {
-        struct StorageSegment
+    public:
+        ~SubmissionEndpoint() noexcept = default;
+        SubmissionEndpoint(Coordinator & coordinator, Notifier notifier) :
+            m_sink(notifier), m_admission(m_sink, coordinator) {}
+        SubmissionEndpoint(const SubmissionEndpoint &) = delete;
+        SubmissionEndpoint(SubmissionEndpoint &&) = delete;
+        SubmissionEndpoint & operator=(const SubmissionEndpoint &) = delete;
+        SubmissionEndpoint & operator=(SubmissionEndpoint &&) = delete;
+
+        SubmissionQueue & getQueue(std::size_t band) noexcept { return m_sink.getQueue(band); }
+        admission_t & getAdmission() noexcept { return m_admission; }
+
+    private:
+        Submission m_sink;
+        admission_t m_admission;
+    };
+
+    class ExecutionComponent
+    {
+    public:
+        ~ExecutionComponent() noexcept = default;
+        ExecutionComponent(std::span<ExecutionQueue *> queues, std::size_t count,
+            std::size_t local, Coordinator & coordinator) :
+            m_bands {ExecutionBand {queues.subspan(0, count), local}, ExecutionBand {queues.subspan(count, count), local},
+                ExecutionBand {queues.subspan(2 * count, count), local}},
+            m_stream(m_bands), m_executor(m_stream, Completion {Execute {}, coordinator}) {}
+        ExecutionComponent(const ExecutionComponent &) = delete;
+        ExecutionComponent(ExecutionComponent &&) = delete;
+        ExecutionComponent & operator=(const ExecutionComponent &) = delete;
+        ExecutionComponent & operator=(ExecutionComponent &&) = delete;
+
+        ExecutionReport executeOne() noexcept { return m_executor.executeOne(); }
+
+    private:
+        std::array<ExecutionBand, k_priority_count> m_bands;
+        ExecutionStream m_stream;
+        Executor m_executor;
+    };
+
+    class DispatchComponent
+    {
+    public:
+        ~DispatchComponent() noexcept = default;
+        DispatchComponent(std::span<SubmissionQueue *> inputs, std::size_t count,
+            std::span<ExecutionTarget *> targets, std::span<ExecutionTarget> shared_targets) :
+            m_bands {RequestBand {inputs.subspan(0, count)}, RequestBand {inputs.subspan(count, count)},
+                RequestBand {inputs.subspan(2 * count, count)}},
+            m_stream(m_bands), m_dispatcher(m_stream, DispatchSink {targets, shared_targets}) {}
+        DispatchComponent(const DispatchComponent &) = delete;
+        DispatchComponent(DispatchComponent &&) = delete;
+        DispatchComponent & operator=(const DispatchComponent &) = delete;
+        DispatchComponent & operator=(DispatchComponent &&) = delete;
+
+        DispatchReport dispatchOne() noexcept { return m_dispatcher.dispatchOne(); }
+        void cancel(Coordinator & coordinator) noexcept
         {
-            std::uint64_t m_count;
-            std::size_t m_element_size;
-            std::size_t m_alignment;
-        };
-        const std::uint64_t shared_queue_count = std::max<std::uint64_t>(worker_count, 1);
-        const std::array<StorageSegment, 12> segments {{
-            {shared_queue_count, sizeof(shared_execution_queue_t), alignof(shared_execution_queue_t)},
-            {port_count, sizeof(thread_execution_queue_t), alignof(thread_execution_queue_t)},
-            {dispatcher_count + 1, sizeof(request_queue_t), alignof(request_queue_t)},
-            {port_count, sizeof(submission_queue_t), alignof(submission_queue_t)},
-            {1, sizeof(shared_submitter_t), alignof(shared_submitter_t)},
-            {port_count, sizeof(dedicated_submitter_t), alignof(dedicated_submitter_t)},
-            {shared_queue_count, sizeof(shared_executable_stream_t), alignof(shared_executable_stream_t)},
-            {port_count + 2 * dispatcher_count, sizeof(request_queue_view_t), alignof(request_queue_view_t)},
-            {shared_queue_count, sizeof(thread_shared_executor_t), alignof(thread_shared_executor_t)},
-            {port_count, sizeof(thread_local_executor_t), alignof(thread_local_executor_t)},
-            {dispatcher_count, sizeof(dispatcher_t), alignof(dispatcher_t)},
-            {scheduler_count, sizeof(TargetRoute), alignof(TargetRoute)}
-        }};
-        const std::size_t max_size = std::numeric_limits<std::size_t>::max();
-        std::size_t size_in_bytes = 0;
-        std::size_t storage_alignment = 1;
-        for (const auto & [count, element_size, alignment] : segments) {
-            if (count == 0) { continue; }
-            const std::size_t padding = (alignment - size_in_bytes % alignment) % alignment;
-            if (size_in_bytes > max_size - padding or count > (max_size - size_in_bytes - padding) / element_size) {
-                return std::unexpected{std::make_error_code(std::errc::value_too_large)};
+            CompletionTracker<Cancel, Coordinator> sink {Cancel {}, coordinator};
+            std::ranges::for_each(m_stream.drain(), [&sink](Record & record) noexcept { sink.receive(record); });
+        }
+
+    private:
+        std::array<RequestBand, k_priority_count> m_bands;
+        RequestStream m_stream;
+        Dispatcher m_dispatcher;
+    };
+
+public:
+    using execution_t = ExecutionComponent;
+    using dispatcher_t = DispatchComponent;
+    using record_t = Record;
+
+    ~ContextResources() noexcept = default;
+    ContextResources() noexcept = default;
+    ContextResources(const ContextResources &) = delete;
+    ContextResources(ContextResources &&) = delete;
+    ContextResources & operator=(const ContextResources &) = delete;
+    ContextResources & operator=(ContextResources &&) = delete;
+
+    template <typename Storage>
+    void prepareStorage(const ContextInfo & info, Storage & storage)
+    {
+        const std::size_t ports = info.getPortPriorities().size();
+        const std::size_t shared = std::max<std::size_t>(info.getWorkerCount(), 1);
+        storage.reserve(m_submissions, ports + 1);
+        storage.reserve(m_local_targets, ports);
+        storage.reserve(m_shared_targets, shared);
+        storage.reserve(m_request_inputs, (ports + info.getDispatcherCount()) * k_priority_count);
+        storage.reserve(m_execution_inputs, (ports + shared) * k_priority_count);
+        storage.reserve(m_scheduler_targets, info.getTargets().size());
+        storage.reserve(m_dispatchers, info.getDispatcherCount());
+        storage.reserve(m_executors, shared + 1 + ports);
+    }
+
+    void create(const ContextInfo & info, Coordinator & coordinator, Notifier notifier)
+    {
+        StorageAllocator storage {info.getRuntimeMemoryResource()};
+        this->prepareStorage(info, storage);
+        const std::size_t ports = info.getPortPriorities().size();
+        const std::size_t shared = std::max<std::size_t>(info.getWorkerCount(), 1);
+        for (std::size_t i = 0; i <= ports; ++i) { m_submissions.emplace_back(coordinator, notifier); }
+        for (std::size_t i = 0; i < ports; ++i) { m_local_targets.emplace_back(notifier); }
+        for (std::size_t i = 0; i < shared; ++i) { m_shared_targets.emplace_back(notifier); }
+        for (const auto & [is_shared, port] : info.getTargets()) {
+            m_scheduler_targets.emplace_back(is_shared ? nullptr : &m_local_targets[port]);
+        }
+        for (std::size_t band = 0; band < k_priority_count; ++band) {
+            for (ExecutionTarget & target : m_shared_targets) { m_execution_inputs.emplace_back(&target.getQueue(band)); }
+        }
+        for (std::size_t i = 0; i <= shared; ++i) {
+            m_executors.emplace_back(std::span {m_execution_inputs}, shared, i % shared, coordinator);
+        }
+        for (ExecutionTarget & target : m_local_targets) {
+            const std::size_t first = m_execution_inputs.size();
+            for (std::size_t band = 0; band < k_priority_count; ++band) { m_execution_inputs.emplace_back(&target.getQueue(band)); }
+            m_executors.emplace_back(std::span {m_execution_inputs}.subspan(first, k_priority_count), 1, 0, coordinator);
+        }
+        for (std::size_t dispatcher = 0; dispatcher < info.getDispatcherCount(); ++dispatcher) {
+            const std::size_t first = m_request_inputs.size();
+            std::size_t count = 0;
+            for (std::size_t band = 0; band < k_priority_count; ++band) {
+                count = 1;
+                m_request_inputs.emplace_back(&m_submissions[0].getQueue(band));
+                for (std::size_t port = dispatcher; port < ports; port += info.getDispatcherCount()) {
+                    m_request_inputs.emplace_back(&m_submissions[port + 1].getQueue(band));
+                    ++count;
+                }
             }
-            size_in_bytes += padding + static_cast<std::size_t>(count) * element_size;
-            storage_alignment = std::max(storage_alignment, alignment);
-        }
-        return std::pair{size_in_bytes, storage_alignment};
-    }
-
-    void closeSubmissions() noexcept
-    {
-        if (not m_request_queues.empty()) { m_request_queues.front().close(); }
-        std::ranges::for_each(m_submission_queues, &submission_queue_t::close);
-    }
-    // All producers and runtime drivers must have stopped before cancellation.
-    void cancelPending() noexcept
-    {
-        std::ranges::for_each(m_dispatchers, &dispatcher_t::cancelPending);
-        for (auto & execution_queue : m_shared_execution_queues) {
-            std::ranges::for_each(queue::utils::drain(execution_queue), &Executable::cancel);
-        }
-        for (auto & execution_queue : m_thread_execution_queues) {
-            std::ranges::for_each(queue::utils::drain(execution_queue), &Executable::cancel);
+            m_dispatchers.emplace_back(std::span {m_request_inputs}.subspan(first, count * k_priority_count), count,
+                std::span {m_scheduler_targets}, std::span {m_shared_targets});
         }
     }
 
-    FixedCapacityVector<shared_execution_queue_t> m_shared_execution_queues;
-    FixedCapacityVector<thread_execution_queue_t> m_thread_execution_queues;
-    FixedCapacityVector<request_queue_t> m_request_queues;
-    FixedCapacityVector<submission_queue_t> m_submission_queues;
-    FixedCapacityVector<shared_submitter_t> m_shared_submitters;
-    FixedCapacityVector<dedicated_submitter_t> m_dedicated_submitters;
-    FixedCapacityVector<shared_executable_stream_t> m_shared_executable_streams;
-    FixedCapacityVector<request_queue_view_t> m_request_queue_views;
-    FixedCapacityVector<thread_shared_executor_t> m_thread_shared_executors;
-    FixedCapacityVector<thread_local_executor_t> m_thread_local_executors;
-    FixedCapacityVector<dispatcher_t> m_dispatchers;
-    FixedCapacityVector<TargetRoute> m_target_routes;
+    admission_t & getSubmissionSink(std::size_t index) noexcept { return m_submissions[index].getAdmission(); }
+    std::span<dispatcher_t> getDispatchers() noexcept { return m_dispatchers; }
+    execution_t & getSharedExecutor(std::size_t index) noexcept { return m_executors[index]; }
+    execution_t & getLocalExecutor(std::size_t shared_count, std::size_t port) noexcept { return m_executors[shared_count + port]; }
+
+    void cancelRemaining(Coordinator & coordinator) noexcept
+    {
+        for (DispatchComponent & dispatcher : m_dispatchers) { dispatcher.cancel(coordinator); }
+        CompletionTracker<Cancel, Coordinator> sink {Cancel {}, coordinator};
+        const auto cancel_target = [&sink](ExecutionTarget & target) {
+            for (std::size_t band = 0; band < k_priority_count; ++band) {
+                std::ranges::for_each(queue::utils::drain(target.getQueue(band)),
+                    [&sink](Record & record) noexcept { sink.receive(record); });
+            }
+        };
+        for (ExecutionTarget & target : m_shared_targets) { cancel_target(target); }
+        for (ExecutionTarget & target : m_local_targets) { cancel_target(target); }
+    }
+
+private:
+    FixedCapacityVector<SubmissionEndpoint> m_submissions;
+    FixedCapacityVector<ExecutionTarget> m_local_targets;
+    FixedCapacityVector<ExecutionTarget> m_shared_targets;
+    FixedCapacityVector<SubmissionQueue *> m_request_inputs;
+    FixedCapacityVector<ExecutionQueue *> m_execution_inputs;
+    FixedCapacityVector<ExecutionTarget *> m_scheduler_targets;
+    FixedCapacityVector<DispatchComponent> m_dispatchers;
+    FixedCapacityVector<ExecutionComponent> m_executors;
 };
 
 } // namespace lcf::async::details

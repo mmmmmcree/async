@@ -2,16 +2,14 @@
 
 #include <async/config/macros.h>
 
+#include <cstddef>
 #include <cstdint>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-enum PollResult : std::uint8_t
-{
-    eIdle = 0,
-    eDispatched = 1,
-    eExecuted = 2,
-};
+enum class Priority : std::uint8_t { eHigh, eNormal, eLow };
+
+inline constexpr std::size_t k_priority_count = 3;
 
 } // namespace lcf::async

@@ -1,201 +1,296 @@
 #pragma once
-
-#include "ContextInfo.h"
-#include "SubmissionPort.h"
-#include "ExecutionPort.h"
-#include <async/core/details/concepts/constructible.h>
-#include <async/core/executable/ExecutableNode.h>
-#include <async/core/notify/AtomicSequenceSignal.h>
+#include <async/config/macros.h>
+#include <async/core/context/ContextInfo.h>
+#include <async/core/context/DefaultContextComponents.h>
+#include <async/core/context/ExecutionPort.h>
+#include <async/core/context/SubmissionPort.h>
+#include <async/core/context/details/ContextResources.h>
+#include <async/core/context/details/ContextCoordinator.h>
+#include <async/core/details/ResourceObject.h>
+#include <async/core/driver/WorkerExecutionPath.h>
+#include <async/core/event/EventBackend.h>
+#include <async/core/notify/BackendSignal.h>
 #include <async/core/notify/SignalNotifier.h>
-#include <async/core/context/details/DispatchRequestSink.h>
-#include <async/core/context/details/OwnerThreadState.h>
-#include <async/core/context/details/WorkerPoller.h>
-#include <async/core/context/details/assemble_scheduling_runtime.h>
-#include <async/core/scheduling/details/dispatch_targets.h>
-#include <async/core/scheduling/policy/RoundRobin.h>
+#include <async/core/service/ServiceHost.h>
 #include <async/core/worker/WorkerPool.h>
-#include <async/core/worker/thread/ThreadLauncher.h>
-
+#include <atomic>
 #include <cassert>
-#include <cstdint>
-#include <exception>
-#include <limits>
-#include <memory>
-#include <new>
-#include <stdexcept>
-#include <system_error>
+#include <condition_variable>
 #include <thread>
-#include <utility>
-
 LCF_ASYNC_EXPORT
 namespace lcf::async {
-
-namespace details {
-
-template <typename Queue>
-using DefaultExecutableStream = WorkStealingStream<Queue, policy::RoundRobin>;
-template <typename Queue>
-using DefaultRequestStream = DispatchRequestStream<Queue, policy::RoundRobin, policy::RoundRobin>;
-template <typename SharedQueue, typename ThreadQueue, typename RequestQueue>
-using DefaultRequestSink = DispatchRequestSink<SharedQueue, ThreadQueue, RequestQueue, policy::RoundRobin>;
-template <typename RequestStream, typename RequestSink>
-using DefaultDispatcher = BasicDispatcher<RequestStream, RequestSink>;
-template <typename Dispatcher, typename SharedExecutor, typename LocalExecutor, typename Signal>
-using DefaultSchedulingRuntime = SchedulingRuntime<Dispatcher, SharedExecutor, LocalExecutor, Signal, policy::RoundRobin>;
-
-} // namespace details
-
-template <join_handle_c ThreadHandle = std::thread, std::uint64_t queue_capacity = 256,
-    cancellable_executable_c Executable = ExecutableNode,
-    notify::signal_c Signal = notify::AtomicSequenceSignal,
-    typename Notifier = notify::SignalNotifier<Signal>,
-    template <typename> class Executor = BasicExecutor,
-    template <typename> class ExecutableStream = details::DefaultExecutableStream,
-    template <typename> class RequestStream = details::DefaultRequestStream,
-    template <typename, typename, typename> class RequestSink = details::DefaultRequestSink,
-    template <typename, typename> class Dispatcher = details::DefaultDispatcher,
-    template <typename, typename, typename, typename> class Runtime = details::DefaultSchedulingRuntime>
-requires (queue_capacity > 0) and
-    details::all_nothrow_default_constructible<Signal> and
-    notify::signal_notifier_c<Notifier, Signal> and linked_node_c<Executable>
+template <typename Components = DefaultContextComponents, event_backend_c Backend = EventBackend, join_handle_c ThreadHandle = std::thread>
 class BasicContext
 {
-    friend class ContextInfo;
-private:
-    using Resources = details::ContextResources<queue_capacity, Executable, Signal, Notifier,
-        Executor, ExecutableStream, RequestStream, RequestSink, Dispatcher, Runtime>;
-    using SchedulingRuntime = typename Resources::runtime_t;
-    using WorkerPoller = details::WorkerPoller<SchedulingRuntime, typename Resources::thread_shared_executor_t>;
-    using WorkerPool = WorkerPool<WorkerPoller, ThreadHandle, Signal>;
-    using SubmissionPort = ::lcf::async::SubmissionPort<typename Resources::shared_submitter_t, Executable>;
-    using DedicatedSubmissionPort = ::lcf::async::SubmissionPort<typename Resources::dedicated_submitter_t, Executable>;
+    template <typename, bool> friend class ExecutionPort;
+    using Self = BasicContext;
+    using Signal = notify::BackendSignal<Backend>;
+    using Notifier = notify::SignalNotifier<Signal>;
+    using Coordinator = details::ContextCoordinator<Signal>;
+    using Resources = details::ContextResources<Components, Coordinator, Notifier>;
+    using Path = typename Components::template execution_path_t<typename Resources::dispatcher_t,
+        typename Resources::execution_t, Coordinator>;
+    using Pool = WorkerPool<Path, Coordinator, ThreadHandle>;
+    using SharedSubmissionPort = SubmissionPort<typename Resources::admission_t>;
+    using LocalSubmissionPort = SubmissionPort<typename Resources::admission_t, true>;
+    using OwnerPort = ExecutionPort<Self, true>;
+    using LocalPort = ExecutionPort<Self, false>;
+    enum class CloseMode { eOpen, eGraceful, eStop };
 public:
-    BasicContext() = default;
     ~BasicContext() noexcept
     {
-        const details::OwnerThreadGuard guard {m_owner_state};
-        this->closeSubmissions();
-        this->stopAndJoinWorkers();
-        m_resources.cancelPending();
+        (void)this->shutdown();
+        if (m_resources and not m_cleaned.load(std::memory_order_acquire)) { std::terminate(); }
     }
+    BasicContext() noexcept = default;
     BasicContext(const BasicContext &) = delete;
     BasicContext(BasicContext &&) = delete;
     BasicContext & operator=(const BasicContext &) = delete;
     BasicContext & operator=(BasicContext &&) = delete;
-public:
-    [[nodiscard]] std::error_code create(ContextInfo && context_info) noexcept
+    static std::expected<ContextStorageRequirements, std::error_code> getStorageRequirements(const ContextInfo & info) noexcept
     {
-        if (m_domain_id != details::k_unbound_domain_id) { return std::make_error_code(std::errc::operation_in_progress); }
-        ContextInfo info {std::move(context_info)};
-        if (info.getDomainId() == details::k_unbound_domain_id or info.getDispatcherCount() == 0) {
-            return std::make_error_code(std::errc::invalid_argument);
-        }
+        details::StorageLayout runtime, workers;
+        Resources resources;
+        runtime.template append<Resources>();
+        resources.prepareStorage(info, runtime);
+        runtime.template append<Path>();
+        runtime.template append<Priority>(info.getPortPriorities().size());
+        ServiceHost<Backend>::appendStorage(info.getServiceCapacity(), runtime);
+        Pool pool;
+        pool.prepareStorage(info.getWorkerCount(), workers);
+        const auto runtime_size = runtime.getSize();
+        const auto worker_size = workers.getSize();
+        if (not runtime_size) { return std::unexpected {runtime_size.error()}; }
+        if (not worker_size) { return std::unexpected {worker_size.error()}; }
+        return ContextStorageRequirements {runtime_size->m_size_in_bytes, runtime_size->m_alignment,
+            worker_size->m_size_in_bytes, worker_size->m_alignment};
+    }
+    std::error_code create(ContextInfo && info) noexcept
+    {
+        if (m_resources) { return std::make_error_code(std::errc::operation_in_progress); }
+        if (info.getDispatcherCount() == 0) { return std::make_error_code(std::errc::invalid_argument); }
         try {
-            const std::uint64_t thread_count = info.getWorkerCount();
-            typename WorkerPool::worker_list_t workers {thread_count, {&info.getWorkerMemoryResource()}};
-            details::assemble_scheduling_runtime(m_resources, m_scheduling_runtime, info.getWorkerCount(),
-                info.getDispatcherCount(), info.getSubmissionPortCount(), info.getSchedulerKinds(), m_notifier,
-                info.getRuntimeMemoryResource());
-            std::destroy_at(&m_worker_pool);
-            std::construct_at(&m_worker_pool, m_signal, std::move(workers));
-        } catch (const std::bad_array_new_length &) {
-            return std::make_error_code(std::errc::value_too_large);
-        } catch (const std::bad_alloc &) {
-            return std::make_error_code(std::errc::not_enough_memory);
-        } catch (const std::length_error &) {
-            return std::make_error_code(std::errc::value_too_large);
-        } catch (const std::system_error & error) {
-            return error.code();
-        } catch (...) {
-            return std::make_error_code(std::errc::io_error);
-        }
-        m_domain_id = info.getDomainId();
+            m_resources = details::ResourceObject<Resources> {info.getRuntimeMemoryResource()};
+            m_resources->create(info, m_coordinator, Notifier {m_signal});
+            m_shared_count = std::max<std::size_t>(info.getWorkerCount(), 1);
+            m_owner_path = details::ResourceObject<Path> {info.getRuntimeMemoryResource(), m_resources->getDispatchers(),
+                m_resources->getSharedExecutor(0), m_coordinator};
+            m_priorities = {info.getPortPriorities().size(), {&info.getRuntimeMemoryResource()}};
+            for (Priority priority : info.getPortPriorities()) { m_priorities.emplace_back(priority); }
+            details::StorageAllocator storage {info.getRuntimeMemoryResource()};
+            m_services.prepareStorage(info.getServiceCapacity(), storage);
+            m_pool.prepare(info.getWorkerCount(), m_coordinator, info.getWorkerMemoryResource(), [this](std::size_t index) {
+                return Path {m_resources->getDispatchers(), m_resources->getSharedExecutor(index + 1), m_coordinator};
+            });
+            m_domain = info.getDomainId();
+            m_shared_priority = info.getSharedPortPriority();
+        } catch (const std::bad_alloc &) { return this->creationFailed(std::make_error_code(std::errc::not_enough_memory)); }
+        catch (const std::length_error &) { return this->creationFailed(std::make_error_code(std::errc::value_too_large)); }
+        catch (const std::system_error & exception) { return this->creationFailed(exception.code()); }
+        catch (...) { return this->creationFailed(make_error_code(errc::unexpected_exception)); }
         return {};
     }
-    SubmissionPort getSubmissionPort() noexcept
+    SharedSubmissionPort getSubmissionPort() noexcept
+    { return SharedSubmissionPort {m_resources->getSubmissionSink(0), m_domain, m_shared_priority}; }
+    LocalSubmissionPort getSubmissionPort(PortToken token) noexcept
     {
-        return SubmissionPort {m_resources.m_shared_submitters.front(), m_domain_id};
+        assert(token.getDomainId() == m_domain);
+        return LocalSubmissionPort {m_resources->getSubmissionSink(token.getIndex() + 1), token, m_priorities[token.getIndex()]};
     }
-    DedicatedSubmissionPort getSubmissionPort(PortToken token) noexcept
+    OwnerPort getExecutionPort() noexcept { return OwnerPort {*this}; }
+    LocalPort getExecutionPort(PortToken token) noexcept
     {
-        assert(token.getDomainId() == m_domain_id);
-        return DedicatedSubmissionPort {m_resources.m_dedicated_submitters[token.getIndex()], m_domain_id};
+        assert(token.getDomainId() == m_domain);
+        return LocalPort {*this, token.getIndex()};
     }
-    auto getExecutionPort() noexcept
+    Backend & getEventBackend() noexcept { return m_backend; }
+    template <service_c Service> std::error_code registerService(Service & service) noexcept
     {
-        return ExecutionPort {[this]() noexcept -> PollResult {
-            const details::OwnerThreadGuard guard {m_owner_state};
-            return details::require_poll_result(m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning()));
-        }};
+        if (not m_resources) { return std::make_error_code(std::errc::operation_not_permitted); }
+        return m_services.registerService(AnyServiceRef {service});
     }
-    auto getExecutionPort(PortToken token) noexcept
+    std::error_code enableServiceHandling() noexcept
     {
-        assert(token.getDomainId() == m_domain_id);
-        return ExecutionPort {[this, executor_p = &m_resources.m_thread_local_executors[token.getIndex()]]() noexcept -> PollResult {
-            return m_scheduling_runtime.pollLocal(*executor_p);
-        }};
+        if (not m_resources) { return std::make_error_code(std::errc::operation_not_permitted); }
+        if (m_close_mode.load(std::memory_order_acquire) != CloseMode::eOpen) { return std::make_error_code(std::errc::operation_canceled); }
+        if (const std::error_code ec = this->bindDriverThread()) { return ec; }
+        const std::error_code ec = m_services.enable();
+        if (ec) {
+            this->requestStopProcessing();
+            m_services.requestStop();
+            while (not m_services.isStopped()) {
+                const DriveReport backend_report = m_backend.driveOne();
+                const DriveReport service_report = m_services.driveOne();
+                if (backend_report.m_error_code) { m_coordinator.reportErrorCode(backend_report.m_error_code); }
+                if (service_report.m_error_code) { m_coordinator.reportErrorCode(service_report.m_error_code); }
+                if (not m_services.isStopped()) {
+                    if (const std::error_code wait_ec = m_backend.waitUntil(m_services.getWakeTime())) {
+                        m_coordinator.reportErrorCode(wait_ec);
+                    }
+                }
+            }
+        }
+        return ec;
     }
     template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
-    void run(Launcher launcher = {})
+    std::error_code run(Launcher launcher = {}) noexcept
     {
-        const details::OwnerThreadGuard guard {m_owner_state};
-        try {
-            m_worker_pool.start([this](std::uint64_t index) {
-                return WorkerPoller {m_scheduling_runtime, m_resources.m_thread_shared_executors[index]};
-            }, std::move(launcher));
-        } catch (...) {
-            this->requestStopProcessing();
-            throw;
+        if (const std::error_code ec = this->bindDriverThread()) { return ec; }
+        {
+            const std::lock_guard lock {m_lifecycle_mutex};
+            if (m_run_started or not m_resources) { return std::make_error_code(std::errc::operation_not_permitted); }
+            m_run_started = true; m_running = true;
         }
-        Signal & signal = m_signal;
-        while (true) {
-            const typename Signal::observation_t observed = signal.observe();
-            if (m_worker_pool.isStopRequested()) { break; }
-            if (details::require_poll_result(m_scheduling_runtime.pollOwner(not m_worker_pool.isRunning()))) { continue; }
-            if (m_scheduling_runtime.areSubmissionsClosed()) {
-                if (m_scheduling_runtime.isIdle()) { break; }
-                std::this_thread::yield();
-            } else { signal.wait(observed); }
+        std::error_code ec;
+        if (m_close_mode.load(std::memory_order_acquire) == CloseMode::eOpen) { ec = m_services.enable(); }
+        if (not ec) {
+            try { m_pool.start(m_coordinator, std::move(launcher)); }
+            catch (const std::system_error & exception) { ec = exception.code(); }
+            catch (...) { ec = errc::unexpected_exception; }
         }
-        this->stopAndJoinWorkers();
+        if (ec) { m_coordinator.reportErrorCode(ec); this->requestStopProcessing(); }
+        while (not m_cleaned.load(std::memory_order_acquire)) {
+            const ExecutionReport report = this->executeOne<true>(0);
+            if (m_cleaned.load(std::memory_order_acquire)) { break; }
+            if (not report.hasProgress()) {
+                const std::error_code wait_ec = m_backend.waitUntil(m_services.getWakeTime());
+                if (wait_ec) { m_coordinator.reportErrorCode(wait_ec); this->requestStopProcessing(); }
+            }
+        }
+        const std::lock_guard lock {m_lifecycle_mutex};
+        m_running = false;
+        m_lifecycle_condition.notify_all();
+        return m_coordinator.getErrorCode();
     }
     void closeSubmissions() noexcept
     {
-        m_resources.closeSubmissions();
-        m_scheduling_runtime.closeSubmissions();
+        CloseMode expected = CloseMode::eOpen;
+        m_close_mode.compare_exchange_strong(expected, CloseMode::eGraceful, std::memory_order_acq_rel);
+        m_signal.notifyAll();
     }
-    void requestStopProcessing() noexcept { m_worker_pool.requestStop(); }
-    bool isEmpty() const noexcept { return m_scheduling_runtime.isEmpty(); }
-private:
-    void stopAndJoinWorkers() noexcept
+    void requestStopProcessing() noexcept
+    { m_close_mode.store(CloseMode::eStop, std::memory_order_release); m_coordinator.requestStop(); m_signal.notifyAll(); }
+    bool isEmpty() const noexcept { return m_coordinator.isEmpty(); }
+    std::error_code shutdown() noexcept
     {
+        if (not m_resources) { return {}; }
         this->requestStopProcessing();
-        m_worker_pool.join();
+        {
+            std::unique_lock lock {m_lifecycle_mutex};
+            if (m_running and m_driver_thread != std::this_thread::get_id()) {
+                m_lifecycle_condition.wait(lock, [this] { return not m_running; });
+                return m_coordinator.getErrorCode();
+            }
+        }
+        if (m_cleaned.load(std::memory_order_acquire)) { return m_coordinator.getErrorCode(); }
+        if (const std::error_code ec = this->bindDriverThread()) { return ec; }
+        while (not m_cleaned.load(std::memory_order_acquire)) {
+            const ExecutionReport report = this->executeOne<true>(0);
+            if (not report.hasProgress() and not report.isStopped()) {
+                if (const std::error_code ec = m_backend.waitUntil(m_services.getWakeTime())) { m_coordinator.reportErrorCode(ec); }
+            }
+        }
+        return m_coordinator.getErrorCode();
     }
 private:
-    Signal m_signal;
-    Notifier m_notifier {m_signal};
-    Resources m_resources;
-    SchedulingRuntime m_scheduling_runtime {m_signal};
-    WorkerPool m_worker_pool {m_signal};
-    details::OwnerThreadState m_owner_state;
-    std::uint32_t m_domain_id = details::k_unbound_domain_id;
+    std::error_code creationFailed(std::error_code ec) noexcept
+    { m_owner_path.reset(); m_resources.reset(); return ec; }
+    std::error_code bindDriverThread() noexcept
+    {
+        const std::lock_guard lock {m_lifecycle_mutex};
+        if (m_driver_thread == std::thread::id {}) { m_driver_thread = std::this_thread::get_id(); }
+        return m_driver_thread == std::this_thread::get_id() ? std::error_code {} : std::make_error_code(std::errc::operation_not_permitted);
+    }
+    void finish() noexcept
+    {
+        m_coordinator.closeSubmissions(); m_coordinator.requestStop();
+        m_pool.join(); m_coordinator.waitForExecutions();
+        m_resources->cancelRemaining(m_coordinator);
+        m_cleaned.store(true, std::memory_order_release);
+        m_signal.notifyAll();
+    }
+    template <bool owner> ExecutionReport executeOne(std::size_t index) noexcept
+    {
+        if (not m_resources or m_cleaned.load(std::memory_order_acquire)) { return {.m_result = ExecutionResult::eStopped}; }
+        m_services.closeRegistration();
+        if constexpr (not owner) {
+            const details::ExecutionGuard guard {m_coordinator};
+            if (not guard) { return {.m_result = ExecutionResult::eStopped}; }
+            const ExecutionReport report = m_resources->getLocalExecutor(m_shared_count + 1, index).executeOne();
+            if (report.m_error_code) { m_coordinator.reportErrorCode(report.m_error_code); }
+            return report;
+        } else {
+            if (const std::error_code ec = this->bindDriverThread()) { return {.m_result = ExecutionResult::eStopped, .m_error_code = ec}; }
+            m_services.closeRegistration();
+            CloseMode mode = m_close_mode.load(std::memory_order_acquire);
+            if (m_coordinator.isStopRequested()) { mode = CloseMode::eStop; m_close_mode.store(mode, std::memory_order_release); }
+            if (mode != CloseMode::eOpen) {
+                m_services.requestStop();
+                if (m_services.isStopped()) { m_coordinator.closeSubmissions(); }
+            }
+            const DriveReport backend_report = m_backend.driveOne();
+            const DriveReport service_report = m_services.driveOne();
+            const std::error_code ec = backend_report.m_error_code ? backend_report.m_error_code : service_report.m_error_code;
+            if (ec) { m_coordinator.reportErrorCode(ec); this->requestStopProcessing(); mode = CloseMode::eStop; }
+            ExecutionReport execution;
+            {
+                const details::ExecutionGuard guard {m_coordinator};
+                if (guard) { execution = m_owner_path->executeOne(); }
+            }
+            const bool finished = m_services.isStopped() and (mode == CloseMode::eStop
+                or (m_coordinator.areSubmissionsClosed() and m_coordinator.isEmpty()));
+            if (finished) {
+                this->finish();
+                return {.m_result = ExecutionResult::eStopped, .m_executed = execution.m_executed,
+                    .m_error_code = m_coordinator.getErrorCode()};
+            }
+            const bool progress = backend_report.hasProgress() or service_report.hasProgress() or execution.hasProgress();
+            return {.m_result = ec or execution.m_error_code ? ExecutionResult::eStopped
+                    : progress ? ExecutionResult::eProgress : ExecutionResult::eIdle,
+                .m_executed = execution.m_executed, .m_error_code = ec ? ec : execution.m_error_code};
+        }
+    }
+    template <bool owner> ExecutionReport waitAndExecuteOne(std::size_t index, std::stop_token stop) noexcept
+    {
+        const std::stop_callback wake {stop, [this] { m_signal.notifyAll(); }};
+        while (true) {
+            const auto observed = m_signal.observe();
+            if (stop.stop_requested()) { return {.m_result = ExecutionResult::eStopped}; }
+            const ExecutionReport report = this->executeOne<owner>(index);
+            if (report.m_executed or report.isStopped() or report.m_error_code) { return report; }
+            if (report.hasProgress()) { continue; }
+            if constexpr (owner) {
+                if (const std::error_code ec = m_backend.waitUntil(m_services.getWakeTime())) {
+                    m_coordinator.reportErrorCode(ec);
+                    return {.m_result = ExecutionResult::eStopped, .m_error_code = ec};
+                }
+            } else { m_signal.wait(observed); }
+        }
+    }
+    Backend m_backend;
+    Signal m_signal {m_backend};
+    Coordinator m_coordinator {m_signal};
+    ServiceHost<Backend> m_services {m_backend};
+    details::ResourceObject<Resources> m_resources;
+    details::ResourceObject<Path> m_owner_path;
+    Pool m_pool;
+    details::FixedCapacityVector<Priority> m_priorities;
+    std::size_t m_shared_count = 1;
+    std::uint32_t m_domain = 0;
+    Priority m_shared_priority = Priority::eNormal;
+    std::atomic<CloseMode> m_close_mode {CloseMode::eOpen};
+    std::atomic<bool> m_cleaned {false};
+    std::mutex m_lifecycle_mutex;
+    std::condition_variable m_lifecycle_condition;
+    std::thread::id m_driver_thread;
+    bool m_running = false, m_run_started = false;
 };
-
 using Context = BasicContext<>;
-
 template <typename ContextType = Context>
 ContextStorageRequirements ContextInfo::getStorageRequirements() const noexcept
 {
-    using Resources = typename ContextType::Resources;
-    using Worker = typename ContextType::WorkerPool::worker_t;
-    const typename Resources::storage_requirements_result_t requirements = Resources::calc_storage_requirements(
-        m_worker_count, m_dispatcher_count, m_port_count, this->getSchedulerCount());
-    if (not requirements or m_worker_count > std::numeric_limits<std::size_t>::max() / sizeof(Worker)) {
-        std::terminate();
-    }
-    const auto [runtime_size, runtime_alignment] = *requirements;
-    return {runtime_size, runtime_alignment, m_worker_count * sizeof(Worker), alignof(Worker)};
+    const auto requirements = ContextType::getStorageRequirements(*this);
+    if (not requirements) { std::terminate(); }
+    return *requirements;
 }
-
-} // namespace lcf::async
+}

@@ -20,13 +20,14 @@ public:
     static constexpr bool k_supports_multiple_producers = false;
     static constexpr bool k_supports_multiple_consumers = false;
 public:
+    ~Queue() noexcept = default;
     Queue() noexcept = default;
     Queue(const Queue &) = delete;
     Queue(Queue &&) = delete;
     Queue & operator=(const Queue &) = delete;
     Queue & operator=(Queue &&) = delete;
 public:
-    std::error_code tryEnqueue(value_t & value) noexcept
+    std::error_code enqueue(value_t & value) noexcept
     {
         if (m_closed.load(std::memory_order_acquire)) { return std::make_error_code(std::errc::operation_canceled); }
         const std::uint64_t write = m_write.load(std::memory_order_relaxed);
@@ -36,7 +37,7 @@ public:
         m_write.store(next, std::memory_order_release);
         return {};
     }
-    value_t * tryPop() noexcept
+    value_t * pop() noexcept
     {
         const std::uint64_t read = m_read.load(std::memory_order_relaxed);
         if (read == m_write.load(std::memory_order_acquire)) { return nullptr; }

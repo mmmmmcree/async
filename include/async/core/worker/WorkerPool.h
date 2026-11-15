@@ -1,65 +1,35 @@
 #pragma once
-
-#include "BasicWorker.h"
-#include <async/core/worker/details/WorkerControl.h>
+#include <async/config/macros.h>
+#include <async/core/worker/BasicWorker.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
-#include <async/core/notify/declarations/concepts.h>
-
-#include <algorithm>
-#include <cstdint>
-#include <utility>
-
 LCF_ASYNC_EXPORT
 namespace lcf::async {
-
-template <worker_progress_c Progress, join_handle_c ThreadHandle, notify::signal_c Signal>
+template <work_executor_c ExecutionPath, typename Coordinator, join_handle_c ThreadHandle>
 class WorkerPool
 {
+    using Worker = BasicWorker<ExecutionPath, Coordinator, ThreadHandle>;
 public:
-    using worker_t = BasicWorker<Progress, details::WorkerControl<Signal>, ThreadHandle>;
-    using worker_list_t = details::FixedCapacityVector<worker_t>;
-public:
-    WorkerPool() = delete;
-    explicit WorkerPool(Signal & signal) noexcept : m_control(signal) {}
-    WorkerPool(Signal & signal, worker_list_t workers) noexcept :
-        m_control(signal), m_workers(std::move(workers)) {}
-    ~WorkerPool() noexcept { this->requestStop(); this->join(); }
+    ~WorkerPool() noexcept { this->join(); }
+    WorkerPool() noexcept = default;
     WorkerPool(const WorkerPool &) = delete;
     WorkerPool(WorkerPool &&) = delete;
     WorkerPool & operator=(const WorkerPool &) = delete;
     WorkerPool & operator=(WorkerPool &&) = delete;
-public:
-    template <typename Factory, thread_launcher_c<ThreadHandle> Launcher>
-    void start(Factory make_progress, Launcher launcher)
+    template <typename Storage> void prepareStorage(std::size_t count, Storage & storage) { storage.reserve(m_workers, count); }
+    template <typename Factory>
+    void prepare(std::size_t count, Coordinator & coordinator, std::pmr::memory_resource & resource, Factory make_path)
     {
-        if (m_started) { return; }
-        m_started = true;
-        try {
-            for (std::uint64_t index = 0; index < m_workers.capacity(); ++index) {
-                m_workers.emplace_back(launcher, make_progress(index), m_control);
-            }
-        } catch (...) {
-            this->requestStop();
-            this->join();
-            throw;
-        }
-        m_running = std::ranges::any_of(m_workers, &worker_t::isJoinable);
+        m_workers = {count, {&resource}};
+        for (std::size_t index = 0; index < count; ++index) { m_workers.emplace_back(make_path(index), coordinator); }
     }
-    void requestStop() noexcept { m_control.requestStop(); }
-    // Only use after producers and upstream stages can no longer add work.
-    void close() noexcept { m_control.close(); }
-    void join() noexcept
+    template <thread_launcher_c<ThreadHandle> Launcher>
+    void start(Coordinator & coordinator, Launcher launcher)
     {
-        std::ranges::for_each(m_workers, &worker_t::join);
-        m_running = false;
+        try { for (Worker & worker : m_workers) { worker.start(launcher); } }
+        catch (...) { coordinator.requestStop(); this->join(); throw; }
     }
-    bool isRunning() const noexcept { return m_running; }
-    bool isStopRequested() const noexcept { return m_control.isStopRequested(); }
+    void join() noexcept { for (Worker & worker : m_workers) { worker.join(); } }
 private:
-    details::WorkerControl<Signal> m_control;
-    worker_list_t m_workers;
-    bool m_started = false;
-    bool m_running = false;
+    details::FixedCapacityVector<Worker> m_workers;
 };
-
-} // namespace lcf::async
+}

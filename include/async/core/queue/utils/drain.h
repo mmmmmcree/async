@@ -42,9 +42,9 @@ class DrainView : public std::ranges::view_interface<DrainView<Queue, direction>
         Iterator & operator++() noexcept
         {
             if constexpr (consumer_deque_c<Queue>) {
-                if constexpr (direction == from_front) { m_value_p = m_queue_p->tryPopFront(); }
-                else { m_value_p = m_queue_p->tryPopBack(); }
-            } else { m_value_p = m_queue_p->tryPop(); }
+                if constexpr (direction == from_front) { m_value_p = m_queue_p->popFront(); }
+                else { m_value_p = m_queue_p->popBack(); }
+            } else { m_value_p = m_queue_p->pop(); }
             return *this;
         }
         void operator++(int) noexcept { ++*this; }

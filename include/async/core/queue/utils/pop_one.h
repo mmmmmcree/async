@@ -11,9 +11,9 @@ template <DrainDirection direction = from_front, consumer_queue_c Queue>
 typename Queue::value_t * pop_one(Queue & queue) noexcept
 {
     if constexpr (consumer_deque_c<Queue>) {
-        if constexpr (direction == from_front) { return queue.tryPopFront(); }
-        else { return queue.tryPopBack(); }
-    } else { return queue.tryPop(); }
+        if constexpr (direction == from_front) { return queue.popFront(); }
+        else { return queue.popBack(); }
+    } else { return queue.pop(); }
 }
 
 template <DrainDirection direction = from_front, consumer_queue_range_c Queues>
