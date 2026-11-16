@@ -32,6 +32,8 @@
 #include <async/core/sink/declarations/concepts.h>
 #include <async/core/sink/SubmissionSink.h>
 #include <async/core/sink/AnySinkRef.h>
+#include <async/core/sink/ExecuteExecutableSink.h>
+#include <async/core/sink/CancelExecutableSink.h>
 #include <async/core/executable/AnyExecutableRef.h>
 #include <async/core/dispatcher/declarations/concepts.h>
 #include <async/core/dispatcher/declarations/structs.h>

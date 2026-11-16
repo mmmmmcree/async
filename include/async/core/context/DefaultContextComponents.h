@@ -9,8 +9,8 @@
 #include <async/core/stream/WorkStealingStream.h>
 #include <async/core/stream/PriorityStream.h>
 #include <async/core/sink/SubmissionSink.h>
-#include <async/core/sink/ExecuteSink.h>
-#include <async/core/sink/CancelSink.h>
+#include <async/core/sink/ExecuteExecutableSink.h>
+#include <async/core/sink/CancelExecutableSink.h>
 #include <async/core/dispatcher/BasicDispatcher.h>
 #include <async/core/executor/BasicExecutor.h>
 #include <async/core/driver/WorkerExecutionPath.h>
@@ -33,9 +33,9 @@ struct DefaultContextComponents
     template <typename Target>
     using dispatch_sink_t = DispatchRequestSink<Target, policy::RoundRobin>;
     template <typename Record>
-    using execute_sink_t = ExecuteSink<Record>;
+    using execute_sink_t = ExecuteExecutableSink<Record>;
     template <typename Record>
-    using cancel_sink_t = CancelSink<Record>;
+    using cancel_sink_t = CancelExecutableSink<Record>;
     template <typename Queue>
     using request_stream_t = DispatchRequestStream<Queue, policy::RoundRobin, policy::RoundRobin>;
     template <typename Queue>
