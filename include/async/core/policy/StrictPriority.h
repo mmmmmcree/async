@@ -16,6 +16,7 @@ public:
     StrictPriority(StrictPriority &&) noexcept = default;
     StrictPriority & operator=(const StrictPriority &) noexcept = default;
     StrictPriority & operator=(StrictPriority &&) noexcept = default;
+public:
     template <std::ranges::view Candidates>
     requires std::ranges::forward_range<Candidates>
     Candidates select(Candidates candidates) noexcept { return candidates; }

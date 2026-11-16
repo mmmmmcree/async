@@ -1,15 +1,19 @@
 #pragma once
+
 #include <cstddef>
 #include <expected>
 #include <limits>
 #include <memory_resource>
 #include <system_error>
+
 namespace lcf::async::details {
+
 struct StorageSize
 {
     std::size_t m_size_in_bytes = 0;
     std::size_t m_alignment = 1;
 };
+
 class StorageLayout
 {
 public:
@@ -19,6 +23,7 @@ public:
     StorageLayout(StorageLayout &&) noexcept = default;
     StorageLayout & operator=(const StorageLayout &) noexcept = default;
     StorageLayout & operator=(StorageLayout &&) noexcept = default;
+public:
     template <typename Value>
     void append(std::size_t count = 1) noexcept
     {
@@ -47,6 +52,7 @@ private:
     std::size_t m_alignment = 1;
     bool m_overflow = false;
 };
+
 class StorageAllocator
 {
 public:
@@ -57,9 +63,11 @@ public:
     StorageAllocator(StorageAllocator &&) noexcept = default;
     StorageAllocator & operator=(const StorageAllocator &) noexcept = default;
     StorageAllocator & operator=(StorageAllocator &&) noexcept = default;
+public:
     template <typename Container>
     void reserve(Container & container, std::size_t count) const { container = {count, {m_resource_p}}; }
 private:
     std::pmr::memory_resource * m_resource_p;
 };
-}
+
+} // namespace lcf::async::details

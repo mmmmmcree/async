@@ -1,8 +1,12 @@
 #pragma once
+
 #include <async/core/policy/RoundRobin.h>
+
 #include <array>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async::policy {
+
 // Rotate the first candidate with weights 4:2:1; still inspect every band.
 class WeightedPriority
 {
@@ -15,6 +19,7 @@ public:
     WeightedPriority(WeightedPriority &&) noexcept = default;
     WeightedPriority & operator=(const WeightedPriority &) noexcept = default;
     WeightedPriority & operator=(WeightedPriority &&) noexcept = default;
+public:
     template <std::ranges::view Candidates>
     requires std::ranges::forward_range<Candidates>
     Selection<Candidates> select(Candidates candidates) noexcept
@@ -29,4 +34,5 @@ public:
 private:
     std::size_t m_next = 0;
 };
-}
+
+} // namespace lcf::async::policy

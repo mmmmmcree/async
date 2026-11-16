@@ -16,7 +16,7 @@ class SubmissionSink
 {
 public:
     using value_t = typename Queue::value_t;
-
+public:
     ~SubmissionSink() noexcept = default;
     SubmissionSink() = delete;
     explicit SubmissionSink(Notifier notifier) noexcept(details::all_nothrow_default_constructible<Queue>
@@ -25,7 +25,7 @@ public:
     SubmissionSink(SubmissionSink &&) = delete;
     SubmissionSink & operator=(const SubmissionSink &) = delete;
     SubmissionSink & operator=(SubmissionSink &&) = delete;
-
+public:
     std::error_code receive(value_t & record) noexcept
     {
         const std::size_t band = static_cast<std::size_t>(record.getPriority());
@@ -36,7 +36,6 @@ public:
     }
 
     Queue & getQueue(std::size_t band) noexcept { return m_queues[band]; }
-
 private:
     std::array<Queue, k_priority_count> m_queues;
     Notifier m_notifier;

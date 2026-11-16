@@ -1,6 +1,9 @@
 #pragma once
+
 #include <async/core/scheduling/details/ScheduleOperation.h>
+
 namespace lcf::async::details {
+
 template <typename Handle>
 class ScheduleSender
 {
@@ -14,6 +17,7 @@ class ScheduleSender
         Environment(Environment &&) = default;
         Environment & operator=(const Environment &) = default;
         Environment & operator=(Environment &&) = default;
+    public:
         Handle query(exec::get_completion_scheduler_t<exec::set_value_t>) const noexcept { return m_handle; }
     private:
         Handle m_handle;
@@ -39,4 +43,5 @@ public:
 private:
     Handle m_handle;
 };
-}
+
+} // namespace lcf::async::details

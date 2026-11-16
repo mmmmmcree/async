@@ -24,6 +24,7 @@ public:
     BasicDriver(BasicDriver &&) = default;
     BasicDriver & operator=(const BasicDriver &) = default;
     BasicDriver & operator=(BasicDriver &&) = default;
+public:
     DriveReport driveOne() noexcept
     {
         return utils::drive_one(*m_stream_p, m_sink);

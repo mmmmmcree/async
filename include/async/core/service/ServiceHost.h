@@ -1,14 +1,18 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/service/AnyServiceRef.h>
 #include <async/core/event/declarations/concepts.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/error.h>
+
 #include <limits>
 #include <mutex>
 #include <optional>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <event_backend_c Backend>
 class ServiceHost
 {
@@ -23,6 +27,7 @@ class ServiceHost
         Entry(Entry &&) = delete;
         Entry & operator=(const Entry &) = delete;
         Entry & operator=(Entry &&) = delete;
+    public:
         ServiceHost * m_host_p;
         AnyServiceRef m_service;
         std::size_t m_index;
@@ -45,13 +50,16 @@ public:
     ServiceHost(ServiceHost &&) = delete;
     ServiceHost & operator=(const ServiceHost &) = delete;
     ServiceHost & operator=(ServiceHost &&) = delete;
-    template <typename Layout> static void appendStorage(std::size_t capacity, Layout & layout)
+public:
+    template <typename Layout>
+    static void appendStorage(std::size_t capacity, Layout & layout)
     {
         layout.template append<Entry>(capacity);
         layout.template append<std::size_t>(capacity);
         layout.template append<std::size_t>(capacity);
     }
-    template <typename Storage> void prepareStorage(std::size_t capacity, Storage & storage)
+    template <typename Storage>
+    void prepareStorage(std::size_t capacity, Storage & storage)
     {
         storage.reserve(m_entries, capacity);
         storage.reserve(m_ready, capacity);
@@ -167,6 +175,7 @@ private:
         }
         m_backend_p->wake();
     }
+private:
     Backend * m_backend_p;
     details::FixedCapacityVector<Entry> m_entries;
     details::FixedCapacityVector<std::size_t> m_ready;
@@ -175,4 +184,5 @@ private:
     std::size_t m_ready_head = 0, m_ready_count = 0, m_active = 0;
     bool m_registration_closed = false, m_enabled = false;
 };
-}
+
+} // namespace lcf::async

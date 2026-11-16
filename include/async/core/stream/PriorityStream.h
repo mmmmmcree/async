@@ -27,6 +27,7 @@ public:
     PriorityStream(PriorityStream &&) = default;
     PriorityStream & operator=(const PriorityStream &) = default;
     PriorityStream & operator=(PriorityStream &&) = default;
+public:
     value_t * pull() noexcept { return m_selected.pull(); }
     bool isEmpty() const noexcept { return m_selected.isEmpty(); }
     void requeue(value_t & record) noexcept requires retry_stream_c<Stream>

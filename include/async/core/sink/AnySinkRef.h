@@ -24,6 +24,7 @@ public:
     AnySinkRef(AnySinkRef &&) noexcept = default;
     AnySinkRef & operator=(const AnySinkRef &) noexcept = default;
     AnySinkRef & operator=(AnySinkRef &&) noexcept = default;
+public:
     std::error_code receive(Record & record) noexcept { return m_receive_f(m_sink_p, record); }
 private:
     void * m_sink_p;

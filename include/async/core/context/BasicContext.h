@@ -1,4 +1,5 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/context/ContextInfo.h>
 #include <async/core/context/DefaultContextComponents.h>
@@ -13,16 +14,20 @@
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/service/ServiceHost.h>
 #include <async/core/worker/WorkerPool.h>
+
 #include <atomic>
 #include <cassert>
 #include <condition_variable>
 #include <thread>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <typename Components = DefaultContextComponents, event_backend_c Backend = EventBackend, join_handle_c ThreadHandle = std::thread>
 class BasicContext
 {
-    template <typename, bool> friend class ExecutionPort;
+    template <typename, bool>
+    friend class ExecutionPort;
     using Self = BasicContext;
     using Signal = notify::BackendSignal<Backend>;
     using Notifier = notify::SignalNotifier<Signal>;
@@ -47,6 +52,7 @@ public:
     BasicContext(BasicContext &&) = delete;
     BasicContext & operator=(const BasicContext &) = delete;
     BasicContext & operator=(BasicContext &&) = delete;
+public:
     static std::expected<ContextStorageRequirements, std::error_code> getStorageRequirements(const ContextInfo & info) noexcept
     {
         details::StorageLayout runtime, workers;
@@ -104,7 +110,8 @@ public:
         return LocalPort {*this, token.getIndex()};
     }
     Backend & getEventBackend() noexcept { return m_backend; }
-    template <service_c Service> std::error_code registerService(Service & service) noexcept
+    template <service_c Service>
+    std::error_code registerService(Service & service) noexcept
     {
         if (not m_resources) { return std::make_error_code(std::errc::operation_not_permitted); }
         return m_services.registerService(AnyServiceRef {service});
@@ -209,7 +216,8 @@ private:
         m_cleaned.store(true, std::memory_order_release);
         m_signal.notifyAll();
     }
-    template <bool owner> ExecutionReport executeOne(std::size_t index) noexcept
+    template <bool owner>
+    ExecutionReport executeOne(std::size_t index) noexcept
     {
         if (not m_resources or m_cleaned.load(std::memory_order_acquire)) { return {.m_result = ExecutionResult::eStopped}; }
         m_services.closeRegistration();
@@ -250,7 +258,8 @@ private:
                 .m_executed = execution.m_executed, .m_error_code = ec ? ec : execution.m_error_code};
         }
     }
-    template <bool owner> ExecutionReport waitAndExecuteOne(std::size_t index, std::stop_token stop) noexcept
+    template <bool owner>
+    ExecutionReport waitAndExecuteOne(std::size_t index, std::stop_token stop) noexcept
     {
         const std::stop_callback wake {stop, [this] { m_signal.notifyAll(); }};
         while (true) {
@@ -267,6 +276,7 @@ private:
             } else { m_signal.wait(observed); }
         }
     }
+private:
     Backend m_backend;
     Signal m_signal {m_backend};
     Coordinator m_coordinator {m_signal};
@@ -285,6 +295,7 @@ private:
     std::thread::id m_driver_thread;
     bool m_running = false, m_run_started = false;
 };
+
 using Context = BasicContext<>;
 template <typename ContextType = Context>
 ContextStorageRequirements ContextInfo::getStorageRequirements() const noexcept
@@ -293,4 +304,5 @@ ContextStorageRequirements ContextInfo::getStorageRequirements() const noexcept
     if (not requirements) { std::terminate(); }
     return *requirements;
 }
-}
+
+} // namespace lcf::async

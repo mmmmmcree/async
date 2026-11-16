@@ -1,7 +1,10 @@
 #pragma once
+
 #include <atomic>
 #include <cstdint>
+
 namespace lcf::async::details {
+
 class ActivityGate
 {
     static constexpr std::uint64_t k_closed = std::uint64_t {1} << 63;
@@ -12,6 +15,7 @@ public:
     ActivityGate(ActivityGate &&) = delete;
     ActivityGate & operator=(const ActivityGate &) = delete;
     ActivityGate & operator=(ActivityGate &&) = delete;
+public:
     bool tryEnter() noexcept
     {
         std::uint64_t state = m_state.load(std::memory_order_relaxed);
@@ -44,9 +48,11 @@ public:
     ExecutionGuard(ExecutionGuard &&) = delete;
     ExecutionGuard & operator=(const ExecutionGuard &) = delete;
     ExecutionGuard & operator=(ExecutionGuard &&) = delete;
+public:
     explicit operator bool() const noexcept { return m_entered; }
 private:
     Waiter * m_waiter_p;
     bool m_entered;
 };
-}
+
+} // namespace lcf::async::details

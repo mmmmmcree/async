@@ -28,6 +28,7 @@ public:
     SelectedStream(SelectedStream &&) = default;
     SelectedStream & operator=(const SelectedStream &) = default;
     SelectedStream & operator=(SelectedStream &&) = default;
+public:
     value_t * pull() noexcept
     {
         for (Source & source : m_policy.select(std::views::all(m_sources))) {

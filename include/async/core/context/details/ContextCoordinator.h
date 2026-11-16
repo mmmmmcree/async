@@ -1,11 +1,15 @@
 #pragma once
+
 #include <async/core/notify/declarations/concepts.h>
 #include <async/core/details/ActivityGate.h>
+
 #include <atomic>
 #include <cstdint>
 #include <mutex>
 #include <system_error>
+
 namespace lcf::async::details {
+
 template <notify::signal_c Signal>
 class ContextCoordinator
 {
@@ -19,6 +23,7 @@ public:
     ContextCoordinator(ContextCoordinator &&) = delete;
     ContextCoordinator & operator=(const ContextCoordinator &) = delete;
     ContextCoordinator & operator=(ContextCoordinator &&) = delete;
+public:
     bool beginSubmission() noexcept
     {
         if (not m_submissions.tryEnter()) { return false; }
@@ -64,4 +69,5 @@ private:
     mutable std::mutex m_error_mutex;
     std::error_code m_error_code;
 };
-}
+
+} // namespace lcf::async::details

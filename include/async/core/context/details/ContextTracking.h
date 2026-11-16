@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/core/sink/declarations/concepts.h>
+
 #include <utility>
 
 namespace lcf::async::details {
@@ -10,7 +11,6 @@ class SubmissionGate
 {
 public:
     using value_t = typename Sink::value_t;
-
 public:
     ~SubmissionGate() noexcept = default;
     SubmissionGate() = delete;
@@ -20,7 +20,7 @@ public:
     SubmissionGate(SubmissionGate &&) noexcept = default;
     SubmissionGate & operator=(const SubmissionGate &) noexcept = default;
     SubmissionGate & operator=(SubmissionGate &&) noexcept = default;
-
+public:
     std::error_code receive(value_t & record) noexcept
     {
         if (not m_coordinator_p->beginSubmission()) { return std::make_error_code(std::errc::operation_canceled); }
@@ -29,7 +29,6 @@ public:
         m_coordinator_p->endSubmission();
         return ec;
     }
-
 private:
     Sink * m_sink_p;
     Coordinator * m_coordinator_p;
@@ -41,7 +40,6 @@ class CompletionTracker
 {
 public:
     using value_t = typename Sink::value_t;
-
 public:
     ~CompletionTracker() noexcept = default;
     CompletionTracker() = delete;
@@ -51,13 +49,12 @@ public:
     CompletionTracker(CompletionTracker &&) = default;
     CompletionTracker & operator=(const CompletionTracker &) = default;
     CompletionTracker & operator=(CompletionTracker &&) = default;
-
+public:
     void receive(value_t & record) noexcept
     {
         m_sink.receive(record);
         m_coordinator_p->complete();
     }
-
 private:
     Sink m_sink;
     Coordinator * m_coordinator_p;

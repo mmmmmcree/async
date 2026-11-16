@@ -1,11 +1,15 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/dispatcher/declarations/concepts.h>
 #include <async/core/policy/utils/selected.h>
+
 #include <ranges>
 #include <span>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <request_dispatcher_c Dispatcher, typename SelectionPolicy>
 class DispatcherGroup
 {
@@ -18,6 +22,7 @@ public:
     DispatcherGroup(DispatcherGroup &&) = default;
     DispatcherGroup & operator=(const DispatcherGroup &) = default;
     DispatcherGroup & operator=(DispatcherGroup &&) = default;
+public:
     DispatchReport dispatchOne() noexcept
     {
         for (Dispatcher & dispatcher : m_policy.select(std::views::all(m_dispatchers))) {
@@ -30,4 +35,5 @@ private:
     std::span<Dispatcher> m_dispatchers;
     SelectionPolicy m_policy;
 };
-}
+
+} // namespace lcf::async

@@ -27,6 +27,7 @@ public:
     WorkerExecutionPath(WorkerExecutionPath &&) = default;
     WorkerExecutionPath & operator=(const WorkerExecutionPath &) = delete;
     WorkerExecutionPath & operator=(WorkerExecutionPath &&) = delete;
+public:
     ExecutionReport executeOne() noexcept
     {
         const DispatchReport dispatch_report = m_dispatchers.dispatchOne();

@@ -1,9 +1,13 @@
 #pragma once
+
 #include <async/config/macros.h>
+
 #include <cstddef>
 #include <cstdint>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 struct SchedulerTargetBinding
 {
     bool m_is_shared;
@@ -17,4 +21,5 @@ struct ContextStorageRequirements
     std::size_t m_workers_size_in_bytes = 0;
     std::size_t m_workers_alignment = 1;
 };
-}
+
+} // namespace lcf::async

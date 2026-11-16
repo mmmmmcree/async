@@ -1,7 +1,10 @@
 #pragma once
+
 #include <async/core/executable/declarations/concepts.h>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <typename Record>
 requires cancellable_executable_c<typename Record::executable_t>
 class CancelSink
@@ -15,6 +18,8 @@ public:
     CancelSink(CancelSink &&) noexcept = default;
     CancelSink & operator=(const CancelSink &) noexcept = default;
     CancelSink & operator=(CancelSink &&) noexcept = default;
+public:
     void receive(Record & record) noexcept { record.getExecutable().cancel(); }
 };
-}
+
+} // namespace lcf::async

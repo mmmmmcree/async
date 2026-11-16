@@ -29,10 +29,8 @@ class ContextResources
     using Completion = CompletionTracker<Execute, Coordinator>;
     using Executor = typename Components::template executor_t<ExecutionStream, Completion>;
     using Dispatcher = typename Components::template dispatcher_t<RequestStream, DispatchSink>;
-
 public:
     using admission_t = SubmissionGate<Submission, Coordinator>;
-
 private:
     class SubmissionEndpoint
     {
@@ -44,10 +42,9 @@ private:
         SubmissionEndpoint(SubmissionEndpoint &&) = delete;
         SubmissionEndpoint & operator=(const SubmissionEndpoint &) = delete;
         SubmissionEndpoint & operator=(SubmissionEndpoint &&) = delete;
-
+    public:
         SubmissionQueue & getQueue(std::size_t band) noexcept { return m_sink.getQueue(band); }
         admission_t & getAdmission() noexcept { return m_admission; }
-
     private:
         Submission m_sink;
         admission_t m_admission;
@@ -66,9 +63,8 @@ private:
         ExecutionComponent(ExecutionComponent &&) = delete;
         ExecutionComponent & operator=(const ExecutionComponent &) = delete;
         ExecutionComponent & operator=(ExecutionComponent &&) = delete;
-
+    public:
         ExecutionReport executeOne() noexcept { return m_executor.executeOne(); }
-
     private:
         std::array<ExecutionBand, k_priority_count> m_bands;
         ExecutionStream m_stream;
@@ -88,32 +84,30 @@ private:
         DispatchComponent(DispatchComponent &&) = delete;
         DispatchComponent & operator=(const DispatchComponent &) = delete;
         DispatchComponent & operator=(DispatchComponent &&) = delete;
-
+    public:
         DispatchReport dispatchOne() noexcept { return m_dispatcher.dispatchOne(); }
         void cancel(Coordinator & coordinator) noexcept
         {
             CompletionTracker<Cancel, Coordinator> sink {Cancel {}, coordinator};
             std::ranges::for_each(m_stream.drain(), [&sink](Record & record) noexcept { sink.receive(record); });
         }
-
     private:
         std::array<RequestBand, k_priority_count> m_bands;
         RequestStream m_stream;
         Dispatcher m_dispatcher;
     };
-
 public:
     using execution_t = ExecutionComponent;
     using dispatcher_t = DispatchComponent;
     using record_t = Record;
-
+public:
     ~ContextResources() noexcept = default;
     ContextResources() noexcept = default;
     ContextResources(const ContextResources &) = delete;
     ContextResources(ContextResources &&) = delete;
     ContextResources & operator=(const ContextResources &) = delete;
     ContextResources & operator=(ContextResources &&) = delete;
-
+public:
     template <typename Storage>
     void prepareStorage(const ContextInfo & info, Storage & storage)
     {
@@ -186,7 +180,6 @@ public:
         for (ExecutionTarget & target : m_shared_targets) { cancel_target(target); }
         for (ExecutionTarget & target : m_local_targets) { cancel_target(target); }
     }
-
 private:
     FixedCapacityVector<SubmissionEndpoint> m_submissions;
     FixedCapacityVector<ExecutionTarget> m_local_targets;

@@ -18,6 +18,7 @@ public:
     AnyExecutableRef(AnyExecutableRef &&) noexcept = default;
     AnyExecutableRef & operator=(const AnyExecutableRef &) noexcept = default;
     AnyExecutableRef & operator=(AnyExecutableRef &&) noexcept = default;
+public:
     void execute() noexcept { m_execute_f(m_state_p); }
     void cancel() noexcept { m_cancel_f(m_state_p); }
 private:

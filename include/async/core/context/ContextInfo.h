@@ -1,16 +1,20 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/context/declarations/tokens.h>
 #include <async/core/context/declarations/structs.h>
 #include <async/core/scheduling/declarations/enums.h>
 #include <async/core/scheduling/details/dispatch_targets.h>
+
 #include <exception>
 #include <memory_resource>
 #include <span>
 #include <utility>
 #include <vector>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 class ContextInfo
 {
     inline static std::uint32_t s_next_domain_id {details::k_unbound_domain_id + 1};
@@ -28,6 +32,7 @@ public:
         m_runtime_resource_p(other.m_runtime_resource_p), m_worker_resource_p(other.m_worker_resource_p) {}
     ContextInfo & operator=(const ContextInfo &) = delete;
     ContextInfo & operator=(ContextInfo &&) = delete;
+public:
     SchedulerToken addSharedScheduler()
     {
         const auto index = static_cast<std::uint32_t>(m_targets.size());
@@ -49,7 +54,8 @@ public:
     ContextInfo & setSharedPortPriority(Priority priority) noexcept { m_shared_priority = priority; return *this; }
     ContextInfo & setMemoryResources(std::pmr::memory_resource & runtime, std::pmr::memory_resource & workers) noexcept
     { m_runtime_resource_p = &runtime; m_worker_resource_p = &workers; return *this; }
-    template <typename ContextType> ContextStorageRequirements getStorageRequirements() const noexcept;
+    template <typename ContextType>
+    ContextStorageRequirements getStorageRequirements() const noexcept;
     std::uint32_t getDomainId() const noexcept { return m_domain_id; }
     std::uint32_t getWorkerCount() const noexcept { return m_worker_count; }
     std::uint32_t getDispatcherCount() const noexcept { return m_dispatcher_count; }
@@ -70,4 +76,5 @@ private:
     std::pmr::memory_resource * m_runtime_resource_p = std::pmr::null_memory_resource();
     std::pmr::memory_resource * m_worker_resource_p = std::pmr::null_memory_resource();
 };
-}
+
+} // namespace lcf::async

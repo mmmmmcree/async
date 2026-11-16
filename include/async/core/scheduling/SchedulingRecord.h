@@ -21,6 +21,7 @@ public:
     SchedulingRecord(SchedulingRecord &&) = delete;
     SchedulingRecord & operator=(const SchedulingRecord &) = delete;
     SchedulingRecord & operator=(SchedulingRecord &&) = delete;
+public:
     Executable & getExecutable() const noexcept { return *m_executable_p; }
     std::uint32_t getSchedulerIndex() const noexcept { return m_scheduler_index; }
     Priority getPriority() const noexcept { return m_priority; }

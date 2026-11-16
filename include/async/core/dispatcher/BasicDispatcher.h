@@ -1,10 +1,14 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/driver/BasicDriver.h>
 #include <async/core/dispatcher/declarations/structs.h>
+
 #include <atomic>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <retry_stream_c Stream, rejecting_sink_c Sink>
 requires std::same_as<typename Stream::value_t, typename Sink::value_t>
 class BasicDispatcher
@@ -17,6 +21,7 @@ public:
     BasicDispatcher(BasicDispatcher &&) = delete;
     BasicDispatcher & operator=(const BasicDispatcher &) = delete;
     BasicDispatcher & operator=(BasicDispatcher &&) = delete;
+public:
     DispatchReport dispatchOne() noexcept
     {
         if (m_driving.test_and_set(std::memory_order_acquire)) { return {}; }
@@ -28,4 +33,5 @@ private:
     BasicDriver<Stream, Sink> m_driver;
     std::atomic_flag m_driving {};
 };
-}
+
+} // namespace lcf::async

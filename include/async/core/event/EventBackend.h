@@ -1,10 +1,14 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/event/declarations/concepts.h>
+
 #include <condition_variable>
 #include <mutex>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 // Portable wake/timer backend. Platform backends add their own OS registration API.
 class EventBackend
 {
@@ -15,6 +19,7 @@ public:
     EventBackend(EventBackend &&) = delete;
     EventBackend & operator=(const EventBackend &) = delete;
     EventBackend & operator=(EventBackend &&) = delete;
+public:
     DriveReport driveOne() noexcept { return {}; }
     std::error_code waitUntil(std::chrono::steady_clock::time_point deadline) noexcept
     {
@@ -35,4 +40,5 @@ private:
     std::condition_variable m_condition;
     bool m_pending = false;
 };
-}
+
+} // namespace lcf::async

@@ -19,7 +19,7 @@ class DrainView : public std::ranges::view_interface<DrainView<Stream>>
         using iterator_concept = std::input_iterator_tag;
         using value_type = typename Stream::value_t;
         using difference_type = std::ptrdiff_t;
-
+    public:
         ~Iterator() noexcept = default;
         Iterator() noexcept = default;
         explicit Iterator(Stream & stream) noexcept : m_stream_p(&stream) {}
@@ -27,7 +27,7 @@ class DrainView : public std::ranges::view_interface<DrainView<Stream>>
         Iterator(Iterator &&) noexcept = default;
         Iterator & operator=(const Iterator &) noexcept = default;
         Iterator & operator=(Iterator &&) noexcept = default;
-
+    public:
         value_type & operator*() const noexcept { return *m_value_p; }
         Iterator & operator++() noexcept
         {
@@ -48,7 +48,7 @@ public:
     DrainView(DrainView &&) noexcept = default;
     DrainView & operator=(const DrainView &) noexcept = default;
     DrainView & operator=(DrainView &&) noexcept = default;
-
+public:
     Iterator begin() const noexcept { return std::move(++Iterator {*m_stream_p}); }
     std::default_sentinel_t end() const noexcept { return {}; }
 private:

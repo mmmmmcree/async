@@ -1,15 +1,19 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/queue/intrusive/Queue.h>
 #include <async/core/policy/utils/selected.h>
 #include <async/core/stream/declarations/concepts.h>
 #include <async/core/utils/drain.h>
+
 #include <algorithm>
 #include <array>
 #include <span>
 #include <ranges>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <consumer_queue_c Queue, typename InputSelectionPolicy, typename RequestSelectionPolicy>
 class DispatchRequestStream
 {
@@ -17,6 +21,7 @@ class DispatchRequestStream
     using Drain = utils::details::DrainView<DispatchRequestStream>;
 public:
     using value_t = typename Queue::value_t;
+public:
     ~DispatchRequestStream() noexcept = default;
     DispatchRequestStream() = delete;
     explicit DispatchRequestStream(std::span<Queue *> queues, InputSelectionPolicy input_policy = {},
@@ -26,6 +31,7 @@ public:
     DispatchRequestStream(DispatchRequestStream &&) = delete;
     DispatchRequestStream & operator=(const DispatchRequestStream &) = delete;
     DispatchRequestStream & operator=(DispatchRequestStream &&) = delete;
+public:
     value_t * pull() noexcept
     {
         for (const Source source : m_request_policy.select(std::views::all(m_sources))) {
@@ -58,4 +64,5 @@ private:
     RequestSelectionPolicy m_request_policy;
     std::array<Source, 2> m_sources {Source::eIncoming, Source::ePending};
 };
-}
+
+} // namespace lcf::async

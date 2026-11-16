@@ -1,8 +1,11 @@
 #pragma once
+
 #include <memory>
 #include <memory_resource>
 #include <utility>
+
 namespace lcf::async::details {
+
 template <typename Value>
 class ResourceObject
 {
@@ -27,6 +30,7 @@ public:
         catch (...) { allocator.deallocate(value_p, 1); throw; }
         m_value_p = value_p;
     }
+public:
     Value * operator->() const noexcept { return m_value_p; }
     Value & operator*() const noexcept { return *m_value_p; }
     explicit operator bool() const noexcept { return m_value_p != nullptr; }
@@ -41,4 +45,5 @@ private:
     Value * m_value_p = nullptr;
     std::pmr::memory_resource * m_resource_p = std::pmr::null_memory_resource();
 };
-}
+
+} // namespace lcf::async::details

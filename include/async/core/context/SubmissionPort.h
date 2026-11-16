@@ -26,7 +26,7 @@ public:
     SubmissionPort(SubmissionPort &&) noexcept = default;
     SubmissionPort & operator=(const SubmissionPort &) noexcept = default;
     SubmissionPort & operator=(SubmissionPort &&) noexcept = default;
-
+public:
     SchedulerHandle getSchedulerHandle(SchedulerToken token) const noexcept
     {
         assert(token.getDomainId() == m_domain);
@@ -53,7 +53,7 @@ public:
     SubmissionPort(SubmissionPort &&) noexcept = default;
     SubmissionPort & operator=(const SubmissionPort &) noexcept = default;
     SubmissionPort & operator=(SubmissionPort &&) noexcept = default;
-
+public:
     SchedulerHandle getSchedulerHandle(SchedulerToken token) const noexcept
     {
         assert(token.getDomainId() == m_domain);

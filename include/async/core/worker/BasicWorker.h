@@ -1,10 +1,13 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/details/ActivityGate.h>
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/core/worker/thread/ThreadLauncher.h>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <work_executor_c ExecutionPath, typename Coordinator, join_handle_c ThreadHandle>
 class BasicWorker
 {
@@ -17,6 +20,7 @@ public:
     BasicWorker(BasicWorker &&) = delete;
     BasicWorker & operator=(const BasicWorker &) = delete;
     BasicWorker & operator=(BasicWorker &&) = delete;
+public:
     template <thread_launcher_c<ThreadHandle> Launcher>
     void start(Launcher & launcher) { m_thread = launcher(&runWorker, this); }
     void run() noexcept
@@ -42,4 +46,5 @@ private:
     Coordinator * m_coordinator_p;
     ThreadHandle m_thread;
 };
-}
+
+} // namespace lcf::async

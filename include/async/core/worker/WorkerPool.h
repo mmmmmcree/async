@@ -1,9 +1,12 @@
 #pragma once
+
 #include <async/config/macros.h>
 #include <async/core/worker/BasicWorker.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <work_executor_c ExecutionPath, typename Coordinator, join_handle_c ThreadHandle>
 class WorkerPool
 {
@@ -15,7 +18,9 @@ public:
     WorkerPool(WorkerPool &&) = delete;
     WorkerPool & operator=(const WorkerPool &) = delete;
     WorkerPool & operator=(WorkerPool &&) = delete;
-    template <typename Storage> void prepareStorage(std::size_t count, Storage & storage) { storage.reserve(m_workers, count); }
+public:
+    template <typename Storage>
+    void prepareStorage(std::size_t count, Storage & storage) { storage.reserve(m_workers, count); }
     template <typename Factory>
     void prepare(std::size_t count, Coordinator & coordinator, std::pmr::memory_resource & resource, Factory make_path)
     {
@@ -32,4 +37,5 @@ public:
 private:
     details::FixedCapacityVector<Worker> m_workers;
 };
-}
+
+} // namespace lcf::async

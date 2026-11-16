@@ -1,9 +1,12 @@
 #pragma once
+
 #include <async/core/context/declarations/tokens.h>
 #include <async/core/scheduling/details/ScheduleSender.h>
 #include <async/core/sink/declarations/concepts.h>
+
 LCF_ASYNC_EXPORT
 namespace lcf::async {
+
 template <rejecting_sink_c Sink>
 requires scheduling_record_c<typename Sink::value_t>
 class SchedulerHandle
@@ -13,6 +16,7 @@ public:
     using scheduler_concept = protocols::scheduler_t;
     using record_t = typename Sink::value_t;
     using executable_t = typename record_t::executable_t;
+public:
     ~SchedulerHandle() noexcept = default;
     SchedulerHandle() = delete;
     SchedulerHandle(Sink & sink, SchedulerToken token, Priority priority) noexcept :
@@ -22,6 +26,7 @@ public:
     SchedulerHandle & operator=(const SchedulerHandle &) noexcept = default;
     SchedulerHandle & operator=(SchedulerHandle &&) noexcept = default;
     bool operator==(const SchedulerHandle &) const noexcept = default;
+public:
     Sender schedule() const noexcept { return Sender {*this}; }
     std::error_code submit(record_t & record) const noexcept
     {
@@ -36,4 +41,5 @@ private:
     SchedulerToken m_token;
     Priority m_priority;
 };
-}
+
+} // namespace lcf::async

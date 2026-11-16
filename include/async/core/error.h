@@ -24,6 +24,7 @@ public:
     AsyncErrorCategory(AsyncErrorCategory &&) = delete;
     AsyncErrorCategory & operator=(const AsyncErrorCategory &) = delete;
     AsyncErrorCategory & operator=(AsyncErrorCategory &&) = delete;
+public:
     const char * name() const noexcept override { return "lcf.async"; }
     std::string message(int value) const override
     {

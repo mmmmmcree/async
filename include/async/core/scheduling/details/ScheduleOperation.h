@@ -1,17 +1,23 @@
 #pragma once
+
 #include <async/core/scheduling/declarations/concepts.h>
 #include <async/core/details/concepts/constructible.h>
 #include <async/execution/operations.h>
 #include <async/execution/queries.h>
+
 #include <utility>
+
 namespace lcf::async::details {
+
 using ScheduleCompletions = protocols::completion_signatures<
     exec::set_value_t(), exec::set_error_t(std::error_code), exec::set_stopped_t()>;
+
 template <typename Handle, receiver_of_c<ScheduleCompletions> Receiver>
 class ScheduleOperation
 {
     using Executable = typename Handle::executable_t;
     using Record = typename Handle::record_t;
+private:
     static void cancel(void * pointer) noexcept
     {
         ScheduleOperation & operation = *static_cast<ScheduleOperation *>(pointer);
@@ -35,6 +41,7 @@ public:
     ScheduleOperation(ScheduleOperation &&) = delete;
     ScheduleOperation & operator=(const ScheduleOperation &) = delete;
     ScheduleOperation & operator=(ScheduleOperation &&) = delete;
+public:
     void start() & noexcept
     {
         const std::error_code ec = m_handle.submit(m_record);
@@ -48,4 +55,5 @@ private:
     Executable m_executable;
     Record m_record;
 };
-}
+
+} // namespace lcf::async::details

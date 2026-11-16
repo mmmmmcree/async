@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/config/macros.h>
+
 #include <cstdint>
 #include <system_error>
 
@@ -11,12 +12,14 @@ class ExecutionResult
 {
 public:
     enum State : std::uint8_t { eIdle, eProgress, eStopped };
+public:
     ~ExecutionResult() noexcept = default;
     constexpr ExecutionResult(State state = eIdle) noexcept : m_state(state) {}
     ExecutionResult(const ExecutionResult &) noexcept = default;
     ExecutionResult(ExecutionResult &&) noexcept = default;
     ExecutionResult & operator=(const ExecutionResult &) noexcept = default;
     ExecutionResult & operator=(ExecutionResult &&) noexcept = default;
+public:
     constexpr operator bool() const noexcept { return m_state == eProgress; }
     constexpr bool operator==(const ExecutionResult &) const noexcept = default;
     constexpr bool operator==(State state) const noexcept { return m_state == state; }
