@@ -8,6 +8,7 @@
 #include <optional>
 #include <thread>
 #include <vector>
+
 namespace async = lcf::async;
 namespace ex = async::exec;
 using Clock = std::chrono::steady_clock;
@@ -33,11 +34,13 @@ private:
     Operation * m_operation_p;
     std::optional<async::ServiceHandle> m_handle;
 };
+
 struct ExecutionTrace
 {
     std::thread::id m_thread_id;
     Clock::time_point m_start_tp, m_finish_tp;
 };
+
 struct Outcome
 {
     int m_value = 0;
@@ -45,6 +48,7 @@ struct Outcome
     std::thread::id m_receiver_thread_id;
     std::atomic<bool> m_completed {false};
 };
+
 class Receiver
 {
 public:
@@ -78,10 +82,12 @@ int main()
     const auto caller = info.addPort(async::Priority::eHigh);
     const auto shared = info.addSharedScheduler();
     const auto [runtime_size, runtime_alignment, worker_size, worker_alignment] = info.getStorageRequirements<>();
-    std::vector<std::byte> runtime_bytes(runtime_size + runtime_alignment - 1), worker_bytes(worker_size + worker_alignment - 1);
-    std::pmr::monotonic_buffer_resource runtime {runtime_bytes.data(), runtime_bytes.size(), std::pmr::null_memory_resource()};
-    std::pmr::monotonic_buffer_resource workers {worker_bytes.data(), worker_bytes.size(), std::pmr::null_memory_resource()};
-    info.setMemoryResources(runtime, workers);
+    const auto runtime_capacity = runtime_size + runtime_alignment - 1;
+    const auto worker_capacity = worker_size + worker_alignment - 1;
+    std::vector<std::byte> storage_bytes(runtime_capacity + worker_capacity);
+    std::pmr::monotonic_buffer_resource runtime_memory_resource {storage_bytes.data(), runtime_capacity, std::pmr::null_memory_resource()};
+    std::pmr::monotonic_buffer_resource worker_memory_resource {storage_bytes.data() + runtime_capacity, worker_capacity, std::pmr::null_memory_resource()};
+    info.setMemoryResources(runtime_memory_resource, worker_memory_resource);
     async::Context context;
     if (const std::error_code ec = context.create(std::move(info))) { std::cerr << ec.message(); return 1; }
     const auto port = context.getSubmissionPort(caller);
