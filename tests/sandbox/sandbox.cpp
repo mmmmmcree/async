@@ -2,6 +2,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <iomanip>
 #include <iostream>
 #include <memory_resource>
 #include <optional>
@@ -32,11 +33,16 @@ private:
     Operation * m_operation_p;
     std::optional<async::ServiceHandle> m_handle;
 };
+struct ExecutionTrace
+{
+    std::thread::id m_thread_id;
+    Clock::time_point m_start_tp, m_finish_tp;
+};
 struct Outcome
 {
     int m_value = 0;
-    std::thread::id m_left_thread, m_right_thread, m_receiver_thread;
-    Clock::time_point m_left_start, m_left_finish, m_right_start, m_right_finish;
+    ExecutionTrace m_left, m_right;
+    std::thread::id m_receiver_thread_id;
     std::atomic<bool> m_completed {false};
 };
 class Receiver
@@ -53,7 +59,7 @@ public:
     void set_value(int value) && noexcept
     {
         m_outcome_p->m_value = value;
-        m_outcome_p->m_receiver_thread = std::this_thread::get_id();
+        m_outcome_p->m_receiver_thread_id = std::this_thread::get_id();
         m_outcome_p->m_completed.store(true, std::memory_order_release);
     }
     template <typename Error> void set_error(Error &&) && noexcept { this->finish(); }
@@ -64,6 +70,7 @@ private:
 };
 int main()
 {
+    const auto start_tp = Clock::now();
     std::array<std::byte, 4096> configuration_bytes;
     std::pmr::monotonic_buffer_resource configuration {configuration_bytes.data(), configuration_bytes.size(), std::pmr::null_memory_resource()};
     async::ContextInfo info {configuration};
@@ -82,15 +89,14 @@ int main()
     shared_scheduler.setPriority(async::Priority::eNormal);
     const auto caller_scheduler = port.getPortSchedulerHandle();
     Outcome outcome;
-    const auto caller_thread = std::this_thread::get_id();
-    const auto branch = [shared_scheduler](int value, std::thread::id & thread, Clock::time_point & start, Clock::time_point & finish) {
-        return ex::schedule(shared_scheduler) | ex::then([value, &thread, &start, &finish]() noexcept {
-            thread = std::this_thread::get_id(); start = Clock::now();
-            std::this_thread::sleep_for(100ms); finish = Clock::now(); return value;
+    const auto caller_thread_id = std::this_thread::get_id();
+    const auto branch = [shared_scheduler](int value, ExecutionTrace & trace) {
+        return ex::schedule(shared_scheduler) | ex::then([value, &trace]() noexcept {
+            trace.m_thread_id = std::this_thread::get_id(); trace.m_start_tp = Clock::now();
+            std::this_thread::sleep_for(100ms); trace.m_finish_tp = Clock::now(); return value;
         });
     };
-    auto graph = ex::when_all(branch(20, outcome.m_left_thread, outcome.m_left_start, outcome.m_left_finish),
-        branch(22, outcome.m_right_thread, outcome.m_right_start, outcome.m_right_finish))
+    auto graph = ex::when_all(branch(20, outcome.m_left), branch(22, outcome.m_right))
         | ex::then([](int left, int right) noexcept { return left + right; }) | ex::continues_on(caller_scheduler);
     auto operation = ex::connect(std::move(graph), Receiver {outcome});
     OneShotTimer service {operation};
@@ -103,9 +109,20 @@ int main()
     }
     context.closeSubmissions();
     driver.join();
-    const bool parallel = outcome.m_left_start < outcome.m_right_finish and outcome.m_right_start < outcome.m_left_finish;
-    const bool on_caller = outcome.m_receiver_thread == caller_thread;
+    const bool parallel = outcome.m_left.m_start_tp < outcome.m_right.m_finish_tp and outcome.m_right.m_start_tp < outcome.m_left.m_finish_tp;
+    const bool on_caller = outcome.m_receiver_thread_id == caller_thread_id;
     std::cout << "result: " << outcome.m_value << ", branches overlap: " << parallel
-        << ", receiver on caller thread: " << on_caller << '\n';
+        << ", receiver on caller thread: " << on_caller
+        << ", completed: " << outcome.m_completed.load(std::memory_order_acquire) << '\n'
+        << "caller thread_id: " << caller_thread_id << ", receiver thread_id: " << outcome.m_receiver_thread_id << '\n';
+    const auto print_trace = [start_tp](const char * name, const ExecutionTrace & trace) {
+        const auto start_ms = std::chrono::duration<double, std::milli>(trace.m_start_tp - start_tp).count();
+        const auto finish_ms = std::chrono::duration<double, std::milli>(trace.m_finish_tp - start_tp).count();
+        std::cout << name << ": thread_id: " << trace.m_thread_id
+            << ", start_tp: " << start_ms << " ms, finish_tp: " << finish_ms << " ms\n";
+    };
+    std::cout << std::fixed << std::setprecision(3);
+    print_trace("left", outcome.m_left);
+    print_trace("right", outcome.m_right);
     return not run_ec and outcome.m_value == 42 and parallel and on_caller ? 0 : 1;
 }
