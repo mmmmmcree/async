@@ -12,6 +12,7 @@ module;
 #include <memory_resource>
 #include <mutex>
 #include <optional>
+#include <semaphore>
 #include <span>
 #include <stdexcept>
 #include <system_error>

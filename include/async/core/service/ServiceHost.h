@@ -2,7 +2,7 @@
 
 #include <async/config/macros.h>
 #include <async/core/service/AnyServiceRef.h>
-#include <async/core/event/declarations/concepts.h>
+#include <async/core/notify/declarations/concepts.h>
 #include <async/core/details/containers/FixedCapacityVector.h>
 #include <async/core/error.h>
 
@@ -13,7 +13,7 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <event_backend_c Backend>
+template <notify::event_pump_c EventPump>
 class ServiceHost
 {
     using Clock = ServiceHandle::clock_t;
@@ -45,7 +45,7 @@ class ServiceHost
 public:
     ~ServiceHost() noexcept = default;
     ServiceHost() = delete;
-    explicit ServiceHost(Backend & backend) noexcept : m_backend_p(&backend) {}
+    explicit ServiceHost(EventPump & event_pump) noexcept : m_event_pump_p(&event_pump) {}
     ServiceHost(const ServiceHost &) = delete;
     ServiceHost(ServiceHost &&) = delete;
     ServiceHost & operator=(const ServiceHost &) = delete;
@@ -173,10 +173,10 @@ private:
                 }
             }
         }
-        m_backend_p->wake();
+        m_event_pump_p->wake();
     }
 private:
-    Backend * m_backend_p;
+    EventPump * m_event_pump_p;
     details::FixedCapacityVector<Entry> m_entries;
     details::FixedCapacityVector<std::size_t> m_ready;
     details::FixedCapacityVector<std::size_t> m_timers;

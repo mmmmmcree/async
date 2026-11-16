@@ -9,8 +9,9 @@
 #include <async/core/context/details/ContextCoordinator.h>
 #include <async/core/details/ResourceObject.h>
 #include <async/core/driver/WorkerExecutionPath.h>
-#include <async/core/event/EventBackend.h>
-#include <async/core/notify/BackendSignal.h>
+#include <async/core/notify/declarations/concepts.h>
+#include <async/core/notify/EventPumpSignal.h>
+#include <async/core/notify/SemaphoreEvent.h>
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/service/ServiceHost.h>
 #include <async/core/worker/WorkerPool.h>
@@ -23,13 +24,14 @@
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
-template <typename Components = DefaultContextComponents, event_backend_c Backend = EventBackend, join_handle_c ThreadHandle = std::thread>
+template <typename Components = DefaultContextComponents, notify::event_pump_c EventPump = notify::SemaphoreEvent,
+    join_handle_c ThreadHandle = std::thread>
 class BasicContext
 {
     template <typename, bool>
     friend class ExecutionPort;
     using Self = BasicContext;
-    using Signal = notify::BackendSignal<Backend>;
+    using Signal = notify::EventPumpSignal<EventPump>;
     using Notifier = notify::SignalNotifier<Signal>;
     using Coordinator = details::ContextCoordinator<Signal>;
     using Resources = details::ContextResources<Components, Coordinator, Notifier>;
@@ -61,7 +63,7 @@ public:
         resources.prepareStorage(info, runtime);
         runtime.template append<Path>();
         runtime.template append<Priority>(info.getPortPriorities().size());
-        ServiceHost<Backend>::appendStorage(info.getServiceCapacity(), runtime);
+        ServiceHost<EventPump>::appendStorage(info.getServiceCapacity(), runtime);
         Pool pool;
         pool.prepareStorage(info.getWorkerCount(), workers);
         const auto runtime_size = runtime.getSize();
@@ -109,7 +111,7 @@ public:
         assert(token.getDomainId() == m_domain);
         return LocalPort {*this, token.getIndex()};
     }
-    Backend & getEventBackend() noexcept { return m_backend; }
+    EventPump & getEventPump() noexcept { return m_event_pump; }
     template <service_c Service>
     std::error_code registerService(Service & service) noexcept
     {
@@ -126,12 +128,12 @@ public:
             this->requestStopProcessing();
             m_services.requestStop();
             while (not m_services.isStopped()) {
-                const DriveReport backend_report = m_backend.driveOne();
+                const DriveReport event_pump_report = m_event_pump.driveOne();
                 const DriveReport service_report = m_services.driveOne();
-                if (backend_report.m_error_code) { m_coordinator.reportErrorCode(backend_report.m_error_code); }
+                if (event_pump_report.m_error_code) { m_coordinator.reportErrorCode(event_pump_report.m_error_code); }
                 if (service_report.m_error_code) { m_coordinator.reportErrorCode(service_report.m_error_code); }
                 if (not m_services.isStopped()) {
-                    if (const std::error_code wait_ec = m_backend.waitUntil(m_services.getWakeTime())) {
+                    if (const std::error_code wait_ec = m_event_pump.waitUntil(m_services.getWakeTime())) {
                         m_coordinator.reportErrorCode(wait_ec);
                     }
                 }
@@ -160,7 +162,7 @@ public:
             const ExecutionReport report = this->executeOne<true>(0);
             if (m_cleaned.load(std::memory_order_acquire)) { break; }
             if (not report.hasProgress()) {
-                const std::error_code wait_ec = m_backend.waitUntil(m_services.getWakeTime());
+                const std::error_code wait_ec = m_event_pump.waitUntil(m_services.getWakeTime());
                 if (wait_ec) { m_coordinator.reportErrorCode(wait_ec); this->requestStopProcessing(); }
             }
         }
@@ -194,7 +196,7 @@ public:
         while (not m_cleaned.load(std::memory_order_acquire)) {
             const ExecutionReport report = this->executeOne<true>(0);
             if (not report.hasProgress() and not report.isStopped()) {
-                if (const std::error_code ec = m_backend.waitUntil(m_services.getWakeTime())) { m_coordinator.reportErrorCode(ec); }
+                if (const std::error_code ec = m_event_pump.waitUntil(m_services.getWakeTime())) { m_coordinator.reportErrorCode(ec); }
             }
         }
         return m_coordinator.getErrorCode();
@@ -236,9 +238,9 @@ private:
                 m_services.requestStop();
                 if (m_services.isStopped()) { m_coordinator.closeSubmissions(); }
             }
-            const DriveReport backend_report = m_backend.driveOne();
+            const DriveReport event_pump_report = m_event_pump.driveOne();
             const DriveReport service_report = m_services.driveOne();
-            const std::error_code ec = backend_report.m_error_code ? backend_report.m_error_code : service_report.m_error_code;
+            const std::error_code ec = event_pump_report.m_error_code ? event_pump_report.m_error_code : service_report.m_error_code;
             if (ec) { m_coordinator.reportErrorCode(ec); this->requestStopProcessing(); mode = CloseMode::eStop; }
             ExecutionReport execution;
             {
@@ -252,7 +254,7 @@ private:
                 return {.m_result = ExecutionResult::eStopped, .m_executed = execution.m_executed,
                     .m_error_code = m_coordinator.getErrorCode()};
             }
-            const bool progress = backend_report.hasProgress() or service_report.hasProgress() or execution.hasProgress();
+            const bool progress = event_pump_report.hasProgress() or service_report.hasProgress() or execution.hasProgress();
             return {.m_result = ec or execution.m_error_code ? ExecutionResult::eStopped
                     : progress ? ExecutionResult::eProgress : ExecutionResult::eIdle,
                 .m_executed = execution.m_executed, .m_error_code = ec ? ec : execution.m_error_code};
@@ -269,7 +271,7 @@ private:
             if (report.m_executed or report.isStopped() or report.m_error_code) { return report; }
             if (report.hasProgress()) { continue; }
             if constexpr (owner) {
-                if (const std::error_code ec = m_backend.waitUntil(m_services.getWakeTime())) {
+                if (const std::error_code ec = m_event_pump.waitUntil(m_services.getWakeTime())) {
                     m_coordinator.reportErrorCode(ec);
                     return {.m_result = ExecutionResult::eStopped, .m_error_code = ec};
                 }
@@ -277,10 +279,10 @@ private:
         }
     }
 private:
-    Backend m_backend;
-    Signal m_signal {m_backend};
+    EventPump m_event_pump;
+    Signal m_signal {m_event_pump};
     Coordinator m_coordinator {m_signal};
-    ServiceHost<Backend> m_services {m_backend};
+    ServiceHost<EventPump> m_services {m_event_pump};
     details::ResourceObject<Resources> m_resources;
     details::ResourceObject<Path> m_owner_path;
     Pool m_pool;

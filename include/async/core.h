@@ -4,6 +4,8 @@
 #include <async/core/executable/declarations/concepts.h>
 #include <async/core/notify/declarations/concepts.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
+#include <async/core/notify/EventPumpSignal.h>
+#include <async/core/notify/SemaphoreEvent.h>
 #include <async/core/notify/SignalNotifier.h>
 #include <async/core/notify/NoopNotifier.h>
 #include <async/core/queue/declarations/concepts.h>
@@ -62,6 +64,5 @@
 #include <async/core/service/ServiceHandle.h>
 #include <async/core/service/AnyServiceRef.h>
 #include <async/core/service/ServiceHost.h>
-#include <async/core/event/EventBackend.h>
 #include <async/core/policy/WeightedPriority.h>
 #include <async/core/error.h>

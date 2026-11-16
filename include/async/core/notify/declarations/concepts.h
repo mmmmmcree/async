@@ -2,11 +2,19 @@
 
 #include <async/config/macros.h>
 #include <async/core/details/concepts/constructible.h>
+#include <async/core/driver/declarations/concepts.h>
 
+#include <chrono>
 #include <concepts>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async::notify {
+
+template <typename EventPump>
+concept event_pump_c = driver_c<EventPump> and requires(EventPump & event_pump, std::chrono::steady_clock::time_point deadline) {
+    { event_pump.waitUntil(deadline) } noexcept -> std::same_as<std::error_code>;
+    { event_pump.wake() } noexcept -> std::same_as<void>;
+};
 
 template <typename Waiter>
 concept signal_waiter_c = requires {
