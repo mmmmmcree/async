@@ -2,14 +2,16 @@
 
 #include <async/config/macros.h>
 #include <async/core/queue/intrusive/Queue.h>
+#include <async/core/queue/utils/pop_one.h>
 #include <async/core/policy/utils/selected.h>
 #include <async/core/stream/declarations/concepts.h>
-#include <async/core/utils/drain.h>
+#include <async/core/stream/utils/pull_all.h>
 
 #include <algorithm>
 #include <array>
-#include <span>
 #include <ranges>
+#include <span>
+#include <utility>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
@@ -18,7 +20,7 @@ template <consumer_queue_c Queue, typename InputSelectionPolicy, typename Reques
 class DispatchRequestStream
 {
     enum class Source { eIncoming, ePending };
-    using Drain = utils::details::DrainView<DispatchRequestStream>;
+    using PullAll = utils::details::PullAllView<DispatchRequestStream *>;
 public:
     using value_t = typename Queue::value_t;
 public:
@@ -32,31 +34,27 @@ public:
     DispatchRequestStream & operator=(const DispatchRequestStream &) = delete;
     DispatchRequestStream & operator=(DispatchRequestStream &&) = delete;
 public:
-    value_t * pull() noexcept
+    value_t * pullOne() noexcept
     {
-        for (const Source source : m_request_policy.select(std::views::all(m_sources))) {
-            if (source == Source::ePending) {
-                if (value_t * record_p = m_pending.pop()) { return record_p; }
-            } else {
-                for (Queue * queue_p : m_input_policy.select(std::views::all(m_queues))) {
-                    if (value_t * record_p = queue_p->pop()) { return record_p; }
-                }
-            }
+        for (const Source source : m_sources | utils::selected(m_request_policy)) {
+            value_t * record_p = source == Source::ePending
+                ? queue::utils::pop_one(m_pending)
+                : queue::utils::pop_one(m_queues | utils::selected(m_input_policy));
+            if (record_p) { return record_p; }
         }
         return nullptr;
     }
+    value_t * pullAny() noexcept
+    {
+        if (value_t * record_p = queue::utils::pop_one(m_pending)) { return record_p; }
+        return queue::utils::pop_one(m_queues);
+    }
+    PullAll pullAll() noexcept { return utils::pull_all(*this); }
     void requeue(value_t & record) noexcept { m_pending.pushBack(record); }
     bool isEmpty() const noexcept
     {
         return m_pending.isEmpty() and std::ranges::all_of(m_queues, [](Queue * queue_p) { return queue_p->isEmpty(); });
     }
-    value_t * pullRemaining() noexcept
-    {
-        if (value_t * record_p = m_pending.pop()) { return record_p; }
-        for (Queue * queue_p : m_queues) { if (value_t * record_p = queue_p->pop()) { return record_p; } }
-        return nullptr;
-    }
-    Drain drain() noexcept { return utils::drain(*this); }
 private:
     std::span<Queue *> m_queues;
     queue::intrusive::Queue<value_t> m_pending;

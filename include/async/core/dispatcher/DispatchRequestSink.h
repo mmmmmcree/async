@@ -3,6 +3,7 @@
 #include <async/core/sink/declarations/concepts.h>
 #include <async/core/scheduling/declarations/enums.h>
 #include <async/core/policy/declarations/concepts.h>
+#include <async/core/policy/utils/selected.h>
 
 #include <ranges>
 #include <span>
@@ -32,7 +33,7 @@ public:
         const std::size_t index = record.getSchedulerIndex();
         if (index >= m_targets.size()) { return std::make_error_code(std::errc::invalid_argument); }
         if (Target * target_p = m_targets[index]) { return target_p->receive(record); }
-        for (Target & target : m_policy.select(std::views::all(m_shared_targets))) {
+        for (Target & target : m_shared_targets | utils::selected(m_policy)) {
             const std::error_code ec = target.receive(record);
             if (ec != std::errc::no_buffer_space) { return ec; }
         }

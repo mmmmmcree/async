@@ -73,4 +73,7 @@ private:
 template <DrainDirection direction = from_front, consumer_queue_c Queue>
 details::DrainView<Queue, direction> drain(Queue & queue) noexcept { return details::DrainView<Queue, direction> {queue}; }
 
+template <DrainDirection direction = from_front, consumer_queue_c Queue>
+details::DrainView<Queue, direction> drain(Queue * queue_p) noexcept { return drain<direction>(*queue_p); }
+
 } // namespace lcf::async::queue::utils

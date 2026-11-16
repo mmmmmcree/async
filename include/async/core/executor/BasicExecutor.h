@@ -8,7 +8,7 @@ LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <stream_c Stream, sink_c Sink>
-requires (not rejecting_sink_c<Sink>) and std::same_as<typename Stream::value_t, typename Sink::value_t>
+requires matched_c<Stream, Sink> and (not rejecting_sink_c<Sink>)
 class BasicExecutor
 {
 public:

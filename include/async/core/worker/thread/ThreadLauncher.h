@@ -20,7 +20,7 @@ struct ThreadLauncher
     ThreadLauncher & operator=(ThreadLauncher &&) noexcept = default;
 public:
     ThreadHandle operator()(ThreadEntry entry_f, void * state_p) const
-        noexcept(details::nothrow_constructible_from<ThreadHandle, ThreadEntry, void *>)
+        noexcept(details::nothrow_constructible_from_c<ThreadHandle, ThreadEntry, void *>)
     requires std::constructible_from<ThreadHandle, ThreadEntry, void *>
     {
         return ThreadHandle{entry_f, state_p};

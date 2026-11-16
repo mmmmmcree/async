@@ -10,7 +10,7 @@ flowchart TB
     context -->|按组件类型装配| components["完整组件的类型绑定<br/>DefaultContextComponents"]
     components --> stages["同级处理阶段<br/>request_dispatcher_c / work_executor_c<br/>BasicDispatcher / BasicExecutor"]
     stages -->|复用单步搬运| driver["Driver：连接输入与接收端<br/>driver_c：driveOne → DriveReport<br/>BasicDriver / utils::drive_one"]
-    driver -->|借用输入| stream["Stream：可组合的记录源<br/>stream_c：pull / isEmpty<br/>DispatchRequestStream / WorkStealingStream"]
+    driver -->|借用输入| stream["Stream：可组合的记录源<br/>stream_c：pullOne / isEmpty<br/>DispatchRequestStream / WorkStealingStream"]
     driver -->|组合接收端| sink["Sink：可组合的记录接收端<br/>sink_c：receive<br/>SubmissionSink / DispatchRequestSink"]
     stream -->|组合一条或多条| queue["Queue：记录存储与领取<br/>producer_queue_c / consumer_queue_c<br/>Queue / Deque"]
     sink -->|入队接收端依赖| queue
@@ -19,7 +19,7 @@ flowchart TB
     sink -->|终端接收端调用| executable["Executable：执行或取消任务<br/>executable_c / cancellable_executable_c<br/>ExecuteSink / CancelSink → AnyExecutableRef"]
 ```
 
-Stream 可以组合 Queue 或其他 Stream，封装选择策略及 pending 等行为；Sink 封装接收、路由或终端处理，也可以继续包装其他 Sink。Driver 只负责一次 `pull → receive`，不靠 Sink 的静态标签判断是否执行任务。Dispatcher 与 Executor 复用 BasicDriver，分别给出 `DispatchReport` 和 `ExecutionReport`。
+Stream 可以组合 Queue 或其他 Stream，封装选择策略及 pending 等行为；Sink 封装接收、路由或终端处理，也可以继续包装其他 Sink。Driver 只负责一次 `pullOne → receive`，不靠 Sink 的静态标签判断是否执行任务。Dispatcher 与 Executor 复用 BasicDriver，分别给出 `DispatchReport` 和 `ExecutionReport`。
 
 Stream/Sink 与 execution 的 sender/receiver 共享组合思路，但属于不同协议：Stream 是同步、非阻塞的记录源，Sink 是同步接收边界；它们不因此满足 `sender_c` / `receiver_c`。`SchedulerHandle` 通过 `ScheduleSender` / `ScheduleOperation` 接入 execution，最终完成仍通过 receiver 的 `set_value / set_error / set_stopped` 交付。
 
@@ -27,12 +27,12 @@ Stream/Sink 与 execution 的 sender/receiver 共享组合思路，但属于不�
 
 ```mermaid
 flowchart TB
-    transfer["单步搬运契约<br/>Stream 与 Sink 的 value_t 相同"]
-    transfer -->|基础输入| stream["stream_c<br/>pull → value_t 指针或空"]
+    transfer["单步搬运契约<br/>matched_c&lt;Stream, Sink&gt;<br/>Stream 与 Sink 的 value_t 相同"]
+    transfer -->|基础输入| stream["stream_c<br/>pullOne → value_t 指针或空"]
     transfer -->|接收结果| sink["sink_c<br/>receive → void 或 error_code"]
     sink -->|rejecting_sink_c：返回 error_code| retry["retry_stream_c<br/>拒收后 requeue，记录仍由流水线保留"]
     stream -->|可选重试能力| retry
-    stream -->|可选停止清理能力| drain["drainable_stream_c<br/>无过滤 drain，绕过选择策略<br/>DispatchRequestStream / PriorityStream"]
+    stream -->|可选停止清理能力| drain["drainable_stream_c<br/>pullAny 绕过选择策略<br/>DispatchRequestStream / PriorityStream"]
     sink -->|返回 void| accepted["保证接收<br/>ExecuteSink / CancelSink"]
     retry --> recover["no_buffer_space：保留并重试<br/>其他非空 ec：保留并进入 report"]
     drain --> cleanup["静止后统一取消剩余记录<br/>CancelSink → executable.cancel"]

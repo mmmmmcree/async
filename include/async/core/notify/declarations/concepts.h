@@ -28,7 +28,7 @@ concept signal_c = signal_waiter_c<Signal> and notifier_c<Signal>;
 
 template <typename Notifier, typename Signal>
 concept signal_notifier_c = signal_c<Signal> and notifier_c<Notifier>
-    and details::nothrow_constructible_from<Notifier, Signal &>
+    and details::nothrow_constructible_from_c<Notifier, Signal &>
     and std::copy_constructible<Notifier>;
 
 } // namespace lcf::async::notify

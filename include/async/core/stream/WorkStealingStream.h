@@ -24,20 +24,17 @@ public:
     ~WorkStealingStream() noexcept = default;
     WorkStealingStream() = delete;
     WorkStealingStream(QueueSpan queues, std::uint64_t local_index, StealSelectionPolicy selection_policy = {}) noexcept(
-        details::all_nothrow_move_constructible<StealSelectionPolicy>) :
+        details::all_nothrow_move_constructible_c<StealSelectionPolicy>) :
         m_queues(queues), m_local_index(local_index), m_selection_policy(std::move(selection_policy)) {}
     WorkStealingStream(const WorkStealingStream &) = default;
     WorkStealingStream(WorkStealingStream &&) = default;
     WorkStealingStream & operator=(const WorkStealingStream &) = default;
     WorkStealingStream & operator=(WorkStealingStream &&) = default;
 public:
-    value_t * pull() noexcept
+    value_t * pullOne() noexcept
     {
-        if (value_t * value_p = queue::utils::pop_one<queue::utils::from_back>(*m_queues[m_local_index])) { return value_p; }
-        for (Queue * queue_p : m_selection_policy.select(std::views::all(m_queues))) {
-            if (value_t * record_p = queue::utils::pop_one(*queue_p)) { return record_p; }
-        }
-        return nullptr;
+        if (value_t * value_p = queue::utils::pop_one<queue::utils::from_back>(m_queues[m_local_index])) { return value_p; }
+        return queue::utils::pop_one(m_queues | utils::selected(m_selection_policy));
     }
     bool isEmpty() const noexcept { return std::ranges::all_of(m_queues, [](Queue * queue_p) { return queue_p->isEmpty(); }); }
 private:

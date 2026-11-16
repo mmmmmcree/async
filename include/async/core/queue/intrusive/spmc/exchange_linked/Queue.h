@@ -33,12 +33,12 @@ private:
     static constexpr std::uint32_t k_producer_active_bit = 2u;
 public:
     ~Queue() noexcept = default;
-    Queue() noexcept(details::all_nothrow_default_constructible<Node>)
+    Queue() noexcept(details::all_nothrow_default_constructible_c<Node>)
     requires std::default_initializable<Node> :
         m_stub {} { m_stub.setNext(nullptr); }
     template <typename... Arguments>
     requires std::constructible_from<Node, Arguments...>
-    explicit Queue(std::in_place_t, Arguments &&... arguments) noexcept(details::nothrow_constructible_from<Node, Arguments...>) :
+    explicit Queue(std::in_place_t, Arguments &&... arguments) noexcept(details::nothrow_constructible_from_c<Node, Arguments...>) :
         m_stub(std::forward<Arguments>(arguments)...) { m_stub.setNext(nullptr); }
     Queue(const Queue &) = delete;
     Queue(Queue &&) = delete;

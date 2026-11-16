@@ -4,22 +4,23 @@
 #include <async/core/driver/utils/drive_one.h>
 #include <async/core/sink/declarations/concepts.h>
 
+#include <memory>
 #include <system_error>
+#include <type_traits>
 #include <utility>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <stream_c Stream, sink_c Sink>
-requires std::same_as<typename Stream::value_t, typename Sink::value_t>
-    and (not rejecting_sink_c<Sink> or retry_stream_c<Stream>)
+requires matched_c<Stream, Sink> and (not rejecting_sink_c<Sink> or retry_stream_c<Stream>)
 class BasicDriver
 {
 public:
     ~BasicDriver() noexcept = default;
     BasicDriver() = delete;
     BasicDriver(Stream & stream, Sink sink) noexcept(std::is_nothrow_move_constructible_v<Sink>) :
-        m_stream_p(&stream), m_sink(std::move(sink)) {}
+        m_stream_p(std::addressof(stream)), m_sink(std::move(sink)) {}
     BasicDriver(const BasicDriver &) = default;
     BasicDriver(BasicDriver &&) = default;
     BasicDriver & operator=(const BasicDriver &) = default;

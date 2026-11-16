@@ -34,7 +34,7 @@ public:
 public:
     ~ScheduleOperation() noexcept = default;
     ScheduleOperation() = delete;
-    ScheduleOperation(Handle handle, Receiver receiver) noexcept(all_nothrow_move_constructible<Handle, Receiver>) :
+    ScheduleOperation(Handle handle, Receiver receiver) noexcept(all_nothrow_move_constructible_c<Handle, Receiver>) :
         m_handle(std::move(handle)), m_receiver(std::move(receiver)),
         m_executable(this, &execute, &cancel), m_record(m_executable) {}
     ScheduleOperation(const ScheduleOperation &) = delete;

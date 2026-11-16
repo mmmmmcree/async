@@ -20,6 +20,6 @@ concept cancellable_executable_c = executable_c<Executable> and requires(Executa
 
 template <typename Executable>
 concept callback_executable_c = cancellable_executable_c<Executable> and
-    details::nothrow_constructible_from<Executable, void *, void (*)(void *) noexcept, void (*)(void *) noexcept>;
+    details::nothrow_constructible_from_c<Executable, void *, void (*)(void *) noexcept, void (*)(void *) noexcept>;
 
 } // namespace lcf::async

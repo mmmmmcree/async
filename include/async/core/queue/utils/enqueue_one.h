@@ -15,12 +15,14 @@ std::error_code enqueue_one(Queue & queue, typename Queue::value_t & value) noex
     return queue.enqueue(value);
 }
 
-template <std::ranges::input_range Queues>
-requires std::is_lvalue_reference_v<std::ranges::range_reference_t<Queues>>
-    and producer_queue_c<std::remove_reference_t<std::ranges::range_reference_t<Queues>>>
-std::error_code enqueue_one(Queues && queues, typename std::ranges::range_value_t<Queues>::value_t & value) noexcept
+template <producer_queue_c Queue>
+std::error_code enqueue_one(Queue * queue_p, typename Queue::value_t & value) noexcept { return enqueue_one(*queue_p, value); }
+
+template <producer_queue_range_c Queues>
+std::error_code enqueue_one(Queues && queues,
+    typename std::remove_pointer_t<std::ranges::range_value_t<Queues>>::value_t & value) noexcept
 {
-    for (auto & queue : queues) {
+    for (auto && queue : queues) {
         const std::error_code ec = enqueue_one(queue, value);
         if (ec != std::errc::no_buffer_space) { return ec; }
     }

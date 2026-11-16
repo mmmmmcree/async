@@ -25,7 +25,7 @@ public:
 public:
     DispatchReport dispatchOne() noexcept
     {
-        for (Dispatcher & dispatcher : m_policy.select(std::views::all(m_dispatchers))) {
+        for (Dispatcher & dispatcher : m_dispatchers | utils::selected(m_policy)) {
             const DispatchReport report = dispatcher.dispatchOne();
             if (report.hasProgress() or report.m_error_code) { return report; }
         }

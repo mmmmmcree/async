@@ -42,8 +42,15 @@ concept queue_c = consumer_queue_c<Queue> and producer_queue_c<Queue>;
 
 template <typename Queues>
 concept consumer_queue_range_c = std::ranges::input_range<Queues>
-    and std::is_lvalue_reference_v<std::ranges::range_reference_t<Queues>>
-    and consumer_queue_c<std::ranges::range_value_t<Queues>>;
+    and (std::is_lvalue_reference_v<std::ranges::range_reference_t<Queues>>
+        or std::is_pointer_v<std::remove_reference_t<std::ranges::range_reference_t<Queues>>>)
+    and consumer_queue_c<std::remove_pointer_t<std::remove_reference_t<std::ranges::range_reference_t<Queues>>>>;
+
+template <typename Queues>
+concept producer_queue_range_c = std::ranges::input_range<Queues>
+    and (std::is_lvalue_reference_v<std::ranges::range_reference_t<Queues>>
+        or std::is_pointer_v<std::remove_reference_t<std::ranges::range_reference_t<Queues>>>)
+    and producer_queue_c<std::remove_pointer_t<std::remove_reference_t<std::ranges::range_reference_t<Queues>>>>;
 
 template <typename Queue>
 concept value_queue_c = queue_c<Queue> and requires {

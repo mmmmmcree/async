@@ -10,7 +10,7 @@ LCF_ASYNC_EXPORT
 namespace lcf::async {
 
 template <retry_stream_c Stream, rejecting_sink_c Sink>
-requires std::same_as<typename Stream::value_t, typename Sink::value_t>
+requires matched_c<Stream, Sink>
 class BasicDispatcher
 {
 public:

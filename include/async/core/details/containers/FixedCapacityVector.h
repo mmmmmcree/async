@@ -85,7 +85,7 @@ public:
 public:
     template <typename... Args>
     requires std::constructible_from<Value, Args...>
-    reference emplace_back(Args &&... args) noexcept(nothrow_constructible_from<Value, Args...>)
+    reference emplace_back(Args &&... args) noexcept(nothrow_constructible_from_c<Value, Args...>)
     {
         assert(this->size() < m_capacity);
         auto * value_p = std::construct_at(this->data() + this->size(), std::forward<Args>(args)...);

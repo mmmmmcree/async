@@ -22,6 +22,9 @@
 #include <async/core/scheduling/SchedulerHandle.h>
 #include <async/core/policy/RoundRobin.h>
 #include <async/core/policy/utils/selected.h>
+#include <async/core/stream/utils/pull_one.h>
+#include <async/core/stream/utils/pull_any.h>
+#include <async/core/stream/utils/pull_all.h>
 #include <async/core/stream/SelectedStream.h>
 #include <async/core/stream/PriorityStream.h>
 #include <async/core/stream/DispatchRequestStream.h>

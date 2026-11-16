@@ -4,9 +4,12 @@
 #include <async/core/scheduling/declarations/enums.h>
 #include <async/core/stream/SelectedStream.h>
 #include <async/core/stream/declarations/concepts.h>
-#include <async/core/utils/drain.h>
+#include <async/core/stream/utils/pull_any.h>
+#include <async/core/stream/utils/pull_one.h>
+#include <async/core/stream/utils/pull_all.h>
 
 #include <span>
+#include <type_traits>
 #include <utility>
 
 LCF_ASYNC_EXPORT
@@ -17,7 +20,7 @@ requires selection_policy_c<SelectionPolicy, std::span<Stream>>
 class PriorityStream
 {
 public:
-    using value_t = typename Stream::value_t;
+    using value_t = source_value_t<Stream>;
 public:
     ~PriorityStream() noexcept = default;
     PriorityStream() = delete;
@@ -28,20 +31,16 @@ public:
     PriorityStream & operator=(const PriorityStream &) = default;
     PriorityStream & operator=(PriorityStream &&) = default;
 public:
-    value_t * pull() noexcept { return m_selected.pull(); }
+    value_t * pullOne() noexcept { return utils::pull_one(m_selected); }
+    value_t * pullAny() noexcept requires drainable_stream_c<Stream> { return utils::pull_any(m_priorities); }
+    auto pullAll() noexcept requires drainable_stream_c<Stream> { return utils::pull_all(*this); }
     bool isEmpty() const noexcept { return m_selected.isEmpty(); }
     void requeue(value_t & record) noexcept requires retry_stream_c<Stream>
     {
-        m_priorities[static_cast<std::size_t>(record.getPriority())].requeue(record);
+        auto & stream = m_priorities[static_cast<std::size_t>(record.getPriority())];
+        if constexpr (std::is_pointer_v<Stream>) { stream->requeue(record); }
+        else { stream.requeue(record); }
     }
-    value_t * pullRemaining() noexcept requires drainable_stream_c<Stream>
-    {
-        for (Stream & stream : m_priorities) {
-            if (value_t * value_p = stream.pullRemaining()) { return value_p; }
-        }
-        return nullptr;
-    }
-    auto drain() noexcept requires drainable_stream_c<Stream> { return utils::drain(*this); }
 private:
     std::span<Stream> m_priorities;
     SelectedStream<Stream, SelectionPolicy> m_selected;

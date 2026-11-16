@@ -22,7 +22,7 @@ public:
         std::same_as<typename Queue::value_t, Value>
     explicit AnyQueueConsumerRef(Queue & queue) noexcept :
         m_queue_p(std::addressof(queue)),
-        m_pop_f([](void * queue_p) noexcept { return queue::utils::pop_one(*static_cast<Queue *>(queue_p)); }),
+        m_pop_f([](void * queue_p) noexcept { return queue::utils::pop_one(static_cast<Queue *>(queue_p)); }),
         m_is_empty_f([](const void * queue_p) noexcept { return static_cast<const Queue *>(queue_p)->isEmpty(); }) {}
     AnyQueueConsumerRef(const AnyQueueConsumerRef &) noexcept = default;
     AnyQueueConsumerRef(AnyQueueConsumerRef &&) noexcept = default;

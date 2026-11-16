@@ -89,7 +89,7 @@ private:
         void cancel(Coordinator & coordinator) noexcept
         {
             CompletionTracker<Cancel, Coordinator> sink {Cancel {}, coordinator};
-            std::ranges::for_each(m_stream.drain(), [&sink](Record & record) noexcept { sink.receive(record); });
+            std::ranges::for_each(m_stream.pullAll(), [&sink](Record & record) noexcept { sink.receive(record); });
         }
     private:
         std::array<RequestBand, k_priority_count> m_bands;

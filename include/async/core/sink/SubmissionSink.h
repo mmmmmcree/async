@@ -19,8 +19,8 @@ public:
 public:
     ~SubmissionSink() noexcept = default;
     SubmissionSink() = delete;
-    explicit SubmissionSink(Notifier notifier) noexcept(details::all_nothrow_default_constructible<Queue>
-        and details::all_nothrow_move_constructible<Notifier>) : m_notifier(std::move(notifier)) {}
+    explicit SubmissionSink(Notifier notifier) noexcept(details::all_nothrow_default_constructible_c<Queue>
+        and details::all_nothrow_move_constructible_c<Notifier>) : m_notifier(std::move(notifier)) {}
     SubmissionSink(const SubmissionSink &) = delete;
     SubmissionSink(SubmissionSink &&) = delete;
     SubmissionSink & operator=(const SubmissionSink &) = delete;
@@ -34,7 +34,6 @@ public:
         if (not ec) { m_notifier.notifyAll(); }
         return ec;
     }
-
     Queue & getQueue(std::size_t band) noexcept { return m_queues[band]; }
 private:
     std::array<Queue, k_priority_count> m_queues;
