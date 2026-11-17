@@ -37,22 +37,4 @@ private:
     std::atomic<std::uint64_t> m_state {0};
 };
 
-template <typename Waiter>
-class ExecutionGuard
-{
-public:
-    ~ExecutionGuard() noexcept { if (m_entered) { m_waiter_p->endExecution(); } }
-    ExecutionGuard() = delete;
-    explicit ExecutionGuard(Waiter & waiter) noexcept : m_waiter_p(&waiter), m_entered(waiter.beginExecution()) {}
-    ExecutionGuard(const ExecutionGuard &) = delete;
-    ExecutionGuard(ExecutionGuard &&) = delete;
-    ExecutionGuard & operator=(const ExecutionGuard &) = delete;
-    ExecutionGuard & operator=(ExecutionGuard &&) = delete;
-public:
-    explicit operator bool() const noexcept { return m_entered; }
-private:
-    Waiter * m_waiter_p;
-    bool m_entered;
-};
-
 } // namespace lcf::async::details

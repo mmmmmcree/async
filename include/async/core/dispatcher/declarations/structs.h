@@ -13,6 +13,7 @@ struct DispatchReport
     std::uint64_t m_dispatched = 0;
     std::error_code m_error_code {};
     bool hasProgress() const noexcept { return m_dispatched != 0; }
+    std::error_code getErrorCode() const noexcept { return m_error_code; }
     explicit operator bool() const noexcept { return this->hasProgress(); }
 };
 

@@ -27,7 +27,7 @@ public:
         if (m_driving.test_and_set(std::memory_order_acquire)) { return {}; }
         const DriveReport report = m_driver.driveOne();
         m_driving.clear(std::memory_order_release);
-        return {.m_dispatched = report.hasProgress(), .m_error_code = report.m_error_code};
+        return {.m_dispatched = report.hasProgress(), .m_error_code = report.getErrorCode()};
     }
 private:
     BasicDriver<Stream, Sink> m_driver;

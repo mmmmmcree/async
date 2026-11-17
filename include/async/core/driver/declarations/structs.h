@@ -12,6 +12,7 @@ struct DriveReport
     bool m_has_progress = false;
     std::error_code m_error_code {};
     bool hasProgress() const noexcept { return m_has_progress; }
+    std::error_code getErrorCode() const noexcept { return m_error_code; }
     explicit operator bool() const noexcept { return this->hasProgress(); }
 };
 

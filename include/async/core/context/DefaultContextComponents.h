@@ -13,7 +13,7 @@
 #include <async/core/sink/CancelExecutableSink.h>
 #include <async/core/dispatcher/BasicDispatcher.h>
 #include <async/core/executor/BasicExecutor.h>
-#include <async/core/driver/WorkerExecutionPath.h>
+#include <async/core/executor/DispatchingExecutor.h>
 #include <async/core/policy/RoundRobin.h>
 #include <async/core/policy/WeightedPriority.h>
 
@@ -26,8 +26,8 @@ struct DefaultContextComponents
     using record_t = SchedulingRecord<executable_t>;
     using submission_queue_t = queue::intrusive::mpmc::Queue<record_t>;
     using execution_queue_t = queue::intrusive::mpmc::Queue<record_t>;
-    template <typename Dispatcher, typename Executor, typename Coordinator>
-    using execution_path_t = WorkerExecutionPath<Dispatcher, Executor, policy::RoundRobin, Coordinator>;
+    template <typename Dispatcher, typename Executor>
+    using dispatching_executor_t = DispatchingExecutor<Dispatcher, Executor, policy::RoundRobin>;
     template <typename Queue, typename Notifier>
     using submission_sink_t = SubmissionSink<Queue, Notifier>;
     template <typename Target>

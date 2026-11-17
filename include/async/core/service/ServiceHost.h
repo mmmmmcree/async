@@ -52,7 +52,7 @@ public:
     ServiceHost & operator=(ServiceHost &&) = delete;
 public:
     template <typename Layout>
-    static void appendStorage(std::size_t capacity, Layout & layout)
+    static void append_storage(std::size_t capacity, Layout & layout)
     {
         layout.template append<Entry>(capacity);
         layout.template append<std::size_t>(capacity);

@@ -70,4 +70,23 @@ private:
     std::error_code m_error_code;
 };
 
+template <notify::signal_c Signal>
+class ExecutionGuard
+{
+public:
+    ~ExecutionGuard() noexcept { if (m_entered) { m_coordinator_p->endExecution(); } }
+    ExecutionGuard() = delete;
+    explicit ExecutionGuard(ContextCoordinator<Signal> & coordinator) noexcept :
+        m_coordinator_p(&coordinator), m_entered(coordinator.beginExecution()) {}
+    ExecutionGuard(const ExecutionGuard &) = delete;
+    ExecutionGuard(ExecutionGuard &&) = delete;
+    ExecutionGuard & operator=(const ExecutionGuard &) = delete;
+    ExecutionGuard & operator=(ExecutionGuard &&) = delete;
+public:
+    explicit operator bool() const noexcept { return m_entered; }
+private:
+    ContextCoordinator<Signal> * m_coordinator_p;
+    bool m_entered;
+};
+
 } // namespace lcf::async::details

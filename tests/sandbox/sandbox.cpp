@@ -111,7 +111,7 @@ int main()
     std::thread driver {[&] { run_ec = context.run(); }};
     auto execution_port = context.getExecutionPort(caller);
     while (not outcome.m_completed.load(std::memory_order_acquire)) {
-        if (const auto report = execution_port.waitAndExecuteOne(); report.isStopped()) { break; }
+        if (const auto report = execution_port.waitAndExecuteOne(); report.isStopped() or report.isFailed()) { break; }
     }
     context.closeSubmissions();
     driver.join();

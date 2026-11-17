@@ -23,8 +23,8 @@ public:
     ExecutionReport executeOne() noexcept
     {
         const DriveReport report = m_driver.driveOne();
-        return {.m_result = report.hasProgress() ? ExecutionResult::eProgress : ExecutionResult::eIdle,
-            .m_executed = report.hasProgress(), .m_error_code = report.m_error_code};
+        if (const std::error_code ec = report.getErrorCode()) { return ExecutionReport::make_from_error_code(ec); }
+        return report.hasProgress() ? ExecutionReport::make_from_succeeded(1) : ExecutionReport {};
     }
 private:
     BasicDriver<Stream, Sink> m_driver;

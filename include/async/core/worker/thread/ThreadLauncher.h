@@ -23,7 +23,7 @@ public:
         noexcept(details::nothrow_constructible_from_c<ThreadHandle, ThreadEntry, void *>)
     requires std::constructible_from<ThreadHandle, ThreadEntry, void *>
     {
-        return ThreadHandle{entry_f, state_p};
+        return ThreadHandle {entry_f, state_p};
     }
 };
 

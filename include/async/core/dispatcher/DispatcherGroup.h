@@ -27,7 +27,7 @@ public:
     {
         for (Dispatcher & dispatcher : m_dispatchers | utils::selected(m_policy)) {
             const DispatchReport report = dispatcher.dispatchOne();
-            if (report.hasProgress() or report.m_error_code) { return report; }
+            if (report.hasProgress() or report.getErrorCode()) { return report; }
         }
         return {};
     }

@@ -42,12 +42,14 @@
 #include <async/core/dispatcher/DispatchRequestSink.h>
 #include <async/core/dispatcher/DispatcherGroup.h>
 #include <async/core/dispatcher/BasicDispatcher.h>
+#include <async/core/executor/declarations/enums.h>
 #include <async/core/executor/declarations/structs.h>
 #include <async/core/executor/BasicExecutor.h>
 #include <async/core/driver/declarations/structs.h>
 #include <async/core/driver/declarations/concepts.h>
 #include <async/core/driver/BasicDriver.h>
-#include <async/core/driver/WorkerExecutionPath.h>
+#include <async/core/executor/DispatchingExecutor.h>
+#include <async/core/worker/declarations/concepts.h>
 #include <async/core/worker/BasicWorker.h>
 #include <async/core/worker/WorkerPool.h>
 #include <async/core/worker/thread/NullThreadHandle.h>
