@@ -3,7 +3,7 @@
 #include <async/config/macros.h>
 #include <async/core/service/AnyServiceRef.h>
 #include <async/core/notify/declarations/concepts.h>
-#include <async/core/details/containers/FixedCapacityVector.h>
+#include <async/core/details/containers/FixedCapacityList.h>
 #include <async/core/error.h>
 
 #include <limits>
@@ -177,9 +177,9 @@ private:
     }
 private:
     EventPump * m_event_pump_p;
-    details::FixedCapacityVector<Entry> m_entries;
-    details::FixedCapacityVector<std::size_t> m_ready;
-    details::FixedCapacityVector<std::size_t> m_timers;
+    details::FixedCapacityList<Entry> m_entries;
+    details::FixedCapacityList<std::size_t> m_ready;
+    details::FixedCapacityList<std::size_t> m_timers;
     mutable std::mutex m_mutex;
     std::size_t m_ready_head = 0, m_ready_count = 0, m_active = 0;
     bool m_registration_closed = false, m_enabled = false;

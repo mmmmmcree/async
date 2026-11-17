@@ -16,7 +16,7 @@
 namespace lcf::async::details {
 
 template <std::destructible Value>
-class FixedCapacityVector
+class FixedCapacityList
 {
 public:
     using value_type = Value;
@@ -32,20 +32,20 @@ public:
     using reverse_iterator = std::reverse_iterator<iterator>;
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 public:
-    ~FixedCapacityVector() noexcept { this->release_storage(); }
-    FixedCapacityVector() noexcept = default;
-    FixedCapacityVector(size_type capacity, allocator_type allocator) :
+    ~FixedCapacityList() noexcept { this->release_storage(); }
+    FixedCapacityList() noexcept = default;
+    FixedCapacityList(size_type capacity, allocator_type allocator) :
         m_resource_p(allocator.resource()), m_capacity(capacity)
     {
         if (capacity != 0) { m_elements = {allocator.allocate(capacity), size_type{0}}; }
     }
-    FixedCapacityVector(const FixedCapacityVector &) = delete;
-    FixedCapacityVector & operator=(const FixedCapacityVector &) = delete;
-    FixedCapacityVector(FixedCapacityVector && other) noexcept :
+    FixedCapacityList(const FixedCapacityList &) = delete;
+    FixedCapacityList & operator=(const FixedCapacityList &) = delete;
+    FixedCapacityList(FixedCapacityList && other) noexcept :
         m_resource_p(other.m_resource_p),
         m_elements(std::exchange(other.m_elements, {})),
         m_capacity(std::exchange(other.m_capacity, 0)) {}
-    FixedCapacityVector & operator=(FixedCapacityVector && other) noexcept
+    FixedCapacityList & operator=(FixedCapacityList && other) noexcept
     {
         if (this == &other) { return *this; }
         this->release_storage();
@@ -109,13 +109,13 @@ public:
             while (not this->empty()) { this->pop_back(); }
         }
     }
-    void swap(FixedCapacityVector & other) noexcept
+    void swap(FixedCapacityList & other) noexcept
     {
         std::swap(m_resource_p, other.m_resource_p);
         std::swap(m_elements, other.m_elements);
         std::swap(m_capacity, other.m_capacity);
     }
-    friend void swap(FixedCapacityVector & lhs, FixedCapacityVector & rhs) noexcept { lhs.swap(rhs); }
+    friend void swap(FixedCapacityList & lhs, FixedCapacityList & rhs) noexcept { lhs.swap(rhs); }
 private:
     void release_storage() noexcept
     {

@@ -2,7 +2,7 @@
 
 #include <async/config/macros.h>
 #include <async/core/worker/BasicWorker.h>
-#include <async/core/details/containers/FixedCapacityVector.h>
+#include <async/core/details/containers/FixedCapacityList.h>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
@@ -11,7 +11,7 @@ template <work_executor_c Executor, worker_coordinator_c Coordinator, join_handl
 class WorkerPool
 {
     using Worker = BasicWorker<Executor, Coordinator, ThreadHandle>;
-    using WorkerList = details::FixedCapacityVector<Worker>;
+    using WorkerList = details::FixedCapacityList<Worker>;
 public:
     ~WorkerPool() noexcept { this->join(); }
     WorkerPool() noexcept = default;

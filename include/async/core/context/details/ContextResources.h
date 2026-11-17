@@ -4,7 +4,7 @@
 #include <async/core/context/DefaultContextComponents.h>
 #include <async/core/context/details/ContextTracking.h>
 #include <async/core/details/StorageLayout.h>
-#include <async/core/details/containers/FixedCapacityVector.h>
+#include <async/core/details/containers/FixedCapacityList.h>
 #include <async/core/queue/utils/drain.h>
 
 #include <array>
@@ -181,14 +181,14 @@ public:
         for (ExecutionTarget & target : m_local_targets) { cancel_target(target); }
     }
 private:
-    FixedCapacityVector<SubmissionEndpoint> m_submissions;
-    FixedCapacityVector<ExecutionTarget> m_local_targets;
-    FixedCapacityVector<ExecutionTarget> m_shared_targets;
-    FixedCapacityVector<SubmissionQueue *> m_request_inputs;
-    FixedCapacityVector<ExecutionQueue *> m_execution_inputs;
-    FixedCapacityVector<ExecutionTarget *> m_scheduler_targets;
-    FixedCapacityVector<DispatchComponent> m_dispatchers;
-    FixedCapacityVector<ExecutionComponent> m_executors;
+    FixedCapacityList<SubmissionEndpoint> m_submissions;
+    FixedCapacityList<ExecutionTarget> m_local_targets;
+    FixedCapacityList<ExecutionTarget> m_shared_targets;
+    FixedCapacityList<SubmissionQueue *> m_request_inputs;
+    FixedCapacityList<ExecutionQueue *> m_execution_inputs;
+    FixedCapacityList<ExecutionTarget *> m_scheduler_targets;
+    FixedCapacityList<DispatchComponent> m_dispatchers;
+    FixedCapacityList<ExecutionComponent> m_executors;
 };
 
 } // namespace lcf::async::details

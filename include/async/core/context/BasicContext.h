@@ -289,7 +289,7 @@ private:
     details::ResourceObject<Resources> m_resources;
     details::ResourceObject<Executor> m_owner_executor;
     Pool m_pool;
-    details::FixedCapacityVector<Priority> m_priorities;
+    details::FixedCapacityList<Priority> m_priorities;
     std::size_t m_shared_count = 1;
     std::uint32_t m_domain = 0;
     Priority m_shared_priority = Priority::eNormal;
