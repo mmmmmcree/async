@@ -16,4 +16,7 @@ concept all_nothrow_copy_constructible_c = (std::is_nothrow_copy_constructible_v
 template <typename... Types>
 concept all_nothrow_move_constructible_c = (std::is_nothrow_move_constructible_v<Types> and ...);
 
+template <typename... Types>
+concept all_nothrow_move_assignable_c = (std::is_nothrow_move_assignable_v<Types> and ...);
+
 } // namespace lcf::async::details

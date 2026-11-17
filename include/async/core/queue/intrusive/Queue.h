@@ -11,6 +11,7 @@ class Queue
 public:
     using value_t = Node;
 public:
+    ~Queue() noexcept = default;
     Queue() noexcept = default;
     Queue(const Queue &) = delete;
     Queue(Queue &&) = delete;

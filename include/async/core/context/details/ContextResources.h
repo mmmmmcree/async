@@ -1,17 +1,18 @@
 #pragma once
 
 #include <async/core/context/ContextInfo.h>
-#include <async/core/context/DefaultContextComponents.h>
+#include <async/core/context/declarations/concepts.h>
 #include <async/core/context/details/ContextTracking.h>
 #include <async/core/details/StorageLayout.h>
 #include <async/core/details/containers/FixedCapacityList.h>
 #include <async/core/queue/utils/drain.h>
+#include <async/core/stream/utils/pull_all.h>
 
 #include <array>
 
 namespace lcf::async::details {
 
-template <typename Components, typename Coordinator, typename Notifier>
+template <context_components_c Components, typename Coordinator, notify::notifier_c Notifier>
 class ContextResources
 {
     using Record = typename Components::record_t;
@@ -89,7 +90,7 @@ private:
         void cancel(Coordinator & coordinator) noexcept
         {
             CompletionTracker<Cancel, Coordinator> sink {Cancel {}, coordinator};
-            std::ranges::for_each(m_stream.pullAll(), [&sink](Record & record) noexcept { sink.receive(record); });
+            std::ranges::for_each(utils::pull_all(m_stream), [&sink](Record & record) noexcept { sink.receive(record); });
         }
     private:
         std::array<RequestBand, k_priority_count> m_bands;
@@ -165,7 +166,8 @@ public:
     admission_t & getSubmissionSink(std::size_t index) noexcept { return m_submissions[index].getAdmission(); }
     std::span<dispatcher_t> getDispatchers() noexcept { return m_dispatchers; }
     execution_t & getSharedExecutor(std::size_t index) noexcept { return m_executors[index]; }
-    execution_t & getLocalExecutor(std::size_t shared_count, std::size_t port) noexcept { return m_executors[shared_count + port]; }
+    execution_t & getLocalExecutor(std::size_t port) noexcept
+    { return m_executors[m_executors.size() - m_local_targets.size() + port]; }
 
     void cancelRemaining(Coordinator & coordinator) noexcept
     {

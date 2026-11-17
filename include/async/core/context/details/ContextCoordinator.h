@@ -53,6 +53,7 @@ public:
     void waitForExecutions() const noexcept { m_executions.wait(); }
     void reportErrorCode(std::error_code ec) noexcept
     {
+        if (not ec) { return; }
         { const std::lock_guard guard {m_error_mutex}; if (not m_error_code) { m_error_code = ec; } }
         this->requestStop();
     }

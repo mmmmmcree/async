@@ -20,9 +20,25 @@ public:
     ExecutionPort & operator=(const ExecutionPort &) noexcept = default;
     ExecutionPort & operator=(ExecutionPort &&) noexcept = default;
 public:
-    ExecutionReport executeOne() noexcept { return m_context_p->template executeOne<is_owner>(m_index); }
+    ExecutionReport executeOne() noexcept
+    {
+        if constexpr (is_owner) { return m_context_p->executeOne(); }
+        else { return m_context_p->executeOne(m_index); }
+    }
     ExecutionReport waitAndExecuteOne(std::stop_token stop = {}) noexcept
-    { return m_context_p->template waitAndExecuteOne<is_owner>(m_index, stop); }
+    {
+        const std::stop_callback wake {stop, [this] { m_context_p->m_signal.notifyAll(); }};
+        while (true) {
+            const auto observed = m_context_p->m_signal.observe();
+            if (stop.stop_requested()) { return ExecutionReport::make_from_stopped(); }
+            const ExecutionReport report = this->executeOne();
+            if (report.getExecutedCount() or report.isStopped() or report.isFailed()) { return report; }
+            if (report.isSucceeded()) { continue; }
+            if constexpr (is_owner) {
+                if (const std::error_code ec = m_context_p->waitForEvents()) { return ExecutionReport::make_from_error_code(ec); }
+            } else { m_context_p->m_signal.wait(observed); }
+        }
+    }
 private:
     Context * m_context_p;
     std::size_t m_index;

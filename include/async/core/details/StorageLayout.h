@@ -1,5 +1,7 @@
 #pragma once
 
+#include <async/core/declarations/structs.h>
+
 #include <cstddef>
 #include <expected>
 #include <limits>
@@ -7,12 +9,6 @@
 #include <system_error>
 
 namespace lcf::async::details {
-
-struct StorageSize
-{
-    std::size_t m_size_in_bytes = 0;
-    std::size_t m_alignment = 1;
-};
 
 class StorageLayout
 {
@@ -29,21 +25,24 @@ public:
     {
         if (count == 0 or m_overflow) { return; }
         constexpr std::size_t maximum = std::numeric_limits<std::size_t>::max();
-        constexpr std::size_t alignment = alignof(Value);
+        m_overflow = count > maximum / sizeof(Value);
+        if (not m_overflow) { this->append({sizeof(Value) * count, alignof(Value)}); }
+    }
+    void append(StorageRequirements requirements) noexcept
+    {
+        if (requirements.m_size_in_bytes == 0 or m_overflow) { return; }
+        constexpr std::size_t maximum = std::numeric_limits<std::size_t>::max();
+        const auto [bytes, alignment] = requirements;
         const std::size_t padding = (alignment - m_size % alignment) % alignment;
-        m_overflow = m_size > maximum - padding or count > maximum / sizeof(Value);
+        m_overflow = m_size > maximum - padding or bytes > maximum - padding - m_size;
         if (m_overflow) { return; }
-        const std::size_t bytes = sizeof(Value) * count;
-        const std::size_t aligned_size = m_size + padding;
-        m_overflow = bytes > maximum - aligned_size;
-        if (m_overflow) { return; }
-        m_size = aligned_size + bytes;
+        m_size += padding + bytes;
         if (alignment > m_alignment) { m_alignment = alignment; }
     }
-    std::expected<StorageSize, std::error_code> getSize() const noexcept
+    std::expected<StorageRequirements, std::error_code> getSize() const noexcept
     {
         if (m_overflow) { return std::unexpected {std::make_error_code(std::errc::value_too_large)}; }
-        return StorageSize {.m_size_in_bytes = m_size, .m_alignment = m_alignment};
+        return StorageRequirements {.m_size_in_bytes = m_size, .m_alignment = m_alignment};
     }
     template <typename Container>
     void reserve(const Container &, std::size_t count) noexcept { this->append<typename Container::value_type>(count); }

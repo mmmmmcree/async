@@ -7,7 +7,7 @@
 ```mermaid
 flowchart TB
     context["Context：资源与生命周期边界<br/>BasicContext"]
-    context -->|按组件类型装配| components["完整组件的类型绑定<br/>DefaultContextComponents"]
+    context -->|按组件类型装配| components["context_components_c<br/>完整组件的类型绑定<br/>DefaultContextComponents（BasicContext.h）"]
     components --> stages["同级处理阶段<br/>request_dispatcher_c / work_executor_c<br/>BasicDispatcher / BasicExecutor"]
     stages -->|复用单步搬运| driver["Driver：连接输入与接收端<br/>driver_c：driveOne → DriveReport<br/>BasicDriver / utils::drive_one"]
     driver -->|借用输入| stream["Stream：可组合的记录源<br/>stream_c：pullOne / isEmpty<br/>DispatchRequestStream / WorkStealingStream"]
@@ -20,6 +20,8 @@ flowchart TB
 ```
 
 Stream 可以组合 Queue 或其他 Stream，封装选择策略及 pending 等行为；Sink 封装接收、路由或终端处理，也可以继续包装其他 Sink。Driver 只负责一次 `pullOne → receive`，不靠 Sink 的静态标签判断是否执行任务。Dispatcher 与 Executor 复用 BasicDriver，分别给出 `DispatchReport` 和 `ExecutionReport`；两者及 `DriveReport` 均通过 `getErrorCode()` 读取结果码。
+
+`BasicContext<Components>` 通过一个组件集配置流水线、事件泵与线程句柄。`context_components_c<Components>` 检查 `event_pump_t`、`thread_handle_t` 的协议和构造要求，以及组件工厂组合后的构造接口、记录类型一致性、队列并发能力、Stream 重试与清理能力、Sink 和执行阶段的报告协议。Notifier 从配置的事件泵推导，并用于检查实际组合；默认组件与 BasicContext 放在同一头文件中。
 
 Stream/Sink 与 execution 的 sender/receiver 共享组合思路，但属于不同协议：Stream 是同步、非阻塞的记录源，Sink 是同步接收边界；它们不因此满足 `sender_c` / `receiver_c`。`SchedulerHandle` 通过 `ScheduleSender` / `ScheduleOperation` 接入 execution，最终完成仍通过 receiver 的 `set_value / set_error / set_stopped` 交付。
 
@@ -59,6 +61,8 @@ flowchart TB
 
 `getExecutionPort(token)` 只执行该 port 的 local 队列，不经过 `DispatchingExecutor`。后者仅组合 dispatch 与 execute，并通过报告传递结果；Worker 和 Context 负责向 Coordinator 汇总错误码。`worker_coordinator_c` 位于 worker 模块，具体的 `ContextCoordinator` 留在 context/details。
 
+ExecutionPort 负责等待与唤醒循环；BasicContext 分别提供驱动线程执行与 local 执行的内部接口。`run()`、`shutdown()` 和服务启用失败后的清理共用关闭驱动循环。Context 只记录优雅关闭请求，快速停止以 Coordinator 的执行 gate 为准；空 `ec` 不触发停止。
+
 Worker 在每步执行前检查停止请求，退出后的静止由线程 join 保证。`worker_coordinator_c` 复用 `notify::signal_waiter_c` 约束 `observe / wait`，不要求执行计数接口；Context 使用自己的 `ExecutionGuard` 等待外部 local ExecutionPort 的在途执行。
 
 `BasicWorker::start()` 与 `WorkerPool::start()` 均为 `noexcept`，返回 `std::error_code`；线程启动异常在该边界转换。Pool 部分启动失败时，先请求停止并 join 已启动线程，再返回原始结果码。`ServiceHost` 借用服务；Context 拥有默认事件泵与固定登记存储，平台事件能力由具体事件泵提供。
@@ -71,7 +75,7 @@ Worker 在每步执行前检查停止请求，退出后的静止由线程 join �
 flowchart TB
     source["OS 事件回调 / 外部事件 / 服务定时请求"]
     source --> handle["ServiceHandle<br/>notifyReady / setWakeTime"]
-    handle --> registration["ServiceHost<br/>合并 ready；更新 timer 槽"]
+    handle --> registration["ServiceHost<br/>intrusive Queue 合并 ready<br/>IndexedHeap 更新 timer 槽"]
     registration --> wake["EventPump.wake()"]
     wake --> wait["Context driver thread<br/>waitUntil 最近期限；event_pump.driveOne()"]
     wait --> ready["ServiceHost<br/>定时到期转 ready；取一个就绪服务"]
@@ -80,6 +84,8 @@ flowchart TB
 ```
 
 `enableServiceHandling()` 调用 `Service.start(handle)`；`run()` 自动启用。Service 由调用方持有，通过 `getEventPump()` 借用事件泵。默认 `notify::SemaphoreEvent` 只提供定时等待和跨线程唤醒；平台 OS 事件注册及回调由自定义事件泵提供。休眠服务不逐个轮询。
+
+`ServiceHost::get_storage_requirements(capacity)` 返回公共 `StorageRequirements`，表达字节数和对齐要求；`create(capacity, memory_resource&)` 准备固定登记项和定时堆，预算查询与分配共用内部布局定义。Context 汇总组件需求，布局模板留在组件内部。就绪队列直接链接登记项，重复通知通过链接状态合并；`IndexedHeap` 维护定时项的位置，支持 O(log N) 更新和删除。状态修改由 Host 的互斥锁协调，调用服务与唤醒事件泵在解锁后进行。
 
 提交与执行流水线：实线表示记录流向，记录及 executable 均借用 operation 的存储。
 

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/core/declarations/concepts.h>
+#include <async/core/declarations/structs.h>
 #include <async/core/executable/declarations/concepts.h>
 #include <async/core/notify/declarations/concepts.h>
 #include <async/core/notify/AtomicSequenceSignal.h>
@@ -57,6 +58,7 @@
 #include <async/core/worker/thread/declarations/aliases.h>
 #include <async/core/worker/thread/declarations/concepts.h>
 #include <async/core/context/declarations/tokens.h>
+#include <async/core/context/declarations/concepts.h>
 #include <async/core/context/ContextInfo.h>
 #include <async/core/context/SubmissionPort.h>
 #include <async/core/context/ExecutionPort.h>
