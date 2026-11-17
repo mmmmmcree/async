@@ -4,7 +4,6 @@
 #include <async/core/context/declarations/tokens.h>
 #include <async/core/context/declarations/structs.h>
 #include <async/core/scheduling/declarations/enums.h>
-#include <async/core/scheduling/details/dispatch_targets.h>
 
 #include <exception>
 #include <memory_resource>
@@ -17,7 +16,8 @@ namespace lcf::async {
 
 class ContextInfo
 {
-    inline static std::uint32_t s_next_domain_id {details::k_unbound_domain_id + 1};
+    inline static constexpr std::uint32_t k_unbound_domain_id = 0;
+    inline static std::uint32_t s_next_domain_id {k_unbound_domain_id + 1};
 public:
     ~ContextInfo() noexcept = default;
     ContextInfo() = delete;
@@ -25,7 +25,7 @@ public:
         m_targets(&configuration_resource), m_priorities(&configuration_resource) {}
     ContextInfo(const ContextInfo &) = delete;
     ContextInfo(ContextInfo && other) noexcept :
-        m_domain_id(std::exchange(other.m_domain_id, details::k_unbound_domain_id)),
+        m_domain_id(std::exchange(other.m_domain_id, k_unbound_domain_id)),
         m_worker_count(other.m_worker_count), m_dispatcher_count(other.m_dispatcher_count),
         m_service_capacity(other.m_service_capacity), m_targets(std::move(other.m_targets)),
         m_priorities(std::move(other.m_priorities)), m_shared_priority(other.m_shared_priority),
