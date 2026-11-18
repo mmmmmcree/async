@@ -25,9 +25,9 @@ public:
     DispatchReport dispatchOne() noexcept
     {
         if (m_driving.test_and_set(std::memory_order_acquire)) { return {}; }
-        const DriveReport report = m_driver.driveOne();
+        const std::error_code ec = m_driver.driveOne();
         m_driving.clear(std::memory_order_release);
-        return {.m_dispatched = report.hasProgress(), .m_error_code = report.getErrorCode()};
+        return DispatchReport::make_from_drive_result(ec);
     }
 private:
     BasicDriver<Stream, Sink> m_driver;

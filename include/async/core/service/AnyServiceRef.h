@@ -25,12 +25,12 @@ public:
     AnyServiceRef & operator=(AnyServiceRef &&) noexcept = default;
 public:
     std::error_code start(ServiceHandle handle) noexcept { return m_start_f(m_service_p, handle); }
-    DriveReport driveOne() noexcept { return m_drive_f(m_service_p); }
+    std::error_code driveOne() noexcept { return m_drive_f(m_service_p); }
     void requestStop() noexcept { m_stop_f(m_service_p); }
 private:
     void * m_service_p;
     std::error_code (*m_start_f)(void *, ServiceHandle) noexcept;
-    DriveReport (*m_drive_f)(void *) noexcept;
+    std::error_code (*m_drive_f)(void *) noexcept;
     void (*m_stop_f)(void *) noexcept;
 };
 

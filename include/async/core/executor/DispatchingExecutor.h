@@ -33,7 +33,7 @@ public:
         }
         const ExecutionReport execution_report = m_executor_p->executeOne();
         if (execution_report.isFailed() or execution_report.isStopped()) { return execution_report; }
-        const bool succeeded = dispatch_report.hasProgress() or execution_report.isSucceeded();
+        const bool succeeded = dispatch_report.isSucceeded() or execution_report.isSucceeded();
         return succeeded ? ExecutionReport::make_from_succeeded(execution_report.getExecutedCount()) : ExecutionReport {};
     }
 private:

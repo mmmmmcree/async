@@ -5,7 +5,6 @@
 #include <async/core/sink/declarations/concepts.h>
 
 #include <memory>
-#include <system_error>
 #include <type_traits>
 #include <utility>
 
@@ -26,10 +25,7 @@ public:
     BasicDriver & operator=(const BasicDriver &) = default;
     BasicDriver & operator=(BasicDriver &&) = default;
 public:
-    DriveReport driveOne() noexcept
-    {
-        return utils::drive_one(*m_stream_p, m_sink);
-    }
+    std::error_code driveOne() noexcept { return utils::drive_one(*m_stream_p, m_sink); }
 private:
     Stream * m_stream_p;
     Sink m_sink;

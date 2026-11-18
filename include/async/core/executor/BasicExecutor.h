@@ -20,12 +20,7 @@ public:
     BasicExecutor & operator=(const BasicExecutor &) = default;
     BasicExecutor & operator=(BasicExecutor &&) = default;
 public:
-    ExecutionReport executeOne() noexcept
-    {
-        const DriveReport report = m_driver.driveOne();
-        if (const std::error_code ec = report.getErrorCode()) { return ExecutionReport::make_from_error_code(ec); }
-        return report.hasProgress() ? ExecutionReport::make_from_succeeded(1) : ExecutionReport {};
-    }
+    ExecutionReport executeOne() noexcept { return ExecutionReport::make_from_drive_result(m_driver.driveOne()); }
 private:
     BasicDriver<Stream, Sink> m_driver;
 };

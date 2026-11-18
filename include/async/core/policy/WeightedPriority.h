@@ -2,14 +2,22 @@
 
 #include <async/core/policy/RoundRobin.h>
 
+#include <algorithm>
 #include <array>
+#include <cstddef>
+#include <ranges>
+#include <utility>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async::policy {
 
-// Rotate the first candidate with weights 4:2:1; still inspect every band.
+// Weights are ordered by candidate position and control how often each is tried first.
+template <std::size_t... Weights>
+requires (sizeof...(Weights) > 0) and ((Weights > 0) and ...)
 class WeightedPriority
 {
+    inline static constexpr std::array<std::size_t, sizeof...(Weights)> k_weights {Weights...};
+    inline static constexpr std::size_t k_max_weight = std::ranges::max(k_weights);
     template <typename Candidates>
     using Selection = details::RoundRobinSelectionView<Candidates>;
 public:
@@ -25,14 +33,27 @@ public:
     Selection<Candidates> select(Candidates candidates) noexcept
     {
         const std::uint64_t count = std::ranges::distance(candidates);
-        if (count == 0) { return {std::move(candidates), 0, 0}; }
-        constexpr std::array<std::uint64_t, 7> order {0, 0, 1, 0, 1, 0, 2};
-        const std::uint64_t first = order[m_next] % count;
-        m_next = (m_next + 1) % order.size();
-        return {std::move(candidates), first, count};
+        if (count != k_weights.size()) { return m_unweighted.select(std::move(candidates)); }
+        return {std::move(candidates), this->getNextWeightedIndex(), count};
     }
 private:
-    std::size_t m_next = 0;
+    std::size_t getNextWeightedIndex() noexcept
+    {
+        // Each round visits every candidate whose weight exceeds the round number.
+        while (true) {
+            const std::size_t index = m_next_index;
+            const bool eligible = m_round < k_weights[index];
+            if (++m_next_index == k_weights.size()) {
+                m_next_index = 0;
+                if (++m_round == k_max_weight) { m_round = 0; }
+            }
+            if (eligible) { return index; }
+        }
+    }
+private:
+    RoundRobin m_unweighted;
+    std::size_t m_next_index = 0;
+    std::size_t m_round = 0;
 };
 
 } // namespace lcf::async::policy

@@ -11,6 +11,7 @@ enum class errc
 {
     unexpected_exception = 1,
     service_registration_closed,
+    no_work,
 };
 
 namespace details {
@@ -31,6 +32,7 @@ public:
         switch (static_cast<errc>(value)) {
         case errc::unexpected_exception: return "unexpected exception";
         case errc::service_registration_closed: return "service registration is closed";
+        case errc::no_work: return "no work available";
         }
         return "unknown async error";
     }

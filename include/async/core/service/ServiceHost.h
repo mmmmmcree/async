@@ -152,7 +152,7 @@ public:
         const Entry * entry_p = m_timers.top();
         return entry_p ? entry_p->m_wake_time : Clock::time_point::max();
     }
-    DriveReport driveOne() noexcept
+    std::error_code driveOne() noexcept
     {
         Entry * entry_p = nullptr;
         std::error_code ec;
@@ -165,8 +165,8 @@ public:
             entry_p = m_ready_services.pop();
             if (entry_p and not entry_p->m_active) { entry_p = nullptr; }
         }
-        const DriveReport report = entry_p ? entry_p->m_service.driveOne() : DriveReport {};
-        return {.m_has_progress = report.hasProgress(), .m_error_code = ec ? ec : report.getErrorCode()};
+        const std::error_code service_ec = entry_p ? entry_p->m_service.driveOne() : make_error_code(errc::no_work);
+        return ec ? ec : service_ec;
     }
 private:
     void queueReady(Entry & entry) noexcept

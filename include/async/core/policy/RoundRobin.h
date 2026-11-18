@@ -28,8 +28,7 @@ class RoundRobinSelectionView : public std::ranges::view_interface<RoundRobinSel
     public:
         ~Iterator() noexcept = default;
         Iterator() noexcept = default;
-        Iterator(CandidateIterator first, CandidateIterator current, CandidateSentinel last,
-            std::uint64_t candidate_count) noexcept :
+        Iterator(CandidateIterator first, CandidateIterator current, CandidateSentinel last, std::uint64_t candidate_count) noexcept :
             m_first(first), m_current(current), m_last(last), m_remaining_count(candidate_count) {}
         Iterator(const Iterator &) noexcept = default;
         Iterator(Iterator &&) noexcept = default;

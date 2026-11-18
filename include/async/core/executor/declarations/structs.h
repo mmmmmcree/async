@@ -1,6 +1,7 @@
 #pragma once
 
 #include <async/config/macros.h>
+#include <async/core/error.h>
 #include <async/core/executor/declarations/enums.h>
 
 #include <cstdint>
@@ -26,6 +27,11 @@ public:
     static ExecutionReport make_from_error_code(std::error_code ec, std::uint64_t executed_count = 0) noexcept
     {
         return {ec ? ExecutionResult::eFailed : ExecutionResult::eSucceeded, executed_count, ec};
+    }
+    static ExecutionReport make_from_drive_result(std::error_code ec) noexcept
+    {
+        if (ec == errc::no_work) { return {}; }
+        return ec ? make_from_error_code(ec) : make_from_succeeded(1);
     }
 public:
     constexpr ExecutionResult getResult() const noexcept { return m_result; }

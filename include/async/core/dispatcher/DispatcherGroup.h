@@ -27,7 +27,7 @@ public:
     {
         for (Dispatcher & dispatcher : m_dispatchers | utils::selected(m_policy)) {
             const DispatchReport report = dispatcher.dispatchOne();
-            if (report.hasProgress() or report.getErrorCode()) { return report; }
+            if (not report.isIdle()) { return report; }
         }
         return {};
     }

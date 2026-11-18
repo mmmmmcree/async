@@ -1,17 +1,19 @@
 #pragma once
 
-#include <async/core/driver/declarations/structs.h>
+#include <async/config/macros.h>
 #include <async/core/sink/declarations/concepts.h>
 #include <async/core/stream/declarations/concepts.h>
 
 #include <concepts>
+#include <system_error>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
 
+// A clear code means progress; errc::no_work means the step was idle.
 template <typename Driver>
 concept driver_c = requires(Driver & driver) {
-    { driver.driveOne() } noexcept -> std::same_as<DriveReport>;
+    { driver.driveOne() } noexcept -> std::same_as<std::error_code>;
 };
 
 template <typename Stream, typename Sink>

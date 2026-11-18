@@ -47,4 +47,6 @@ auto operator|(Range && candidates, SelectedAdaptor<Policy> adaptor) noexcept
 template <typename Policy>
 details::SelectedAdaptor<Policy> selected(Policy & policy) noexcept { return details::SelectedAdaptor<Policy> {policy}; }
 
+inline decltype(std::views::all) selected(NoSelectionPolicy) noexcept { return std::views::all; }
+
 } // namespace lcf::async::utils

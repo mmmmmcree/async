@@ -27,8 +27,7 @@ public:
     OneShotTimer & operator=(OneShotTimer &&) = delete;
     std::error_code start(async::ServiceHandle handle) noexcept
     { m_handle = handle; handle.setWakeTime(Clock::now() + 20ms); return {}; }
-    async::DriveReport driveOne() noexcept
-    { ex::start(*m_operation_p); m_handle->notifyStopped(); return {.m_has_progress = true}; }
+    std::error_code driveOne() noexcept { ex::start(*m_operation_p); m_handle->notifyStopped(); return {}; }
     void requestStop() noexcept { m_handle->notifyStopped(); }
 private:
     Operation * m_operation_p;

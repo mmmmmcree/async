@@ -17,7 +17,7 @@ public:
     DriverHandle & operator=(const DriverHandle &) noexcept = default;
     DriverHandle & operator=(DriverHandle &&) noexcept = default;
 public:
-    DriveReport driveOne() noexcept { return m_driver_p->driveOne(); }
+    std::error_code driveOne() noexcept { return m_driver_p->driveOne(); }
 private:
     Driver * m_driver_p;
 };

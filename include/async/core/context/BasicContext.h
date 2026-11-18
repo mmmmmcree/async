@@ -61,7 +61,7 @@ struct DefaultContextComponents
     template <typename Queue>
     using execution_stream_t = WorkStealingStream<Queue, policy::RoundRobin>;
     template <typename Stream>
-    using priority_stream_t = PriorityStream<Stream, policy::WeightedPriority>;
+    using priority_stream_t = PriorityStream<Stream, policy::WeightedPriority<4, 2, 1>>;
     template <typename Stream, typename Sink>
     using dispatcher_t = BasicDispatcher<Stream, Sink>;
     template <typename Stream, typename Sink>
@@ -273,9 +273,11 @@ private:
             m_services.requestStop();
             if (m_services.isStopped()) { m_coordinator.closeSubmissions(); }
         }
-        const DriveReport event_report = m_event_pump.driveOne();
-        const DriveReport service_report = m_services.driveOne();
-        const std::error_code ec = event_report.getErrorCode() ? event_report.getErrorCode() : service_report.getErrorCode();
+        const std::error_code event_ec = m_event_pump.driveOne();
+        const std::error_code service_ec = m_services.driveOne();
+        std::error_code ec = event_ec;
+        if (not ec or ec == errc::no_work) { ec = service_ec; }
+        if (ec == errc::no_work) { ec.clear(); }
         m_coordinator.reportErrorCode(ec);
         const ExecutionReport execution = m_coordinator.isStopRequested() ? ExecutionReport {} : m_owner_executor->executeOne();
         m_coordinator.reportErrorCode(execution.getErrorCode());
@@ -287,7 +289,7 @@ private:
         }
         if (ec) { return ExecutionReport::make_from_error_code(ec, execution.getExecutedCount()); }
         if (execution.isFailed() or execution.isStopped()) { return execution; }
-        const bool succeeded = event_report.hasProgress() or service_report.hasProgress() or execution.isSucceeded();
+        const bool succeeded = not event_ec or not service_ec or execution.isSucceeded();
         return succeeded ? ExecutionReport::make_from_succeeded(execution.getExecutedCount()) : ExecutionReport {};
     }
 private:

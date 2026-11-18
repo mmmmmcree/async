@@ -1,7 +1,7 @@
 #pragma once
 
 #include <async/config/macros.h>
-#include <async/core/driver/declarations/structs.h>
+#include <async/core/error.h>
 
 #include <atomic>
 #include <chrono>
@@ -20,7 +20,7 @@ public:
     SemaphoreEvent & operator=(const SemaphoreEvent &) = delete;
     SemaphoreEvent & operator=(SemaphoreEvent &&) = delete;
 public:
-    DriveReport driveOne() noexcept { return {}; }
+    std::error_code driveOne() noexcept { return errc::no_work; }
     std::error_code waitUntil(std::chrono::steady_clock::time_point deadline) noexcept
     {
         bool acquired;
