@@ -134,7 +134,7 @@ public:
             m_pool.prepare(info.getWorkerCount(), m_coordinator, info.getWorkerMemoryResource(), [this](std::size_t index) {
                 return Executor {m_resources->getDispatchers(), m_resources->getSharedExecutor(index + 1)};
             });
-            if (const std::error_code ec = m_services.create(info.getServiceCapacity(), info.getRuntimeMemoryResource())) {
+            if (const auto ec = m_services.create(info.getServiceCapacity(), info.getRuntimeMemoryResource())) {
                 return this->creationFailed(ec);
             }
             m_domain = info.getDomainId();
@@ -169,8 +169,8 @@ public:
     {
         if (not m_resources) { return std::make_error_code(std::errc::operation_not_permitted); }
         if (this->isClosing()) { return std::make_error_code(std::errc::operation_canceled); }
-        if (const std::error_code ec = this->bindDriverThread()) { return ec; }
-        const std::error_code ec = m_services.enable();
+        if (const auto ec = this->bindDriverThread()) { return ec; }
+        const auto ec = m_services.enable();
         if (ec) {
             m_coordinator.reportErrorCode(ec);
             this->driveUntilClosed();
@@ -180,7 +180,7 @@ public:
     template <thread_launcher_c<ThreadHandle> Launcher = ThreadLauncher<ThreadHandle>>
     std::error_code run(Launcher launcher = {}) noexcept
     {
-        if (const std::error_code ec = this->bindDriverThread()) { return ec; }
+        if (const auto ec = this->bindDriverThread()) { return ec; }
         {
             const std::lock_guard lock {m_lifecycle_mutex};
             if (m_run_state != RunState::eNotStarted or not m_resources or m_cleaned.load(std::memory_order_acquire)) {
@@ -218,7 +218,7 @@ public:
             }
         }
         if (m_cleaned.load(std::memory_order_acquire)) { return m_coordinator.getErrorCode(); }
-        if (const std::error_code ec = this->bindDriverThread()) { return ec; }
+        if (const auto ec = this->bindDriverThread()) { return ec; }
         this->driveUntilClosed();
         return m_coordinator.getErrorCode();
     }
@@ -243,7 +243,7 @@ private:
     { return m_submission_close_requested.load(std::memory_order_acquire) or m_coordinator.isStopRequested(); }
     std::error_code waitForEvents() noexcept
     {
-        const std::error_code ec = m_event_pump.waitUntil(m_services.getWakeTime());
+        const auto ec = m_event_pump.waitUntil(m_services.getWakeTime());
         m_coordinator.reportErrorCode(ec);
         return ec;
     }
@@ -267,15 +267,15 @@ private:
     ExecutionReport executeOne() noexcept
     {
         if (not m_resources or m_cleaned.load(std::memory_order_acquire)) { return ExecutionReport::make_from_stopped(); }
-        if (const std::error_code ec = this->bindDriverThread()) { return ExecutionReport::make_from_error_code(ec); }
+        if (const auto ec = this->bindDriverThread()) { return ExecutionReport::make_from_error_code(ec); }
         m_services.closeRegistration();
         if (this->isClosing()) {
             m_services.requestStop();
             if (m_services.isStopped()) { m_coordinator.closeSubmissions(); }
         }
-        const std::error_code event_ec = m_event_pump.driveOne();
-        const std::error_code service_ec = m_services.driveOne();
-        std::error_code ec = event_ec;
+        const auto event_ec = m_event_pump.driveOne();
+        const auto service_ec = m_services.driveOne();
+        auto ec = event_ec;
         if (not ec or ec == errc::no_work) { ec = service_ec; }
         if (ec == errc::no_work) { ec.clear(); }
         m_coordinator.reportErrorCode(ec);
@@ -283,7 +283,7 @@ private:
         m_coordinator.reportErrorCode(execution.getErrorCode());
         if (m_services.isStopped() and (m_coordinator.isStopRequested() or m_coordinator.isFinished())) {
             this->finish();
-            const std::error_code finish_ec = m_coordinator.getErrorCode();
+            const auto finish_ec = m_coordinator.getErrorCode();
             return finish_ec ? ExecutionReport::make_from_error_code(finish_ec, execution.getExecutedCount())
                 : ExecutionReport::make_from_stopped(execution.getExecutedCount());
         }

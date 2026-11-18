@@ -44,7 +44,7 @@ public:
 public:
     void start() & noexcept
     {
-        const std::error_code ec = m_handle.submit(m_record);
+        const auto ec = m_handle.submit(m_record);
         if (not ec) { return; }
         if (ec == std::errc::operation_canceled) { cancel(this); }
         else { exec::set_error(std::move(m_receiver), ec); }

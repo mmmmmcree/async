@@ -30,7 +30,7 @@ public:
     {
         const std::size_t band = static_cast<std::size_t>(record.getPriority());
         if (band >= m_queues.size()) { return std::make_error_code(std::errc::invalid_argument); }
-        const std::error_code ec = m_queues[band].enqueue(record);
+        const auto ec = m_queues[band].enqueue(record);
         if (not ec) { m_notifier.notifyAll(); }
         return ec;
     }

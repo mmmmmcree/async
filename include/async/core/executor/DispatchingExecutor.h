@@ -28,7 +28,7 @@ public:
     ExecutionReport executeOne() noexcept
     {
         const DispatchReport dispatch_report = m_dispatchers.dispatchOne();
-        if (const std::error_code ec = dispatch_report.getErrorCode()) {
+        if (const auto ec = dispatch_report.getErrorCode()) {
             return ExecutionReport::make_from_error_code(ec);
         }
         const ExecutionReport execution_report = m_executor_p->executeOne();

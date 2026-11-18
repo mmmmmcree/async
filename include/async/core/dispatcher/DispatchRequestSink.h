@@ -34,7 +34,7 @@ public:
         if (index >= m_targets.size()) { return std::make_error_code(std::errc::invalid_argument); }
         if (Target * target_p = m_targets[index]) { return target_p->receive(record); }
         for (Target & target : m_shared_targets | utils::selected(m_policy)) {
-            const std::error_code ec = target.receive(record);
+            const auto ec = target.receive(record);
             if (ec != std::errc::no_buffer_space) { return ec; }
         }
         return std::make_error_code(std::errc::no_buffer_space);

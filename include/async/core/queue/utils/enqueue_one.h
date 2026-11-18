@@ -23,7 +23,7 @@ std::error_code enqueue_one(Queues && queues,
     typename std::remove_pointer_t<std::ranges::range_value_t<Queues>>::value_t & value) noexcept
 {
     for (auto && queue : queues) {
-        const std::error_code ec = enqueue_one(queue, value);
+        const auto ec = enqueue_one(queue, value);
         if (ec != std::errc::no_buffer_space) { return ec; }
     }
     return std::make_error_code(std::errc::no_buffer_space);

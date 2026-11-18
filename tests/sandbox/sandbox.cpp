@@ -88,7 +88,7 @@ int main()
     std::pmr::monotonic_buffer_resource worker_memory_resource {storage_bytes.data() + runtime_capacity, worker_capacity, std::pmr::null_memory_resource()};
     info.setMemoryResources(runtime_memory_resource, worker_memory_resource);
     async::Context context;
-    if (const std::error_code ec = context.create(std::move(info))) { std::cerr << ec.message(); return 1; }
+    if (const auto ec = context.create(std::move(info))) { std::cerr << ec.message(); return 1; }
     const auto port = context.getSubmissionPort(caller);
     auto shared_scheduler = port.getSchedulerHandle(shared);
     shared_scheduler.setPriority(async::Priority::eNormal);
@@ -105,7 +105,7 @@ int main()
         | ex::then([](int left, int right) noexcept { return left + right; }) | ex::continues_on(caller_scheduler);
     auto operation = ex::connect(std::move(graph), Receiver {outcome});
     OneShotTimer service {operation};
-    if (const std::error_code ec = context.registerService(service)) { std::cerr << ec.message(); return 1; }
+    if (const auto ec = context.registerService(service)) { std::cerr << ec.message(); return 1; }
     std::error_code run_ec;
     std::thread driver {[&] { run_ec = context.run(); }};
     auto execution_port = context.getExecutionPort(caller);

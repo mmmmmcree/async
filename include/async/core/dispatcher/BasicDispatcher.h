@@ -25,7 +25,7 @@ public:
     DispatchReport dispatchOne() noexcept
     {
         if (m_driving.test_and_set(std::memory_order_acquire)) { return {}; }
-        const std::error_code ec = m_driver.driveOne();
+        const auto ec = m_driver.driveOne();
         m_driving.clear(std::memory_order_release);
         return DispatchReport::make_from_drive_result(ec);
     }

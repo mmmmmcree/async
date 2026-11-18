@@ -16,7 +16,7 @@ std::error_code drive_one(Stream & stream, Sink & sink) noexcept
     typename Stream::value_t * record_p = utils::pull_one(stream);
     if (not record_p) { return errc::no_work; }
     if constexpr (rejecting_sink_c<Sink>) {
-        const std::error_code ec = sink.receive(*record_p);
+        const auto ec = sink.receive(*record_p);
         if (ec) { stream.requeue(*record_p); }
         return ec;
     } else { sink.receive(*record_p); }

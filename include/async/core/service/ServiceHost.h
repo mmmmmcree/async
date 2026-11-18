@@ -126,7 +126,7 @@ public:
                 entry.m_active = true;
                 ++m_active;
             }
-            const std::error_code ec = entry.m_service.start(ServiceHandle {&entry, &notify});
+            const auto ec = entry.m_service.start(ServiceHandle {&entry, &notify});
             if (ec) { return ec; }
         }
         return {};
@@ -165,7 +165,7 @@ public:
             entry_p = m_ready_services.pop();
             if (entry_p and not entry_p->m_active) { entry_p = nullptr; }
         }
-        const std::error_code service_ec = entry_p ? entry_p->m_service.driveOne() : make_error_code(errc::no_work);
+        const auto service_ec = entry_p ? entry_p->m_service.driveOne() : make_error_code(errc::no_work);
         return ec ? ec : service_ec;
     }
 private:

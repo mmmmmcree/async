@@ -35,7 +35,7 @@ public:
             if (report.getExecutedCount() or report.isStopped() or report.isFailed()) { return report; }
             if (report.isSucceeded()) { continue; }
             if constexpr (is_owner) {
-                if (const std::error_code ec = m_context_p->waitForEvents()) { return ExecutionReport::make_from_error_code(ec); }
+                if (const auto ec = m_context_p->waitForEvents()) { return ExecutionReport::make_from_error_code(ec); }
             } else { m_context_p->m_signal.wait(observed); }
         }
     }

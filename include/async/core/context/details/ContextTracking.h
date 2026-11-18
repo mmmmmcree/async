@@ -24,7 +24,7 @@ public:
     std::error_code receive(value_t & record) noexcept
     {
         if (not m_coordinator_p->beginSubmission()) { return std::make_error_code(std::errc::operation_canceled); }
-        const std::error_code ec = m_sink_p->receive(record);
+        const auto ec = m_sink_p->receive(record);
         if (ec) { m_coordinator_p->complete(); }
         m_coordinator_p->endSubmission();
         return ec;
