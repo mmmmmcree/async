@@ -9,19 +9,21 @@ flowchart TB
     context["Context：资源与生命周期边界<br/>BasicContext"]
     context -->|按组件类型装配| components["context_components_c<br/>完整组件的类型绑定<br/>DefaultContextComponents（BasicContext.h）"]
     components --> stages["同级处理阶段<br/>request_dispatcher_c / work_executor_c<br/>BasicDispatcher / BasicExecutor"]
-    stages -->|复用单步搬运| driver["Driver：连接输入与接收端<br/>driver_c：driveOne → DriveReport<br/>BasicDriver / utils::drive_one"]
+    stages -->|复用单步搬运| driver["Driver：连接输入与接收端<br/>driver_c：driveOne → std::error_code<br/>BasicDriver / utils::drive_one"]
     driver -->|借用输入| stream["Stream：可组合的记录源<br/>stream_c：pullOne / isEmpty<br/>DispatchRequestStream / WorkStealingStream"]
     driver -->|组合接收端| sink["Sink：可组合的记录接收端<br/>sink_c：receive<br/>SubmissionSink / DispatchRequestSink"]
     stream -->|组合一条或多条| queue["Queue：记录存储与领取<br/>producer_queue_c / consumer_queue_c<br/>Queue / Deque"]
     sink -->|入队接收端依赖| queue
-    stream -->|选择记录来源| policy["Policy：选择候选者及顺序<br/>selection_policy_c：select<br/>RoundRobin / WeightedPriority"]
+    stream -->|选择记录来源| policy["Policy：选择候选者及顺序<br/>selection_policy_c<br/>RoundRobin / WeightedPriority / utils::NoSelectionPolicy"]
     sink -->|路由接收端选择目标| policy
     sink -->|终端接收端调用| executable["Executable：执行或取消任务<br/>executable_c / cancellable_executable_c<br/>ExecuteExecutableSink / CancelExecutableSink<br/>→ AnyExecutableRef"]
 ```
 
-Stream 可以组合 Queue 或其他 Stream，封装选择策略及 pending 等行为；Sink 封装接收、路由或终端处理，也可以继续包装其他 Sink。Driver 只负责一次 `pullOne → receive`，不靠 Sink 的静态标签判断是否执行任务。Dispatcher 与 Executor 复用 BasicDriver，分别给出 `DispatchReport` 和 `ExecutionReport`；两者及 `DriveReport` 均通过 `getErrorCode()` 读取结果码。
+Stream 可以组合 Queue 或其他 Stream，封装选择策略及 pending 等行为。Sink 封装接收、路由或终端处理，也可以继续包装其他 Sink。BasicDriver 负责一次 `pullOne → receive`，返回 `std::error_code`。空结果码表示已推进一步，`errc::no_work` 表示没有可处理的记录。服务和事件泵采用相同的结果码约定。Dispatcher 与 Executor 分别将结果码转换为 `DispatchReport` 和 `ExecutionReport`。
 
 `BasicContext<Components>` 通过一个组件集配置流水线、事件泵与线程句柄。`context_components_c<Components>` 检查 `event_pump_t`、`thread_handle_t` 的协议和构造要求，以及组件工厂组合后的构造接口、记录类型一致性、队列并发能力、Stream 重试与清理能力、Sink 和执行阶段的报告协议。Notifier 从配置的事件泵推导，并用于检查实际组合；默认组件与 BasicContext 放在同一头文件中。
+
+`utils::NoSelectionPolicy` 让 `selected` 保留候选顺序，优先级流可用它实现按档位顺序取任务。默认 Context 使用 `WeightedPriority<4, 2, 1>`，权重决定各档被优先尝试的次数，每次仍会遍历其余候选。权重数量与候选数量不匹配时使用普通轮转。
 
 Stream/Sink 与 execution 的 sender/receiver 共享组合思路，但属于不同协议：Stream 是同步、非阻塞的记录源，Sink 是同步接收边界；它们不因此满足 `sender_c` / `receiver_c`。`SchedulerHandle` 通过 `ScheduleSender` / `ScheduleOperation` 接入 execution，最终完成仍通过 receiver 的 `set_value / set_error / set_stopped` 交付。
 
