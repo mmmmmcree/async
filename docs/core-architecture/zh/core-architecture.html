@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Async Core</title>
+  <link rel="stylesheet" href="../common/page.css">
+</head>
+<body>
+  <a class="skip-link" href="#top">跳到正文</a>
+  <header class="topbar"><div class="topbar-inner">
+    <div class="topbar-brand">
+      <button type="button" id="navigation-toggle" class="icon-button navigation-toggle" aria-controls="document-contents" aria-expanded="false" aria-label="目录" title="目录"><!-- @license lucide-static v1.75.0 - ISC -->
+<svg aria-hidden="true"
+  class="lucide lucide-panel-left"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <rect width="18" height="18" x="3" y="3" rx="2" />
+  <path d="M9 3v18" />
+</svg></button>
+      <a class="wordmark" href="#top">Async Core</a>
+    </div>
+    <div class="actions">
+      <a href="core-architecture.md" class="tool"><!-- @license lucide-static v1.75.0 - ISC -->
+<svg aria-hidden="true"
+  class="lucide lucide-file-text"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+  <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+  <path d="M10 9H8" />
+  <path d="M16 13H8" />
+  <path d="M16 17H8" />
+</svg><span>Markdown</span></a>
+      <a href="../en/core-architecture.html" data-switch class="tool" lang="en"><!-- @license lucide-static v1.75.0 - ISC -->
+<svg aria-hidden="true"
+  class="lucide lucide-languages"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m5 8 6 6" />
+  <path d="m4 14 6-6 2-3" />
+  <path d="M2 5h12" />
+  <path d="M7 2h1" />
+  <path d="m22 22-5-10-5 10" />
+  <path d="M14 18h6" />
+</svg><span>English</span></a>
+    </div>
+  </div></header>
+  <div class="layout">
+    <nav class="toc" id="document-contents" aria-label="目录">
+      <div class="toc-label">目录</div><ul><li class="toc-section" data-section="1"><a href="#section-1">核心概念与组合</a></li>
+<li class="toc-diagram" data-section="1"><a href="#diagram-components">核心组件与依赖</a></li>
+<li class="toc-diagram" data-section="1"><a href="#diagram-transfer">Stream / Sink 搬运契约</a></li>
+<li class="toc-diagram" data-section="1"><a href="#diagram-runtime">运行宿主与事件泵</a></li>
+<li class="toc-section" data-section="2"><a href="#section-2">运行流程</a></li>
+<li class="toc-diagram" data-section="2"><a href="#diagram-service-activation">服务激活与事件转换</a></li>
+<li class="toc-diagram" data-section="2"><a href="#diagram-submission-execution">提交与执行流水线</a></li>
+<li class="toc-diagram" data-section="2"><a href="#diagram-graceful-shutdown">优雅关闭</a></li>
+<li class="toc-diagram" data-section="2"><a href="#diagram-immediate-stop">快速停止</a></li></ul>
+    </nav>
+    <main id="top" tabindex="-1" aria-label="Async Core"><h1>Async Core</h1>
+<section class="doc-section" aria-labelledby="section-1"><h2 id="section-1">核心概念与组合</h2>
+<div class="diagram-entry" data-diagram="diagram-components">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-components" aria-labelledby="diagram-components-label">
+  <figcaption><span id="diagram-components-label">核心组件与依赖</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:468px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["Context：资源与生命周期边界\nBasicContext","context_components_c\n完整组件的类型绑定\nDefaultContextComponents（BasicContext.h）","同级处理阶段\nrequest_dispatcher_c / work_executor_c\nBasicDispatcher / BasicExecutor","Driver：连接输入与接收端\ndriver_c：driveOne → std::error_code\nBasicDriver / utils::drive_one","Stream：可组合的记录源\nstream_c：pullOne / isEmpty\nDispatchRequestStream / WorkStealingStream","Sink：可组合的记录接收端\nsink_c：receive\nSubmissionSink / DispatchRequestSink","Queue：记录存储与领取\nproducer_queue_c / consumer_queue_c\nQueue / Deque","Policy：选择候选者及顺序\nselection_policy_c\nRoundRobin / WeightedPriority / utils::NoSelectionPolicy","Executable：执行或取消任务\nexecutable_c / cancellable_executable_c\nExecuteExecutableSink / CancelExecutableSink\n→ AnyExecutableRef"],"edges":["按组件类型装配","","复用单步搬运","借用输入","组合接收端","组合一条或多条","入队接收端依赖","选择记录来源","路由接收端选择目标","终端接收端调用"]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-components-notes">
+  <h3 id="diagram-components-notes">组件职责与接口边界</h3><div class="diagram-prose">
+<p>图中的 concept 表示结构化接口约束，类名给出当前实现。箭头标明组合或依赖关系，不表示继承或运行时调用顺序。</p>
+
+<p><span class="glossary-term" data-term="1" tabindex="0">Stream</span> 可以组合 <span class="glossary-term" data-term="0" tabindex="0">Queue</span> 或其他 <span class="glossary-term" data-term="1">Stream</span>，封装选择策略及 pending 等行为。<span class="glossary-term" data-term="2" tabindex="0">Sink</span> 封装接收、路由或终端处理，也可以继续包装其他 <span class="glossary-term" data-term="2">Sink</span>。<span class="glossary-term" data-term="3" tabindex="0">BasicDriver</span> 负责一次 <code>pullOne → receive</code>，返回 <code>std::error_code</code>。空结果码表示已推进一步，<code>errc::no_work</code> 表示没有可处理的记录。服务和事件泵采用相同的结果码约定。<span class="glossary-term" data-term="5" tabindex="0">Dispatcher</span> 与 <span class="glossary-term" data-term="6" tabindex="0">Executor</span> 分别将结果码转换为 <code><span class="glossary-term" data-term="5">DispatchReport</span></code> 和 <code><span class="glossary-term" data-term="6">ExecutionReport</span></code>。</p>
+<p><code><span class="glossary-term" data-term="4" tabindex="0">BasicContext</span>&lt;Components&gt;</code> 通过一个组件集配置流水线、事件泵与线程句柄。<code><span class="glossary-term" data-term="4">context_components_c</span>&lt;Components&gt;</code> 检查 <code>event_pump_t</code>、<code>thread_handle_t</code> 的协议和构造要求，以及组件工厂组合后的构造接口、记录类型一致性、队列并发能力、<span class="glossary-term" data-term="1">Stream</span> 重试与清理能力、<span class="glossary-term" data-term="2">Sink</span> 和执行阶段的报告协议。Notifier 从配置的事件泵推导，并用于检查实际组合；默认组件与 <span class="glossary-term" data-term="4">BasicContext</span> 放在同一头文件中。</p>
+<p><code><span class="glossary-term" data-term="7" tabindex="0">utils::NoSelectionPolicy</span></code> 让 <code>selected</code> 保留候选顺序，优先级流可用它实现按档位顺序取任务。默认 <span class="glossary-term" data-term="4">Context</span> 使用 <code><span class="glossary-term" data-term="7">WeightedPriority</span>&lt;4, 2, 1&gt;</code>，权重决定各档被优先尝试的次数，每次仍会遍历其余候选。权重数量与候选数量不匹配时使用普通轮转。</p>
+<p><span class="glossary-term" data-term="1">Stream</span>/<span class="glossary-term" data-term="2">Sink</span> 与 execution 的 sender/<span class="glossary-term" data-term="11" tabindex="0">receiver</span> 共享组合思路，但属于不同协议：<span class="glossary-term" data-term="1">Stream</span> 是同步、非阻塞的记录源，<span class="glossary-term" data-term="2">Sink</span> 是同步接收边界；它们不因此满足 <code>sender_c</code> / <code><span class="glossary-term" data-term="11">receiver_c</span></code>。<code><span class="glossary-term" data-term="8" tabindex="0">SchedulerHandle</span></code> 通过 <code><span class="glossary-term" data-term="8">ScheduleSender</span></code> / <code><span class="glossary-term" data-term="8">ScheduleOperation</span></code> 接入 execution，最终完成仍通过 <span class="glossary-term" data-term="11">receiver</span> 的 <code><span class="glossary-term" data-term="11">set_value</span> / <span class="glossary-term" data-term="11">set_error</span> / <span class="glossary-term" data-term="11">set_stopped</span></code> 交付。</p>
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-transfer">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-transfer" aria-labelledby="diagram-transfer-label">
+  <figcaption><span id="diagram-transfer-label">Stream / Sink 搬运契约</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:441px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["单步搬运契约\nmatched_c\u003cStream, Sink>\nStream 与 Sink 的 value_t 相同","stream_c\npullOne → value_t 指针或空","sink_c\nreceive → void 或 error_code","retry_stream_c\n拒收后 requeue，记录仍由流水线保留","drainable_stream_c\npullAny 绕过选择策略\nDispatchRequestStream / PriorityStream","保证接收\nExecuteExecutableSink / CancelExecutableSink","no_buffer_space：保留并重试\n其他非空 ec：保留并进入 report","静止后统一取消剩余记录\nCancelExecutableSink → executable.cancel"],"edges":["基础输入","接收结果","rejecting_sink_c：返回 error_code","可选重试能力","可选停止清理能力","返回 void","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-transfer-notes">
+  <h3 id="diagram-transfer-notes">接收结果、重试与清理</h3><div class="diagram-prose">
+<p>能力按使用场景细化，不要求所有组件承担重试、清理或等待：</p>
+
+<p><code>std::error_code</code> 是接收结果，不等同于错误；空值表示已接收，非空值表示未接收。<code><span class="glossary-term" data-term="1" tabindex="0">retry_stream_c</span></code> 只在接收端可能拒收时由 <span class="glossary-term" data-term="3" tabindex="0">Driver</span> 要求；<code><span class="glossary-term" data-term="1">drainable_stream_c</span></code> 用于停止清理，不属于基础 <span class="glossary-term" data-term="1">Stream</span> 的必需能力。</p>
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-runtime">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-runtime" aria-labelledby="diagram-runtime-label">
+  <figcaption><span id="diagram-runtime-label">运行宿主与事件泵</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:495px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["Context：装配与关闭\nBasicContext","SubmissionPort / ExecutionPort\n取得 SchedulerHandle / 推进执行","BasicWorker / WorkerPool\n等待、唤醒与重复执行一步","DispatchingExecutor\n先 dispatchOne，再 executeOne","worker_coordinator_c\nContextCoordinator","notify::signal_waiter_c\nEventPumpSignal","ServiceHost + EventPump\n就绪服务、定时激活与统一等待","service_c：特化的 driver_c\nstart / driveOne / requestStop\nAnyServiceRef / sandbox OneShotTimer","notify::event_pump_c：特化的 driver_c\ndriveOne / waitUntil / wake\nSemaphoreEvent / 自定义平台事件泵","ServiceHandle\nnotifyReady / setWakeTime / notifyStopped"],"edges":["提供用户入口","拥有线程生命周期","owner 执行入口","驱动","停止查询、完成判断与错误码汇总","复用等待协议","拥有并驱动","非拥有登记","事件泵协议","就绪、定时、停止完成通知"]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-runtime-notes">
+  <h3 id="diagram-runtime-notes">驱动线程、等待与协调</h3><div class="diagram-prose">
+<p>运行宿主负责决定何时、在哪个线程推进这些组件；服务和事件后端复用单步驱动协议，不要求其内部由 <span class="glossary-term" data-term="1" tabindex="0">Stream</span>/<span class="glossary-term" data-term="2" tabindex="0">Sink</span> 实现：</p>
+
+<p><code>getExecutionPort(token)</code> 只执行该 port 的 local 队列，不经过 <code><span class="glossary-term" data-term="6" tabindex="0">DispatchingExecutor</span></code>。后者仅组合 dispatch 与 execute，并通过报告传递结果；Worker 和 <span class="glossary-term" data-term="4" tabindex="0">Context</span> 负责向 Coordinator 汇总错误码。<code>worker_coordinator_c</code> 位于 worker 模块，具体的 <code>ContextCoordinator</code> 留在 <span class="glossary-term" data-term="4">context</span>/details。</p>
+<p>ExecutionPort 负责等待与唤醒循环；<span class="glossary-term" data-term="4">BasicContext</span> 分别提供驱动线程执行与 local 执行的内部接口。<code>run()</code>、<code>shutdown()</code> 和服务启用失败后的清理共用关闭驱动循环。<span class="glossary-term" data-term="4">Context</span> 只记录优雅关闭请求，快速停止以 Coordinator 的执行 gate 为准；空 <code>ec</code> 不触发停止。</p>
+<p>Worker 在每步执行前检查停止请求，退出后的静止由线程 join 保证。<code>worker_coordinator_c</code> 复用 <code>notify::signal_waiter_c</code> 约束 <code>observe / wait</code>，不要求执行计数接口；<span class="glossary-term" data-term="4">Context</span> 使用自己的 <code>ExecutionGuard</code> 等待外部 local ExecutionPort 的在途执行。</p>
+<p><code>BasicWorker::start()</code> 与 <code>WorkerPool::start()</code> 均为 <code>noexcept</code>，返回 <code>std::error_code</code>；线程启动异常在该边界转换。Pool 部分启动失败时，先请求停止并 join 已启动线程，再返回原始结果码。<code><span class="glossary-term" data-term="10" tabindex="0">ServiceHost</span></code> 借用服务；<span class="glossary-term" data-term="4">Context</span> 拥有默认事件泵与固定登记存储，平台事件能力由具体事件泵提供。</p>
+</div>
+</section>
+</div></section><section class="doc-section" aria-labelledby="section-2"><h2 id="section-2">运行流程</h2>
+<div class="diagram-entry" data-diagram="diagram-service-activation">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-service-activation" aria-labelledby="diagram-service-activation-label">
+  <figcaption><span id="diagram-service-activation-label">服务激活与事件转换</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:441px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["OS 事件回调 / 外部事件 / 服务定时请求","ServiceHandle\nnotifyReady / setWakeTime","ServiceHost\nintrusive Queue 合并 ready\nIndexedHeap 更新 timer 槽","EventPump.wake()","Context driver thread\nwaitUntil 最近期限；event_pump.driveOne()","ServiceHost\n定时到期转 ready；取一个就绪服务","Service.driveOne()\n采集事件，生成提交","SubmissionPort / SchedulerHandle"],"edges":["","","","","","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-service-activation-notes">
+  <h3 id="diagram-service-activation-notes">就绪通知与定时调度</h3><div class="diagram-prose">
+<p>服务激活与事件转换：生命周期和 <code><span class="glossary-term" data-term="3" tabindex="0">driveOne</span>()</code> 由 <span class="glossary-term" data-term="4" tabindex="0">Context</span> <span class="glossary-term" data-term="3">driver</span> thread 串行调用；<code><span class="glossary-term" data-term="10" tabindex="0">ServiceHandle</span></code> 可跨线程使用。</p>
+
+<p><code>enableServiceHandling()</code> 调用 <code><span class="glossary-term" data-term="10">Service</span>.start(handle)</code>；<code>run()</code> 自动启用。<span class="glossary-term" data-term="10">Service</span> 由调用方持有，通过 <code>getEventPump()</code> 借用事件泵。默认 <code>notify::<span class="glossary-term" data-term="9" tabindex="0">SemaphoreEvent</span></code> 只提供定时等待和跨线程唤醒；平台 OS 事件注册及回调由自定义事件泵提供。休眠服务不逐个轮询。</p>
+<p><code><span class="glossary-term" data-term="10">ServiceHost</span>::get_storage_requirements(capacity)</code> 返回公共 <code>StorageRequirements</code>，表达字节数和对齐要求；<code>create(capacity, memory_resource&amp;)</code> 准备固定登记项和定时堆，预算查询与分配共用内部布局定义。<span class="glossary-term" data-term="4">Context</span> 汇总组件需求，布局模板留在组件内部。就绪队列直接链接登记项，重复通知通过链接状态合并；<code>IndexedHeap</code> 维护定时项的位置，支持 O(log N) 更新和删除。状态修改由 Host 的互斥锁协调，调用服务与唤醒事件泵在解锁后进行。</p>
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-submission-execution">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-submission-execution" aria-labelledby="diagram-submission-execution-label">
+  <figcaption><span id="diagram-submission-execution-label">提交与执行流水线</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:610px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["SubmissionPort\n调用方或 service driver thread","SchedulerHandle\n目标 + 继承或覆盖的优先级","ScheduleOperation\nSchedulingRecord + executable","SubmissionGate","SubmissionSink\n优先级入队并唤醒","Request queues\n按优先级分组","PriorityStream / DispatchRequestStream\n选择请求；保留 pending","BasicDispatcher / BasicDriver\nContext driver 或 worker thread","DispatchRequestSink\n目标路由 + shared 目标选择","SubmissionSink\n优先级入队并唤醒","Shared execution queues","Port local execution queues","PriorityStream / WorkStealingStream\n本地优先；空时窃取 shared queues","Local executable stream\n只读取该 port 的 queues","无参 getExecutionPort() / BasicWorker\nowner 或 worker thread","getExecutionPort(token)\n调用该 port 的线程；不窃取","BasicExecutor / BasicDriver","ExecuteExecutableSink + CompletionTracker","用户任务 / receiver\nset_value / set_error / set_stopped"],"edges":["","","","","","","","","","","","","","","","","","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-submission-execution-notes">
+  <h3 id="diagram-submission-execution-notes">入队、路由与任务完成</h3><div class="diagram-prose">
+<p>提交与执行流水线：实线表示记录流向，记录及 executable 均借用 operation 的存储。</p>
+
+<p>Owner 与 worker 的 <code><span class="glossary-term" data-term="6" tabindex="0">DispatchingExecutor</span></code> 先选择并驱动 <span class="glossary-term" data-term="5" tabindex="0">dispatcher</span>，再尝试执行 shared 工作。Token local ExecutionPort 只执行自身队列。<code><span class="glossary-term" data-term="6">executeOne</span>()</code> 返回 <span class="glossary-term" data-term="6">ExecutionReport</span>，<code>waitAndExecuteOne()</code> 等待唤醒再尝试执行。完成会更新 outstanding 并通知等待者。</p>
+<p><code>ExecutionResult</code> 是独立的枚举类，具有 <code>eIdle / eSucceeded / eStopped / eFailed</code> 四种互斥结果。<code><span class="glossary-term" data-term="6">ExecutionReport</span></code> 默认表示 idle；静态接口 <code>make_from_succeeded / make_from_stopped / make_from_error_code</code> 创建其余报告，字段由类封装。非空 <code>ec</code> 只对应 failed，空 <code>ec</code> 传入 <code>make_from_error_code</code> 时对应 succeeded。<code>isSucceeded / isStopped / isFailed</code> 查询状态，隐式 bool 仅在 succeeded 时为 true；dispatch-only 也可 succeeded，实际执行数单独由 <code>getExecutedCount()</code> 返回。</p>
+<p><span class="glossary-term" data-term="2" tabindex="0">Sink</span> 拒收时，<span class="glossary-term" data-term="3" tabindex="0">driver</span> 先将记录 <code>requeue</code>：<code>no_buffer_space</code> 留待重试，其他错误进入 report；直接 submit 的拒收错误交回调用方。各队列、<span class="glossary-term" data-term="1" tabindex="0">stream</span>、<span class="glossary-term" data-term="2">sink</span>、policy 通过组件组合替换，<span class="glossary-term" data-term="4" tabindex="0">Context</span> 在 <code>create()</code> 时用显式 memory resource 预留固定存储。</p>
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-graceful-shutdown">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-graceful-shutdown" aria-labelledby="diagram-graceful-shutdown-label">
+  <figcaption><span id="diagram-graceful-shutdown-label">优雅关闭</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:414px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["closeSubmissions()","Service.requestStop()","继续驱动事件和就绪服务\n等待全部 notifyStopped()","关闭 admission gate","继续 dispatch / execute\n完成已接纳工作","等待 worker 退出并 join","关闭完成；run() 返回"],"edges":["","","","","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-graceful-shutdown-notes">
+  <h3 id="diagram-graceful-shutdown-notes">停止接收与排空任务</h3><div class="diagram-prose">
+<p>优雅关闭由 <span class="glossary-term" data-term="4" tabindex="0">Context</span> <span class="glossary-term" data-term="3" tabindex="0">driver</span> thread 推进：</p>
+
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-immediate-stop">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-immediate-stop" aria-labelledby="diagram-immediate-stop-label">
+  <figcaption><span id="diagram-immediate-stop-label">快速停止</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:441px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["requestStopProcessing()","立即关闭 execution gate\n不再启动用户任务","Service.requestStop()\n继续事件驱动直到 notifyStopped()","关闭 admission gate","等待运行中回调返回\njoin workers；等待执行静止","pullAll 各级剩余记录\nCancelExecutableSink + CompletionTracker","每个剩余 operation\n恰好一次 set_stopped","关闭完成；run() 返回"],"edges":["","","","","","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-immediate-stop-notes">
+  <h3 id="diagram-immediate-stop-notes">执行门与剩余任务取消</h3><div class="diagram-prose">
+<p>快速停止由 <span class="glossary-term" data-term="4" tabindex="0">Context</span> <span class="glossary-term" data-term="3" tabindex="0">driver</span> thread 推进：</p>
+
+<p>当前已有 sender/<span class="glossary-term" data-term="11" tabindex="0">receiver</span> completion 路径，尚未接入 coroutine promise 或 <code>co_await</code>。未来 coroutine 可在 sender/<span class="glossary-term" data-term="11">receiver</span> 边界适配：挂起时提交 operation，恢复时沿 scheduler 选定的 execution 路径完成；不改变队列、<span class="glossary-term" data-term="10" tabindex="0">service</span> 和关闭协议。</p>
+</div>
+</section>
+</div></section></main>
+  </div>
+  <div class="glossary" id="glossary" role="tooltip" hidden>
+    <strong id="glossary-heading"></strong>
+    <p id="glossary-definition"></p>
+  </div>
+  <script type="application/json" id="glossary-data">[{"name":"Queue","text":"存放待分发或执行的记录。生产者入队，消费者据各自的并发协议领取记录。默认 Context 使用侵入式 MPMC 队列。"},{"name":"Stream","text":"可组合的同步记录源。pullOne() 立即返回一条记录或空结果。不同 Stream 可以选择队列，并提供拒收重试或停止清理能力。"},{"name":"Sink","text":"接收记录的同步边界。Sink 可以入队、路由或执行记录。能够拒收的 Sink 用非空 error_code 表示记录仍未接收。"},{"name":"Driver","text":"每次推进一步的协议。BasicDriver 从 Stream 取一条记录交给 Sink。服务和事件泵也通过 driveOne() 暴露单步操作。"},{"name":"Context","text":"异步运行时的装配与生命周期边界。它配置队列、驱动阶段、事件泵和线程句柄，并协调关闭。"},{"name":"Dispatcher","text":"从提交队列取出请求，按执行目标将其路由到相应的执行队列，并返回 DispatchReport。"},{"name":"Executor","text":"从执行队列领取记录，运行其中的 executable 并返回 ExecutionReport。DispatchingExecutor 会先尝试分发，再执行。"},{"name":"Selection policy","text":"决定按什么顺序尝试队列、Stream 或执行目标。默认优先级策略按权重安排首选档位，并继续尝试其他候选者。"},{"name":"SchedulerHandle","text":"携带执行目标与优先级的调度入口。它把提交路径接入 sender/receiver 协议。"},{"name":"Event pump","text":"Context 用于推进事件、等待截止时间和接收唤醒的协议。平台事件注册由具体实现提供。"},{"name":"Service","text":"由 Context 驱动线程推进的事件源。ServiceHost 登记服务，ServiceHandle 可以跨线程报告就绪、定时或停止完成。"},{"name":"Receiver","text":"接收 operation 最终结果的对象。成功、错误和停止分别由 set_value、set_error 和 set_stopped 交付。"}]</script>
+  <aside class="inspector" id="source-inspector" aria-labelledby="source-heading" hidden>
+    <div class="inspector-header">
+      <span id="source-heading">关联源码</span>
+      <button type="button" id="source-close" class="icon-button" aria-label="关闭" title="关闭"><!-- @license lucide-static v1.75.0 - ISC -->
+<svg aria-hidden="true"
+  class="lucide lucide-x"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M18 6 6 18" />
+  <path d="m6 6 12 12" />
+</svg></button>
+    </div>
+    <ul id="source-list"></ul>
+  </aside>
+  <script type="application/json" id="diagram-controls">{"out":"缩小","in":"放大","fit":"查看全图","actualSize":"原始尺寸"}</script>
+  <script defer src="../common/page.js"></script>
+</body>
+</html>

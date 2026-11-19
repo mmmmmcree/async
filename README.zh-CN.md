@@ -4,6 +4,8 @@
 
 独立的 C++23 库。目标：LCFAsync::async。
 
+[核心架构](docs/core-architecture/zh/core-architecture.md)
+
 ## 构建
 
     cmake --preset clang

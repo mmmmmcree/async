@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Async Core</title>
+  <link rel="stylesheet" href="../common/page.css">
+</head>
+<body>
+  <a class="skip-link" href="#top">Skip to content</a>
+  <header class="topbar"><div class="topbar-inner">
+    <div class="topbar-brand">
+      <button type="button" id="navigation-toggle" class="icon-button navigation-toggle" aria-controls="document-contents" aria-expanded="false" aria-label="On this page" title="On this page"><!-- @license lucide-static v1.75.0 - ISC -->
+<svg aria-hidden="true"
+  class="lucide lucide-panel-left"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <rect width="18" height="18" x="3" y="3" rx="2" />
+  <path d="M9 3v18" />
+</svg></button>
+      <a class="wordmark" href="#top">Async Core</a>
+    </div>
+    <div class="actions">
+      <a href="core-architecture.md" class="tool"><!-- @license lucide-static v1.75.0 - ISC -->
+<svg aria-hidden="true"
+  class="lucide lucide-file-text"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+  <path d="M14 2v5a1 1 0 0 0 1 1h5" />
+  <path d="M10 9H8" />
+  <path d="M16 13H8" />
+  <path d="M16 17H8" />
+</svg><span>Markdown</span></a>
+      <a href="../zh/core-architecture.html" data-switch class="tool" lang="zh-CN"><!-- @license lucide-static v1.75.0 - ISC -->
+<svg aria-hidden="true"
+  class="lucide lucide-languages"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="m5 8 6 6" />
+  <path d="m4 14 6-6 2-3" />
+  <path d="M2 5h12" />
+  <path d="M7 2h1" />
+  <path d="m22 22-5-10-5 10" />
+  <path d="M14 18h6" />
+</svg><span>简体中文</span></a>
+    </div>
+  </div></header>
+  <div class="layout">
+    <nav class="toc" id="document-contents" aria-label="On this page">
+      <div class="toc-label">On this page</div><ul><li class="toc-section" data-section="1"><a href="#section-1">Core Concepts and Composition</a></li>
+<li class="toc-diagram" data-section="1"><a href="#diagram-components">Core Components and Dependencies</a></li>
+<li class="toc-diagram" data-section="1"><a href="#diagram-transfer">Stream / Sink Transfer Contract</a></li>
+<li class="toc-diagram" data-section="1"><a href="#diagram-runtime">Runtime Host and Event Pump</a></li>
+<li class="toc-section" data-section="2"><a href="#section-2">Runtime Flows</a></li>
+<li class="toc-diagram" data-section="2"><a href="#diagram-service-activation">Service Activation and Event Conversion</a></li>
+<li class="toc-diagram" data-section="2"><a href="#diagram-submission-execution">Submission and Execution Pipeline</a></li>
+<li class="toc-diagram" data-section="2"><a href="#diagram-graceful-shutdown">Graceful Shutdown</a></li>
+<li class="toc-diagram" data-section="2"><a href="#diagram-immediate-stop">Fast Stop</a></li></ul>
+    </nav>
+    <main id="top" tabindex="-1" aria-label="Async Core"><h1>Async Core</h1>
+<section class="doc-section" aria-labelledby="section-1"><h2 id="section-1">Core Concepts and Composition</h2>
+<div class="diagram-entry" data-diagram="diagram-components">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-components" aria-labelledby="diagram-components-label">
+  <figcaption><span id="diagram-components-label">Core Components and Dependencies</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:468px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["Context: resource and lifetime boundary\nBasicContext","context_components_c\nBinds the complete component set\nDefaultContextComponents (BasicContext.h)","Peer processing stages\nrequest_dispatcher_c / work_executor_c\nBasicDispatcher / BasicExecutor","Driver: connects input to receiver\ndriver_c: driveOne → std::error_code\nBasicDriver / utils::drive_one","Stream: composable record source\nstream_c: pullOne / isEmpty\nDispatchRequestStream / WorkStealingStream","Sink: composable record receiver\nsink_c: receive\nSubmissionSink / DispatchRequestSink","Queue: record storage and retrieval\nproducer_queue_c / consumer_queue_c\nQueue / Deque","Policy: candidate selection and ordering\nselection_policy_c\nRoundRobin / WeightedPriority / utils::NoSelectionPolicy","Executable: runs or cancels work\nexecutable_c / cancellable_executable_c\nExecuteExecutableSink / CancelExecutableSink\n→ AnyExecutableRef"],"edges":["configured by component type","","reuses single-step transfer","borrows input","composes receivers","composes one or more","enqueue sinks depend on","selects a record source","routing sinks select a target","terminal sinks invoke"]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-components-notes">
+  <h3 id="diagram-components-notes">Component Responsibilities and Interface Boundaries</h3><div class="diagram-prose">
+<p>Concepts in the diagram express structural interface constraints. Class names identify the current implementations. Arrows show composition or dependencies and carry no inheritance or runtime ordering semantics.</p>
+
+<p>A <span class="glossary-term" data-term="1" tabindex="0">Stream</span> composes <span class="glossary-term" data-term="0" tabindex="0">queues</span> or other <span class="glossary-term" data-term="1">streams</span> and encapsulates selection and behaviors such as retaining a pending record. A <span class="glossary-term" data-term="2" tabindex="0">Sink</span> handles reception, routing, or terminal processing and can wrap another <span class="glossary-term" data-term="2">sink</span>. <code><span class="glossary-term" data-term="3" tabindex="0">BasicDriver</span></code> performs one <code>pullOne → receive</code> step and returns <code>std::error_code</code>. An empty code means the step made progress. <code>errc::no_work</code> means no record was available. <span class="glossary-term" data-term="10" tabindex="0">Services</span> and event pumps use the same result convention. The <span class="glossary-term" data-term="5" tabindex="0">dispatcher</span> and <span class="glossary-term" data-term="6" tabindex="0">executor</span> convert codes into <code><span class="glossary-term" data-term="5">DispatchReport</span></code> and <code><span class="glossary-term" data-term="6">ExecutionReport</span></code>, respectively.</p>
+<p><code><span class="glossary-term" data-term="4" tabindex="0">BasicContext</span>&lt;Components&gt;</code> configures the pipeline, <span class="glossary-term" data-term="9" tabindex="0">event pump</span>, and thread handles through one component set. <code><span class="glossary-term" data-term="4">context_components_c</span>&lt;Components&gt;</code> checks the protocols and construction requirements for <code>event_pump_t</code> and <code>thread_handle_t</code>. It also checks the assembled component factories for compatible constructors and record types, <span class="glossary-term" data-term="0">queue</span> concurrency capabilities, <span class="glossary-term" data-term="1">stream</span> retry and drain capabilities, and <span class="glossary-term" data-term="2">sink</span> and execution report protocols. The notifier is derived from the configured <span class="glossary-term" data-term="9">event pump</span> and participates in the checks. The default component set is defined in the <code><span class="glossary-term" data-term="4">BasicContext</span></code> header.</p>
+<p><code><span class="glossary-term" data-term="7" tabindex="0">utils::NoSelectionPolicy</span></code> lets <code>selected</code> preserve candidate order, so a priority <span class="glossary-term" data-term="1">stream</span> can take work in priority-band order. The default <span class="glossary-term" data-term="4">Context</span> uses <code><span class="glossary-term" data-term="7">WeightedPriority</span>&lt;4, 2, 1&gt;</code>. The weights determine how often each band is tried first, and each attempt still checks the other candidates. When the weight count and candidate count differ, selection falls back to round-robin.</p>
+<p><span class="glossary-term" data-term="1">Streams</span> and <span class="glossary-term" data-term="2">sinks</span> share the composition model of execution senders and <span class="glossary-term" data-term="11" tabindex="0">receivers</span> and have their own protocols. A <span class="glossary-term" data-term="1">stream</span> is a synchronous, non-blocking record source. A <span class="glossary-term" data-term="2">sink</span> is a synchronous reception boundary. Their interfaces alone do not satisfy <code>sender_c</code> or <code><span class="glossary-term" data-term="11">receiver_c</span></code>. <code><span class="glossary-term" data-term="8" tabindex="0">SchedulerHandle</span></code> integrates with execution through <code><span class="glossary-term" data-term="8">ScheduleSender</span></code> and <code><span class="glossary-term" data-term="8">ScheduleOperation</span></code>. Completion reaches the <span class="glossary-term" data-term="11">receiver</span> through <code><span class="glossary-term" data-term="11">set_value</span></code>, <code><span class="glossary-term" data-term="11">set_error</span></code>, or <code><span class="glossary-term" data-term="11">set_stopped</span></code>.</p>
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-transfer">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-transfer" aria-labelledby="diagram-transfer-label">
+  <figcaption><span id="diagram-transfer-label">Stream / Sink Transfer Contract</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:441px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["Single-step transfer contract\nmatched_c\u003cStream, Sink>\nBoth sides share the same value_t","stream_c\npullOne → value_t pointer or null","sink_c\nreceive → void or error_code","retry_stream_c\nRequeue rejected records to keep them in the pipeline","drainable_stream_c\npullAny bypasses the selection policy\nDispatchRequestStream / PriorityStream","Guaranteed acceptance\nExecuteExecutableSink / CancelExecutableSink","no_buffer_space: retain and retry\nOther nonempty ec: retain and report","Cancel remaining records after quiescence\nCancelExecutableSink → executable.cancel"],"edges":["input","reception result","rejecting_sink_c returns error_code","optional retry capability","optional shutdown cleanup","returns void","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-transfer-notes">
+  <h3 id="diagram-transfer-notes">Acceptance, Retry, and Cleanup</h3><div class="diagram-prose">
+<p>Components provide the capabilities required by their use cases:</p>
+
+<p><code>std::error_code</code> records the reception outcome. An empty value means acceptance and a nonempty value means rejection. Drivers require <code><span class="glossary-term" data-term="1" tabindex="0">retry_stream_c</span></code> when the <span class="glossary-term" data-term="2" tabindex="0">sink</span> can reject records. <code><span class="glossary-term" data-term="1">drainable_stream_c</span></code> supports shutdown cleanup as an optional <span class="glossary-term" data-term="1">stream</span> capability.</p>
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-runtime">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-runtime" aria-labelledby="diagram-runtime-label">
+  <figcaption><span id="diagram-runtime-label">Runtime Host and Event Pump</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:495px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["Context: composition and shutdown\nBasicContext","SubmissionPort / ExecutionPort\nGet a SchedulerHandle / advance execution","BasicWorker / WorkerPool\nWait, wake, and repeat a step","DispatchingExecutor\ndispatchOne, then executeOne","worker_coordinator_c\nContextCoordinator","notify::signal_waiter_c\nEventPumpSignal","ServiceHost + EventPump\nReady services, timers, and shared waiting","service_c: specialized driver_c\nstart / driveOne / requestStop\nAnyServiceRef / sandbox OneShotTimer","notify::event_pump_c: specialized driver_c\ndriveOne / waitUntil / wake\nSemaphoreEvent / custom platform pump","ServiceHandle\nnotifyReady / setWakeTime / notifyStopped"],"edges":["exposes entry points","owns thread lifetimes","owner execution entry point","drives","stop, completion, and result codes","reuses the wait protocol","owns and drives","non-owning registration","event pump protocol","ready, timer, and stop notifications"]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-runtime-notes">
+  <h3 id="diagram-runtime-notes">Driver Threads, Waiting, and Coordination</h3><div class="diagram-prose">
+<p>The runtime host determines when and on which thread to advance these components. <span class="glossary-term" data-term="10" tabindex="0">Services</span> and event backends reuse the single-step <span class="glossary-term" data-term="3" tabindex="0">driver</span> protocol and can implement their internals independently of <span class="glossary-term" data-term="1" tabindex="0">streams</span> and <span class="glossary-term" data-term="2" tabindex="0">sinks</span>:</p>
+
+<p><code>getExecutionPort(token)</code> executes only the port's local <span class="glossary-term" data-term="0" tabindex="0">queues</span> and bypasses <code><span class="glossary-term" data-term="6" tabindex="0">DispatchingExecutor</span></code>. <code><span class="glossary-term" data-term="6">DispatchingExecutor</span></code> combines dispatch and execution and communicates results through reports. Worker and <span class="glossary-term" data-term="4" tabindex="0">Context</span> collect error codes in the coordinator. <code>worker_coordinator_c</code> belongs to the worker module. <code>ContextCoordinator</code> lives in <code><span class="glossary-term" data-term="4">context</span>/details</code>.</p>
+<p><code>ExecutionPort</code> owns its wait and wake loop. <code><span class="glossary-term" data-term="4">BasicContext</span></code> exposes separate internal interfaces for <span class="glossary-term" data-term="3">driver</span>-thread execution and local execution. <code>run()</code>, <code>shutdown()</code>, and cleanup after <span class="glossary-term" data-term="10">service</span> startup fails share the shutdown <span class="glossary-term" data-term="3">driver</span> loop. <span class="glossary-term" data-term="4">Context</span> records graceful shutdown requests, while the coordinator's execution gate controls fast stop. An empty <code>ec</code> does not trigger a stop.</p>
+<p>Workers check the stop request before every step. Joining their threads guarantees quiescence after exit. <code>worker_coordinator_c</code> uses <code>notify::signal_waiter_c</code> to constrain <code>observe</code> and <code>wait</code> and requires no execution-count interface. <span class="glossary-term" data-term="4">Context</span> uses its own <code>ExecutionGuard</code> to wait for in-flight calls from external local execution ports.</p>
+<p><code>BasicWorker::start()</code> and <code>WorkerPool::start()</code> are <code>noexcept</code> and return <code>std::error_code</code>. They translate thread start exceptions at that boundary. When the pool partially starts, it requests stop, joins the started threads, and returns the original error code. <code><span class="glossary-term" data-term="10">ServiceHost</span></code> borrows its <span class="glossary-term" data-term="10">services</span>. <span class="glossary-term" data-term="4">Context</span> owns the default <span class="glossary-term" data-term="9" tabindex="0">event pump</span> and fixed registration storage. Platform event capabilities come from the concrete pump.</p>
+</div>
+</section>
+</div></section><section class="doc-section" aria-labelledby="section-2"><h2 id="section-2">Runtime Flows</h2>
+<div class="diagram-entry" data-diagram="diagram-service-activation">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-service-activation" aria-labelledby="diagram-service-activation-label">
+  <figcaption><span id="diagram-service-activation-label">Service Activation and Event Conversion</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:441px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["OS event callback / external event / service timer","ServiceHandle\nnotifyReady / setWakeTime","ServiceHost\nIntrusive Queue coalesces ready entries\nIndexedHeap updates the timer slot","EventPump.wake()","Context driver thread\nwaitUntil the next deadline; event_pump.driveOne()","ServiceHost\nMove expired timers to ready; take one ready service","Service.driveOne()\nRead events and produce submissions","SubmissionPort / SchedulerHandle"],"edges":["","","","","","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-service-activation-notes">
+  <h3 id="diagram-service-activation-notes">Readiness Notifications and Timers</h3><div class="diagram-prose">
+<p>The <span class="glossary-term" data-term="4" tabindex="0">Context</span> <span class="glossary-term" data-term="3" tabindex="0">driver</span> thread serializes <span class="glossary-term" data-term="10" tabindex="0">service</span> lifecycle calls and <code><span class="glossary-term" data-term="3">driveOne</span>()</code>. Callers can use <code><span class="glossary-term" data-term="10">ServiceHandle</span></code> across threads.</p>
+
+<p><code>enableServiceHandling()</code> calls <code><span class="glossary-term" data-term="10">Service</span>.start(handle)</code>. <code>run()</code> enables <span class="glossary-term" data-term="10">service</span> handling automatically. The caller owns the <span class="glossary-term" data-term="10">service</span> and borrows the <span class="glossary-term" data-term="9" tabindex="0">event pump</span> through <code>getEventPump()</code>. The default <code>notify::<span class="glossary-term" data-term="9">SemaphoreEvent</span></code> supplies timed waits and cross-thread wakes. A custom pump provides platform OS event registration and callbacks. Idle <span class="glossary-term" data-term="10">services</span> receive no per-<span class="glossary-term" data-term="10">service</span> polling.</p>
+<p><code><span class="glossary-term" data-term="10">ServiceHost</span>::get_storage_requirements(capacity)</code> returns a public <code>StorageRequirements</code> with size and alignment. <code>create(capacity, memory_resource&amp;)</code> prepares fixed registration entries and a timer heap. The budget query and allocation share an internal layout definition. <span class="glossary-term" data-term="4">Context</span> aggregates the component requirements, while components retain their layout templates. The ready <span class="glossary-term" data-term="0" tabindex="0">queue</span> links the registration entries directly and coalesces repeat notifications through their link state. <code>IndexedHeap</code> tracks timer positions and supports O(log N) updates and removals. The host mutex coordinates state changes. The host releases it before calling <span class="glossary-term" data-term="10">services</span> or waking the <span class="glossary-term" data-term="9">event pump</span>.</p>
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-submission-execution">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-submission-execution" aria-labelledby="diagram-submission-execution-label">
+  <figcaption><span id="diagram-submission-execution-label">Submission and Execution Pipeline</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:610px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["SubmissionPort\nCaller or service driver thread","SchedulerHandle\nTarget + inherited or overridden priority","ScheduleOperation\nSchedulingRecord + executable","SubmissionGate","SubmissionSink\nEnqueue by priority and wake","Request queues\nGrouped by priority","PriorityStream / DispatchRequestStream\nSelect a request; retain pending records","BasicDispatcher / BasicDriver\nContext driver or worker thread","DispatchRequestSink\nRoute and select the shared target","SubmissionSink\nEnqueue by priority and wake","Shared execution queues","Port local execution queues","PriorityStream / WorkStealingStream\nTry local first, then steal from shared queues","Local executable stream\nRead only this port's queues","getExecutionPort() / BasicWorker\nOwner or worker thread","getExecutionPort(token)\nPort caller thread; no stealing","BasicExecutor / BasicDriver","ExecuteExecutableSink + CompletionTracker","User task / receiver\nset_value / set_error / set_stopped"],"edges":["","","","","","","","","","","","","","","","","","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-submission-execution-notes">
+  <h3 id="diagram-submission-execution-notes">Enqueueing, Routing, and Completion</h3><div class="diagram-prose">
+<p>Solid arrows in the submission and execution pipeline show the direction of record flow. Both records and executables borrow storage from the operation.</p>
+
+<p>The owner's and workers' <code><span class="glossary-term" data-term="6" tabindex="0">DispatchingExecutor</span></code> selects and drives a <span class="glossary-term" data-term="5" tabindex="0">dispatcher</span> before attempting shared work. A token-local <code>ExecutionPort</code> only executes from its own <span class="glossary-term" data-term="0" tabindex="0">queues</span>. <code><span class="glossary-term" data-term="6">executeOne</span>()</code> returns an <code><span class="glossary-term" data-term="6">ExecutionReport</span></code>. <code>waitAndExecuteOne()</code> waits for a wake before attempting execution. Completion updates the outstanding count and notifies waiters.</p>
+<p><code>ExecutionResult</code> is an enum class with four mutually exclusive results: <code>eIdle</code>, <code>eSucceeded</code>, <code>eStopped</code>, and <code>eFailed</code>. A default <code><span class="glossary-term" data-term="6">ExecutionReport</span></code> is idle. The static methods <code>make_from_succeeded</code>, <code>make_from_stopped</code>, and <code>make_from_error_code</code> create the other reports, and the class encapsulates their fields. A nonempty <code>ec</code> means failed, while an empty <code>ec</code> passed to <code>make_from_error_code</code> means succeeded. Use <code>isSucceeded</code>, <code>isStopped</code>, and <code>isFailed</code> to query the result. Implicit conversion to <code>bool</code> returns true only for succeeded. A dispatch-only step can succeed, and <code>getExecutedCount()</code> separately reports how many tasks actually ran.</p>
+<p>When a <span class="glossary-term" data-term="2" tabindex="0">sink</span> rejects a record, the <span class="glossary-term" data-term="3" tabindex="0">driver</span> requeues it first. <code>no_buffer_space</code> leaves it pending for retry, while other errors appear in the report. Direct submission returns rejections to the caller. <span class="glossary-term" data-term="0">Queues</span>, <span class="glossary-term" data-term="1" tabindex="0">streams</span>, <span class="glossary-term" data-term="2">sinks</span>, and policies are replaceable through component composition. <span class="glossary-term" data-term="4" tabindex="0">Context</span> reserves fixed storage from an explicit memory resource in <code>create()</code>.</p>
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-graceful-shutdown">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-graceful-shutdown" aria-labelledby="diagram-graceful-shutdown-label">
+  <figcaption><span id="diagram-graceful-shutdown-label">Graceful Shutdown</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:414px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["closeSubmissions()","Service.requestStop()","Keep driving events and ready services\nWait for every notifyStopped()","Close the admission gate","Continue dispatch and execution\nComplete admitted work","Wait for workers to exit and join them","Shutdown complete; run() returns"],"edges":["","","","","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-graceful-shutdown-notes">
+  <h3 id="diagram-graceful-shutdown-notes">Closing Submissions and Draining Work</h3><div class="diagram-prose">
+<p>The <span class="glossary-term" data-term="4" tabindex="0">Context</span> <span class="glossary-term" data-term="3" tabindex="0">driver</span> thread advances graceful shutdown:</p>
+
+</div>
+</section>
+</div><div class="diagram-entry" data-diagram="diagram-immediate-stop">
+<div class="diagram-block">
+<figure class="diagram" id="diagram-immediate-stop" aria-labelledby="diagram-immediate-stop-label">
+  <figcaption><span id="diagram-immediate-stop-label">Fast Stop</span><span class="diagram-tools"></span></figcaption>
+  <div class="diagram-viewport">
+    <div class="diagram-view" style="--diagram-height:441px">
+      <div class="graph-canvas" aria-hidden="true"></div>
+      <div class="graph-nodes"></div>
+    </div>
+  </div>
+  <script type="application/json" class="graph-data">{"nodes":["requestStopProcessing()","Close the execution gate immediately\nPrevent new user tasks from starting","Service.requestStop()\nDrive events until notifyStopped()","Close the admission gate","Wait for in-flight callbacks to return\nJoin workers and wait for execution to quiesce","pullAll remaining records at each stage\nCancelExecutableSink + CompletionTracker","Each remaining operation\nReceives set_stopped exactly once","Shutdown complete; run() returns"],"edges":["","","","","","",""]}</script>
+</figure>
+<div class="diagram-details"></div>
+</div>
+<section class="diagram-reading" aria-labelledby="diagram-immediate-stop-notes">
+  <h3 id="diagram-immediate-stop-notes">Execution Gate and Pending Work Cancellation</h3><div class="diagram-prose">
+<p>The <span class="glossary-term" data-term="4" tabindex="0">Context</span> <span class="glossary-term" data-term="3" tabindex="0">driver</span> thread advances fast stop:</p>
+
+<p>Sender and <span class="glossary-term" data-term="11" tabindex="0">receiver</span> completion is implemented. Coroutine promises and <code>co_await</code> are future work. A coroutine adapter could submit an operation on suspension and resume along the scheduler-selected execution path. <span class="glossary-term" data-term="0" tabindex="0">Queue</span>, <span class="glossary-term" data-term="10" tabindex="0">service</span>, and shutdown protocols would carry over to that adapter.</p>
+</div>
+</section>
+</div></section></main>
+  </div>
+  <div class="glossary" id="glossary" role="tooltip" hidden>
+    <strong id="glossary-heading"></strong>
+    <p id="glossary-definition"></p>
+  </div>
+  <script type="application/json" id="glossary-data">[{"name":"Queue","text":"Stores records awaiting dispatch or execution. Producers enqueue records and consumers claim them under the queue’s concurrency contract. The default Context uses intrusive MPMC queues."},{"name":"Stream","text":"A composable synchronous source. pullOne() immediately returns a record or an empty result. A stream can select queues and provide retry or shutdown-drain capabilities."},{"name":"Sink","text":"A synchronous boundary that accepts records. A sink can enqueue, route, or execute a record. A rejecting sink returns a nonempty error_code when it has not accepted the record."},{"name":"Driver","text":"The single-step progress protocol. BasicDriver takes a record from a stream and hands it to a sink. Services and event pumps also expose single-step progress through driveOne()."},{"name":"Context","text":"The composition and lifetime boundary for the async runtime. It configures the queues, processing stages, event pump, and thread handles, and coordinates shutdown."},{"name":"Dispatcher","text":"Takes a request from the submission queues, routes it to the execution queue for its target, and returns a DispatchReport."},{"name":"Executor","text":"Claims a record from an execution queue, runs its executable, and returns an ExecutionReport. DispatchingExecutor attempts dispatch first."},{"name":"Selection policy","text":"Determines the order in which queues, streams, or execution targets are tried. The default priority policy weights the first choice and still tries the other candidates."},{"name":"SchedulerHandle","text":"A scheduling handle that carries the execution target and priority and connects submission to the sender/receiver protocol."},{"name":"Event pump","text":"The protocol Context uses to advance events, wait until deadlines, and receive wakeups. The concrete implementation provides platform event registration."},{"name":"Service","text":"An event source stepped by the Context driver thread. ServiceHost registers services, while ServiceHandle reports readiness, timers, and shutdown completion across threads."},{"name":"Receiver","text":"Receives the final result of an operation through set_value for success, set_error for failure, or set_stopped for cancellation."}]</script>
+  <aside class="inspector" id="source-inspector" aria-labelledby="source-heading" hidden>
+    <div class="inspector-header">
+      <span id="source-heading">Related source</span>
+      <button type="button" id="source-close" class="icon-button" aria-label="Close" title="Close"><!-- @license lucide-static v1.75.0 - ISC -->
+<svg aria-hidden="true"
+  class="lucide lucide-x"
+  xmlns="http://www.w3.org/2000/svg"
+  width="24"
+  height="24"
+  viewBox="0 0 24 24"
+  fill="none"
+  stroke="currentColor"
+  stroke-width="2"
+  stroke-linecap="round"
+  stroke-linejoin="round"
+>
+  <path d="M18 6 6 18" />
+  <path d="m6 6 12 12" />
+</svg></button>
+    </div>
+    <ul id="source-list"></ul>
+  </aside>
+  <script type="application/json" id="diagram-controls">{"out":"Zoom out","in":"Zoom in","fit":"Fit diagram","actualSize":"Actual size"}</script>
+  <script defer src="../common/page.js"></script>
+</body>
+</html>

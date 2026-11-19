@@ -4,6 +4,8 @@
 
 Independent C++23 library. Target: LCFAsync::async.
 
+[Core architecture](docs/core-architecture/en/core-architecture.md)
+
 ## Build
 
     cmake --preset clang
