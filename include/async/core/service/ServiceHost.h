@@ -10,6 +10,7 @@
 #include <async/core/queue/intrusive/Queue.h>
 #include <async/core/error.h>
 
+#include <concepts>
 #include <cstdint>
 #include <limits>
 #include <mutex>
@@ -58,21 +59,6 @@ class ServiceHost
     using Entries = details::FixedCapacityList<Entry>;
     using Timers = details::IndexedHeap<Entry, WakeEarlier, HeapPosition>;
     using ReadyQueue = queue::intrusive::Queue<Entry>;
-    static Clock::time_point deadline_after(Clock::duration delay) noexcept
-    {
-        if (delay <= Clock::duration::zero()) { return Clock::time_point::min(); }
-        constexpr auto latest_deadline = Clock::time_point::max() - Clock::duration {1};
-        const auto now = Clock::now();
-        return now > latest_deadline - delay ? latest_deadline : now + delay;
-    }
-    static void notify(void * p, Notification notification) noexcept
-    {
-        if (const auto * delay_p = std::get_if<Clock::duration>(&notification)) {
-            notification = deadline_after(*delay_p);
-        }
-        Entry & entry = *static_cast<Entry *>(p);
-        entry.m_host_p->notify(entry, notification);
-    }
     template <typename Storage>
     static void reserve_storage(std::size_t capacity, Storage & storage, Entries & entries, Timers & timers)
     {
@@ -186,26 +172,37 @@ private:
     {
         if (entry.m_active and not entry.getNext()) { m_ready_services.pushBack(entry); }
     }
-    void notify(Entry & entry, const Notification & notification) noexcept
+    static void notify(void * entry_p, Notification notification) noexcept
     {
-        {
-            const std::lock_guard lock {m_mutex};
-            if (not entry.m_active) { return; }
-            if (const auto * signal_p = std::get_if<ServiceSignal>(&notification)) {
-                if (*signal_p == ServiceSignal::eReady) { this->queueReady(entry); }
+        Entry & entry = *static_cast<Entry *>(entry_p);
+        ServiceHost & host = *entry.m_host_p;
+        const bool accepted = std::visit([&host, &entry]<typename Request>(Request request) noexcept {
+            constexpr bool is_signal = std::same_as<Request, ServiceSignal>;
+            auto deadline = Clock::time_point::min();
+            if constexpr (std::same_as<Request, Clock::duration>) {
+                if (request > Clock::duration::zero()) {
+                    constexpr auto latest_deadline = Clock::time_point::max() - Clock::duration {1};
+                    const auto now = Clock::now();
+                    deadline = now > latest_deadline - request ? latest_deadline : now + request;
+                }
+            } else if constexpr (not is_signal) { deadline = request; }
+            const std::lock_guard lock {host.m_mutex};
+            if (not entry.m_active) { return false; }
+            if constexpr (is_signal) {
+                if (request == ServiceSignal::eReady) { host.queueReady(entry); }
                 else {
                     entry.m_active = false;
-                    --m_active;
-                    m_timers.erase(entry);
+                    --host.m_active;
+                    host.m_timers.erase(entry);
                 }
             } else {
-                const auto deadline = std::get<Clock::time_point>(notification);
                 entry.m_wake_time = deadline;
-                if (deadline == Clock::time_point::max()) { m_timers.erase(entry); }
-                else if (auto ec = m_timers.insert_or_update(entry); ec and not m_error_code) { m_error_code = ec; }
+                if (deadline == Clock::time_point::max()) { host.m_timers.erase(entry); }
+                else if (auto ec = host.m_timers.insert_or_update(entry); ec and not host.m_error_code) { host.m_error_code = ec; }
             }
-        }
-        m_event_pump_p->wake();
+            return true;
+        }, notification);
+        if (accepted) { host.m_event_pump_p->wake(); }
     }
 private:
     EventPump * m_event_pump_p;
