@@ -17,6 +17,7 @@ module;
 #include <stdexcept>
 #include <system_error>
 #include <thread>
+#include <variant>
 #include <vector>
 
 #include <async/config/execution_provider.h>

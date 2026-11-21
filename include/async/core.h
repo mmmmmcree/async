@@ -64,6 +64,7 @@
 #include <async/core/context/BasicContext.h>
 #include <async/core/driver/DriverHandle.h>
 #include <async/core/driver/utils/drive_one.h>
+#include <async/core/service/declarations/enums.h>
 #include <async/core/service/ServiceHandle.h>
 #include <async/core/service/AnyServiceRef.h>
 #include <async/core/service/ServiceHost.h>

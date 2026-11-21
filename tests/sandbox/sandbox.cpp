@@ -26,8 +26,17 @@ public:
     OneShotTimer & operator=(const OneShotTimer &) = delete;
     OneShotTimer & operator=(OneShotTimer &&) = delete;
     std::error_code start(async::ServiceHandle handle) noexcept
-    { m_handle = handle; handle.setWakeTime(Clock::now() + 20ms); return {}; }
-    std::error_code driveOne() noexcept { ex::start(*m_operation_p); m_handle->notifyStopped(); return {}; }
+    {
+        m_handle = handle;
+        handle.wakeAfter(20ms);
+        return {};
+    }
+    std::error_code driveOne() noexcept
+    {
+        ex::start(*m_operation_p);
+        m_handle->notifyStopped();
+        return {};
+    }
     void requestStop() noexcept { m_handle->notifyStopped(); }
 private:
     Operation * m_operation_p;
@@ -89,16 +98,19 @@ int main()
     info.setMemoryResources(runtime_memory_resource, worker_memory_resource);
     async::Context context;
     if (const auto ec = context.create(std::move(info))) { std::cerr << ec.message(); return 1; }
-    const auto port = context.getSubmissionPort(caller);
-    auto shared_scheduler = port.getSchedulerHandle(shared);
+    const auto submission_port = context.getSubmissionPort(caller);
+    auto shared_scheduler = submission_port.getSchedulerHandle(shared);
     shared_scheduler.setPriority(async::Priority::eNormal);
-    const auto caller_scheduler = port.getPortSchedulerHandle();
+    const auto caller_scheduler = submission_port.getPortSchedulerHandle();
     Outcome outcome;
     const auto caller_thread_id = std::this_thread::get_id();
     const auto branch = [shared_scheduler](int value, ExecutionTrace & trace) {
         return ex::schedule(shared_scheduler) | ex::then([value, &trace]() noexcept {
-            trace.m_thread_id = std::this_thread::get_id(); trace.m_start_tp = Clock::now();
-            std::this_thread::sleep_for(100ms); trace.m_finish_tp = Clock::now(); return value;
+            trace.m_thread_id = std::this_thread::get_id();
+            trace.m_start_tp = Clock::now();
+            std::this_thread::sleep_for(100ms);
+            trace.m_finish_tp = Clock::now();
+            return value;
         });
     };
     auto graph = ex::when_all(branch(20, outcome.m_left), branch(22, outcome.m_right))
@@ -116,7 +128,7 @@ int main()
     driver.join();
     const bool parallel = outcome.m_left.m_start_tp < outcome.m_right.m_finish_tp and outcome.m_right.m_start_tp < outcome.m_left.m_finish_tp;
     const bool on_caller = outcome.m_receiver_thread_id == caller_thread_id;
-    std::cout << "result: " << outcome.m_value << ", branches overlap: " << parallel
+    std::cout << std::boolalpha << "result: " << outcome.m_value << ", branches overlap: " << parallel
         << ", receiver on caller thread: " << on_caller
         << ", completed: " << outcome.m_completed.load(std::memory_order_acquire) << '\n'
         << "caller thread_id: " << caller_thread_id << ", receiver thread_id: " << outcome.m_receiver_thread_id << '\n';

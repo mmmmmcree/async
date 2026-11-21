@@ -2,6 +2,7 @@
 
 #include <async/config/macros.h>
 #include <async/core/service/AnyServiceRef.h>
+#include <async/core/service/declarations/enums.h>
 #include <async/core/notify/declarations/concepts.h>
 #include <async/core/details/containers/FixedCapacityList.h>
 #include <async/core/details/containers/IndexedHeap.h>
@@ -13,6 +14,7 @@
 #include <limits>
 #include <mutex>
 #include <new>
+#include <variant>
 
 LCF_ASYNC_EXPORT
 namespace lcf::async {
@@ -21,6 +23,7 @@ template <notify::event_pump_c EventPump>
 class ServiceHost
 {
     using Clock = ServiceHandle::clock_t;
+    using Notification = ServiceHandle::notification_t;
     enum LifecycleFlags : std::uint8_t { eNone = 0, eCreated = 1, eEnabled = 2, eRegistrationClosed = 4 };
     static constexpr std::size_t k_no_index = std::numeric_limits<std::size_t>::max();
     struct Entry
@@ -55,10 +58,20 @@ class ServiceHost
     using Entries = details::FixedCapacityList<Entry>;
     using Timers = details::IndexedHeap<Entry, WakeEarlier, HeapPosition>;
     using ReadyQueue = queue::intrusive::Queue<Entry>;
-    static void notify(void * p, ServiceHandle::Notification notification, Clock::time_point time) noexcept
+    static Clock::time_point deadline_after(Clock::duration delay) noexcept
     {
+        if (delay <= Clock::duration::zero()) { return Clock::time_point::min(); }
+        constexpr auto latest_deadline = Clock::time_point::max() - Clock::duration {1};
+        const auto now = Clock::now();
+        return now > latest_deadline - delay ? latest_deadline : now + delay;
+    }
+    static void notify(void * p, Notification notification) noexcept
+    {
+        if (const auto * delay_p = std::get_if<Clock::duration>(&notification)) {
+            notification = deadline_after(*delay_p);
+        }
         Entry & entry = *static_cast<Entry *>(p);
-        entry.m_host_p->notify(entry, notification, time);
+        entry.m_host_p->notify(entry, notification);
     }
     template <typename Storage>
     static void reserve_storage(std::size_t capacity, Storage & storage, Entries & entries, Timers & timers)
@@ -173,19 +186,22 @@ private:
     {
         if (entry.m_active and not entry.getNext()) { m_ready_services.pushBack(entry); }
     }
-    void notify(Entry & entry, ServiceHandle::Notification notification, Clock::time_point time) noexcept
+    void notify(Entry & entry, const Notification & notification) noexcept
     {
         {
             const std::lock_guard lock {m_mutex};
             if (not entry.m_active) { return; }
-            if (notification == ServiceHandle::Notification::eReady) { this->queueReady(entry); }
-            else if (notification == ServiceHandle::Notification::eStopped) {
-                entry.m_active = false;
-                --m_active;
-                m_timers.erase(entry);
+            if (const auto * signal_p = std::get_if<ServiceSignal>(&notification)) {
+                if (*signal_p == ServiceSignal::eReady) { this->queueReady(entry); }
+                else {
+                    entry.m_active = false;
+                    --m_active;
+                    m_timers.erase(entry);
+                }
             } else {
-                entry.m_wake_time = time;
-                if (time == Clock::time_point::max()) { m_timers.erase(entry); }
+                const auto deadline = std::get<Clock::time_point>(notification);
+                entry.m_wake_time = deadline;
+                if (deadline == Clock::time_point::max()) { m_timers.erase(entry); }
                 else if (auto ec = m_timers.insert_or_update(entry); ec and not m_error_code) { m_error_code = ec; }
             }
         }

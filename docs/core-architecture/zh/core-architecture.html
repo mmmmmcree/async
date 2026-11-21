@@ -139,7 +139,7 @@
       <div class="graph-nodes"></div>
     </div>
   </div>
-  <script type="application/json" class="graph-data">{"nodes":["Context：装配与关闭\nBasicContext","SubmissionPort / ExecutionPort\n取得 SchedulerHandle / 推进执行","BasicWorker / WorkerPool\n等待、唤醒与重复执行一步","DispatchingExecutor\n先 dispatchOne，再 executeOne","worker_coordinator_c\nContextCoordinator","notify::signal_waiter_c\nEventPumpSignal","ServiceHost + EventPump\n就绪服务、定时激活与统一等待","service_c：特化的 driver_c\nstart / driveOne / requestStop\nAnyServiceRef / sandbox OneShotTimer","notify::event_pump_c：特化的 driver_c\ndriveOne / waitUntil / wake\nSemaphoreEvent / 自定义平台事件泵","ServiceHandle\nnotifyReady / setWakeTime / notifyStopped"],"edges":["提供用户入口","拥有线程生命周期","owner 执行入口","驱动","停止查询、完成判断与错误码汇总","复用等待协议","拥有并驱动","非拥有登记","事件泵协议","就绪、定时、停止完成通知"]}</script>
+  <script type="application/json" class="graph-data">{"nodes":["Context：装配与关闭\nBasicContext","SubmissionPort / ExecutionPort\n取得 SchedulerHandle / 推进执行","BasicWorker / WorkerPool\n等待、唤醒与重复执行一步","DispatchingExecutor\n先 dispatchOne，再 executeOne","worker_coordinator_c\nContextCoordinator","notify::signal_waiter_c\nEventPumpSignal","ServiceHost + EventPump\n就绪服务、定时激活与统一等待","service_c：特化的 driver_c\nstart / driveOne / requestStop\nAnyServiceRef / sandbox OneShotTimer","notify::event_pump_c：特化的 driver_c\ndriveOne / waitUntil / wake\nSemaphoreEvent / 自定义平台事件泵","ServiceHandle\nnotifyReady / wakeAt / wakeAfter / notifyStopped"],"edges":["提供用户入口","拥有线程生命周期","owner 执行入口","驱动","停止查询、完成判断与错误码汇总","复用等待协议","拥有并驱动","非拥有登记","事件泵协议","就绪、定时、停止完成通知"]}</script>
 </figure>
 <div class="diagram-details"></div>
 </div>
@@ -164,13 +164,14 @@
       <div class="graph-nodes"></div>
     </div>
   </div>
-  <script type="application/json" class="graph-data">{"nodes":["OS 事件回调 / 外部事件 / 服务定时请求","ServiceHandle\nnotifyReady / setWakeTime","ServiceHost\nintrusive Queue 合并 ready\nIndexedHeap 更新 timer 槽","EventPump.wake()","Context driver thread\nwaitUntil 最近期限；event_pump.driveOne()","ServiceHost\n定时到期转 ready；取一个就绪服务","Service.driveOne()\n采集事件，生成提交","SubmissionPort / SchedulerHandle"],"edges":["","","","","","",""]}</script>
+  <script type="application/json" class="graph-data">{"nodes":["OS 事件回调 / 外部事件 / 服务定时请求","ServiceHandle\nnotifyReady / wakeAt / wakeAfter","ServiceHost\nintrusive Queue 合并 ready\nIndexedHeap 更新 timer 槽","EventPump.wake()","Context driver thread\nwaitUntil 最近期限；event_pump.driveOne()","ServiceHost\n定时到期转 ready；取一个就绪服务","Service.driveOne()\n采集事件，生成提交","SubmissionPort / SchedulerHandle"],"edges":["","","","","","",""]}</script>
 </figure>
 <div class="diagram-details"></div>
 </div>
 <section class="diagram-reading" aria-labelledby="diagram-service-activation-notes">
   <h3 id="diagram-service-activation-notes">就绪通知与定时调度</h3><div class="diagram-prose">
 <p>服务激活与事件转换：生命周期和 <code><span class="glossary-term" data-term="3" tabindex="0">driveOne</span>()</code> 由 <span class="glossary-term" data-term="4" tabindex="0">Context</span> <span class="glossary-term" data-term="3">driver</span> thread 串行调用；<code><span class="glossary-term" data-term="10" tabindex="0">ServiceHandle</span></code> 可跨线程使用。</p>
+<p><code>wakeAt(deadline)</code> 按 <code>steady_clock</code> 的绝对时间替换待触发定时器，传入 <code>time_point::max()</code> 可取消定时器。<code>wakeAfter(delay)</code> 从调用时起计算相对延迟，零或负延迟立即到期。超出范围的延迟截到可用的最晚截止时间。</p>
 
 <p><code>enableServiceHandling()</code> 调用 <code><span class="glossary-term" data-term="10">Service</span>.start(handle)</code>；<code>run()</code> 自动启用。<span class="glossary-term" data-term="10">Service</span> 由调用方持有，通过 <code>getEventPump()</code> 借用事件泵。默认 <code>notify::<span class="glossary-term" data-term="9" tabindex="0">SemaphoreEvent</span></code> 只提供定时等待和跨线程唤醒；平台 OS 事件注册及回调由自定义事件泵提供。休眠服务不逐个轮询。</p>
 <p><code><span class="glossary-term" data-term="10">ServiceHost</span>::get_storage_requirements(capacity)</code> 返回公共 <code>StorageRequirements</code>，表达字节数和对齐要求；<code>create(capacity, memory_resource&amp;)</code> 准备固定登记项和定时堆，预算查询与分配共用内部布局定义。<span class="glossary-term" data-term="4">Context</span> 汇总组件需求，布局模板留在组件内部。就绪队列直接链接登记项，重复通知通过链接状态合并；<code>IndexedHeap</code> 维护定时项的位置，支持 O(log N) 更新和删除。状态修改由 Host 的互斥锁协调，调用服务与唤醒事件泵在解锁后进行。</p>

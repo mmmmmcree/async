@@ -132,7 +132,7 @@ flowchart TB
     context -->|owns and drives| host["ServiceHost + EventPump<br/>Ready services, timers, and shared waiting"]
     host -->|non-owning registration| service["service_c: specialized driver_c<br/>start / driveOne / requestStop<br/>AnyServiceRef / sandbox OneShotTimer"]
     host -->|event pump protocol| pump["notify::event_pump_c: specialized driver_c<br/>driveOne / waitUntil / wake<br/>SemaphoreEvent / custom platform pump"]
-    service -->|ready, timer, and stop notifications| handle["ServiceHandle<br/>notifyReady / setWakeTime / notifyStopped"]
+    service -->|ready, timer, and stop notifications| handle["ServiceHandle<br/>notifyReady / wakeAt / wakeAfter / notifyStopped"]
 ```
 
 <!-- docs-builder:refs -->
@@ -179,12 +179,14 @@ Workers check the stop request before every step. Joining their threads guarante
 
 The Context driver thread serializes service lifecycle calls and `driveOne()`. Callers can use `ServiceHandle` across threads.
 
+`wakeAt(deadline)` replaces the pending timer with an absolute `steady_clock` deadline. Pass `time_point::max()` to cancel it. `wakeAfter(delay)` measures the delay from the call. Zero and negative delays expire immediately. Delays beyond the supported range use the latest available deadline.
+
 ```mermaid
 flowchart TB
     %% id: service-activation
     accTitle: Service Activation and Event Conversion
     source["OS event callback / external event / service timer"]
-    source --> handle["ServiceHandle<br/>notifyReady / setWakeTime"]
+    source --> handle["ServiceHandle<br/>notifyReady / wakeAt / wakeAfter"]
     handle --> registration["ServiceHost<br/>Intrusive Queue coalesces ready entries<br/>IndexedHeap updates the timer slot"]
     registration --> wake["EventPump.wake()"]
     wake --> wait["Context driver thread<br/>waitUntil the next deadline; event_pump.driveOne()"]

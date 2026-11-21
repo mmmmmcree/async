@@ -132,7 +132,7 @@ flowchart TB
     context -->|拥有并驱动| host["ServiceHost + EventPump<br/>就绪服务、定时激活与统一等待"]
     host -->|非拥有登记| service["service_c：特化的 driver_c<br/>start / driveOne / requestStop<br/>AnyServiceRef / sandbox OneShotTimer"]
     host -->|事件泵协议| pump["notify::event_pump_c：特化的 driver_c<br/>driveOne / waitUntil / wake<br/>SemaphoreEvent / 自定义平台事件泵"]
-    service -->|就绪、定时、停止完成通知| handle["ServiceHandle<br/>notifyReady / setWakeTime / notifyStopped"]
+    service -->|就绪、定时、停止完成通知| handle["ServiceHandle<br/>notifyReady / wakeAt / wakeAfter / notifyStopped"]
 ```
 
 <!-- docs-builder:refs -->
@@ -179,12 +179,14 @@ Worker 在每步执行前检查停止请求，退出后的静止由线程 join �
 
 服务激活与事件转换：生命周期和 `driveOne()` 由 Context driver thread 串行调用；`ServiceHandle` 可跨线程使用。
 
+`wakeAt(deadline)` 按 `steady_clock` 的绝对时间替换待触发定时器，传入 `time_point::max()` 可取消定时器。`wakeAfter(delay)` 从调用时起计算相对延迟，零或负延迟立即到期。超出范围的延迟截到可用的最晚截止时间。
+
 ```mermaid
 flowchart TB
     %% id: service-activation
     accTitle: 服务激活与事件转换
     source["OS 事件回调 / 外部事件 / 服务定时请求"]
-    source --> handle["ServiceHandle<br/>notifyReady / setWakeTime"]
+    source --> handle["ServiceHandle<br/>notifyReady / wakeAt / wakeAfter"]
     handle --> registration["ServiceHost<br/>intrusive Queue 合并 ready<br/>IndexedHeap 更新 timer 槽"]
     registration --> wake["EventPump.wake()"]
     wake --> wait["Context driver thread<br/>waitUntil 最近期限；event_pump.driveOne()"]
